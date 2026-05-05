@@ -4332,6 +4332,30 @@ function getSessionsForDate(dateKey) {
 
 
 function getSessionsForHabitDate(habitId, dateKey) {
+  if (!habitId || !dateKey) return [];
+  const day = parseDateKey(dateKey);
+  const dayStartTs = day ? new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0).getTime() : Number.NaN;
+  const dayEndTs = day ? new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1, 0, 0, 0, 0).getTime() : Number.NaN;
+  const detailed = Array.isArray(habitSessionTimeline?.[habitId]) ? habitSessionTimeline[habitId] : [];
+  const timed = detailed
+    .map((session) => {
+      const bounds = parseSessionBounds(session);
+      if (!bounds || !Number.isFinite(dayStartTs) || !Number.isFinite(dayEndTs)) return null;
+      const startTs = Math.max(bounds.startTs, dayStartTs);
+      const endTs = Math.min(bounds.endTs, dayEndTs);
+      if (!(endTs > startTs)) return null;
+      return {
+        habitId,
+        dateKey,
+        startTs,
+        endTs,
+        durationSec: Math.max(1, Math.round((endTs - startTs) / 1000)),
+        source: session.source || "ts"
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.startTs - b.startTs);
+  if (timed.length) return timed;
   const sec = getHabitTotalSecForDate(habitId, dateKey);
   return sec > 0 ? [{ habitId, dateKey, durationSec: sec, startTs: null, endTs: null, source: "total" }] : [];
 }
@@ -8447,7 +8471,7 @@ function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
     const heightPct = Math.max(1.2, ((Math.max(endMin, startMin + 1) - startMin) / 1440) * 100);
     return `<div class="habit-day-slot" style="--slot-color:${escapeHtml(resolveHabitColor(r.habit)||DEFAULT_COLOR)};--slot-top:${topPct.toFixed(2)}%;--slot-height:${heightPct.toFixed(2)}%"><div><strong>${escapeHtml(r.habit?.name||'Hábito')}</strong></div><div>${escapeHtml(formatTime(Number(r.startTs)))}–${escapeHtml(formatTime(Number(r.endTs)))} · ${escapeHtml(formatMinutes(minutesFromSession(r)))}</div></div>`;
   }).join('');
-  if (legacy.length) blocks += `<div class="habit-day-slot is-legacy">Sesiones antiguas sin hora: ${legacy.length}</div>`;
+  if (legacy.length) blocks += `<div class="habit-day-slot is-legacy">Sesiones sin horario: ${legacy.length}</div>`;
   if (!blocks) blocks = '<div class="habits-history-empty">Sin sesiones en este día.</div>';
   return `<div class="habit-day-timeline"><div class="habit-day-timeline-nav"><button type="button" class="habits-history-month-nav-btn" data-role="schedule-day-prev" data-day="${prev}">←</button><div class="habits-history-month-label">${escapeHtml(formatShortDate(dateKey,true))}</div><button type="button" class="habits-history-month-nav-btn" data-role="schedule-day-next" data-day="${next}">→</button></div>${blocks}</div>`;
 }

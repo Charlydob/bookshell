@@ -2205,6 +2205,7 @@ function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
     store: normalizeFoodName(payload?.store || ''),
     accountId: normalizeProductText(payload?.accountId || ''),
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
+    ticketCategoryId: normalizeProductText(payload?.ticketCategoryId || ''),
     plannedFor: toIsoDay(String(payload?.plannedFor || '')) || dayKeyFromTs(nowTs()),
     notes: normalizeProductText(payload?.notes || ''),
     confirmedAt: normalizeProductNumber(payload?.confirmedAt, 0),
@@ -2224,6 +2225,7 @@ function ensureProductsListTickets(list = {}) {
     store: nextList.store,
     accountId: nextList.accountId,
     paymentMethod: nextList.paymentMethod,
+    ticketCategoryId: normalizeProductText(nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || ''),
     plannedFor: nextList.plannedFor,
     notes: nextList.notes,
     sortOrder: 0,
@@ -2305,6 +2307,7 @@ function createEmptyProductsList(seed = {}, { temporary = false } = {}) {
       store: fallbackStore,
       accountId: fallbackAccountId,
       paymentMethod: fallbackPaymentMethod,
+      ticketCategoryId: normalizeProductText(seed?.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || ''),
       plannedFor: toIsoDay(String(seed?.plannedFor || '')) || dayKeyFromTs(now),
       notes: seed?.notes || '',
       sourceTicketId: seed?.sourceTicketId || '',
@@ -3363,6 +3366,29 @@ function renderProductsAccountSelect(model = null) {
   `;
 }
 
+function renderProductsTicketCategorySelect(model = null) {
+  const activeList = model?.activeList || resolveActiveProductsList();
+  const categories = categoriesMetaList();
+  const current = String(
+    model?.activeTicket?.ticketCategoryId
+    || activeList?.tickets?.[activeList.activeTicketId || activeList.primaryTicketId || 'ticket-1']?.ticketCategoryId
+    || activeList?.ticketCategoryId
+    || state.productsHub?.settings?.ticketCategoryId
+    || ''
+  ).trim();
+  const hasCurrent = !current || categories.some((row) => row.name === current);
+  const options = [
+    '<option value="">Categoría vinculada</option>',
+    ...(!hasCurrent ? [`<option value="${escapeHtml(current)}" selected>${escapeHtml(current)} (no disponible)</option>`] : []),
+    ...categories.map((row) => `<option value="${escapeHtml(row.name)}" ${current === row.name ? 'selected' : ''}>${escapeHtml(row.emoji ? `${row.emoji} ${row.name}` : row.name)}</option>`),
+  ].join('');
+  return `
+    <select class="food-control productsWorkbench__receiptMetaControl" name="ticketCategoryId" data-products-ticket-category aria-label="Categoría vinculada">
+      ${options}
+    </select>
+  `;
+}
+
 function buildProductsReceiptSuggestions(model = null, query = '', { limit = 7, excludeList = true } = {}) {
   const activeProductIds = new Set((model?.listLines || []).map((line) => String(line.productId || '').trim()).filter(Boolean));
   const queryKey = normalizeProductItemKey(query || '');
@@ -3919,6 +3945,7 @@ function renderProductsTicketHero(model, options = {}) {
   const receiptEstimatedTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
   const receiptActualTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
   const diffMeta = resolveProductsReceiptDiffMeta(receiptActualTotal - receiptEstimatedTotal);
+  const receiptError = normalizeProductText(state.productsReceiptError || '');
   return `
       <section class="productsWorkbench__ticketHero" data-products-ticket-hero>
       ${showSubviewSwitch ? renderProductsSubviewSwitch(model) : ''}
@@ -3971,8 +3998,10 @@ function renderProductsTicketHero(model, options = {}) {
             <strong data-products-ticket-diff>${diffMeta.label}</strong>
           </div>
           ${renderProductsAccountSelect(model)}
+          ${renderProductsTicketCategorySelect(model)}
         </footer>
       </div>
+      ${receiptError ? `<p class="productsWorkbench__emptyMini is-negative" data-products-ticket-error role="alert">${escapeHtml(receiptError)}</p>` : ''}
       <div class="productsWorkbench__panelActions productsWorkbench__panelActions--footer">
         <button type="button" class="food-history-btn" data-products-export-ticket ${model.listLines.length ? '' : 'disabled'}>Exportar</button>
         <button
@@ -4934,6 +4963,7 @@ function readProductsListDraftFromDom(root = document) {
   nextList.plannedFor = toIsoDay(String(scope.querySelector('[name="plannedFor"]')?.value || nextList.plannedFor || '')) || dayKeyFromTs(nowTs());
   nextList.accountId = String(scope.querySelector('[name="accountId"]')?.value || nextList.accountId || '').trim();
   nextList.paymentMethod = normalizeProductText(scope.querySelector('[name="paymentMethod"]')?.value || nextList.paymentMethod || 'Tarjeta') || 'Tarjeta';
+  nextList.ticketCategoryId = String(scope.querySelector('[name="ticketCategoryId"]')?.value || nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '').trim();
   nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   nextList.activeTicketId = activeTicketId;
@@ -4944,6 +4974,7 @@ function readProductsListDraftFromDom(root = document) {
     plannedFor: nextList.plannedFor,
     accountId: nextList.accountId,
     paymentMethod: nextList.paymentMethod,
+    ticketCategoryId: nextList.ticketCategoryId,
     notes: nextList.notes,
     updatedAt: nowTs(),
   });
@@ -5182,6 +5213,7 @@ async function persistProductsHubSettings(patch = {}) {
     defaultAccountId: String(patch.defaultAccountId ?? state.productsHub?.settings?.defaultAccountId ?? '').trim(),
     defaultStore: normalizeFoodName(patch.defaultStore ?? state.productsHub?.settings?.defaultStore ?? ''),
     defaultPaymentMethod: normalizeProductText(patch.defaultPaymentMethod ?? state.productsHub?.settings?.defaultPaymentMethod ?? 'Tarjeta') || 'Tarjeta',
+    ticketCategoryId: normalizeProductText(patch.ticketCategoryId ?? state.productsHub?.settings?.ticketCategoryId ?? ''),
     activeListId: String(patch.activeListId ?? state.productsHub?.settings?.activeListId ?? '').trim(),
   };
   state.productsHub = {
@@ -5745,8 +5777,19 @@ function setProductsReceiptBusy(isBusy) {
   const nextBusy = Boolean(isBusy);
   if (state.productsReceiptBusy === nextBusy) return;
   state.productsReceiptBusy = nextBusy;
-  if (state.activeView === 'products') {
-    patchProductsShoppingPanel(buildCurrentProductsModel());
+  if (!patchProductsTicketHero(buildCurrentProductsModel())) {
+    if (state.activeView === 'products') patchProductsShoppingPanel(buildCurrentProductsModel());
+    else triggerRender();
+  }
+}
+
+function setProductsReceiptError(message = '') {
+  const nextError = normalizeProductText(message || '');
+  if (state.productsReceiptError === nextError) return;
+  state.productsReceiptError = nextError;
+  if (!patchProductsTicketHero(buildCurrentProductsModel())) {
+    if (state.activeView === 'products') patchProductsShoppingPanel(buildCurrentProductsModel());
+    else triggerRender();
   }
 }
 
@@ -6063,45 +6106,89 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
   return { txId: saveId, total: totalAmount, payload, accountId, dateISO };
 }
 
+function resolveProductsTicketConfirmErrorMessage(error) {
+  const raw = String(error?.message || error || '').trim();
+  if (!raw) return 'No se pudo confirmar la compra';
+  if (raw === 'receipt-empty-lines') return 'El ticket no tiene líneas para confirmar';
+  if (raw === 'receipt-missing-account') return 'Selecciona una cuenta antes de confirmar';
+  if (raw === 'receipt-missing-ticket-category') return 'Selecciona una categoría vinculada antes de confirmar';
+  if (raw === 'receipt-invalid-total') return 'El ticket debe tener un total válido antes de confirmar';
+  if (raw === 'receipt-missing-movement-id') return 'No se pudo preparar el movimiento contable del ticket';
+  return raw;
+}
+
 async function confirmProductsTicketFromDom() {
   if (state.productsReceiptBusy) {
     financeReceiptLog('food-history-btn:click', { blocked: true, reason: 'busy' });
     return;
   }
   financeReceiptLog('food-history-btn:click');
+  setProductsReceiptError('');
   setProductsReceiptBusy(true);
   try {
-    console.info('[ticket:confirm:start]');
     const draft = ensureProductsListTickets(readProductsListDraftFromDom());
     const activeTicketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
     const activeTicketMeta = draft.tickets?.[activeTicketId] || {};
     const activeTicketLines = Object.fromEntries(
       Object.entries(draft.lines || {}).filter(([, line]) => String(line?.ticketId || draft.primaryTicketId || '').trim() === activeTicketId),
     );
-    if (!draft || !Object.keys(activeTicketLines || {}).length) {
+    const draftLineCount = Object.keys(activeTicketLines || {}).length;
+    const draftTotal = Object.values(activeTicketLines || {}).reduce((sum, line) => (
+      sum + (Math.max(0.01, Number(line?.qty || 1)) * normalizeProductPositiveNumber(line?.actualPrice, normalizeProductPositiveNumber(line?.estimatedPrice, 0)))
+    ), 0);
+    const draftAccountId = String(
+      activeTicketMeta.accountId
+      || draft.accountId
+      || state.productsHub?.settings?.defaultAccountId
+      || state.balance?.defaultAccountId
+      || ''
+    ).trim();
+    const draftCategoryId = String(
+      activeTicketMeta.ticketCategoryId
+      || draft.ticketCategoryId
+      || state.productsHub?.settings?.ticketCategoryId
+      || ''
+    ).trim();
+    console.log('[ticket:confirm:start]', {
+      lines: Object.values(activeTicketLines || {}),
+      total: draftTotal,
+      accountId: draftAccountId,
+      categoryId: draftCategoryId,
+    });
+    if (!draft || !draftLineCount) {
       financeReceiptLog('validation:error', { reason: 'empty-lines' });
-      toast('No hay lineas para confirmar');
+      const message = 'No hay líneas para confirmar';
+      setProductsReceiptError(message);
+      toast(message);
       return;
     }
     if (activeTicketMeta.accountedTxId) {
       financeReceiptLog('validation:error', { reason: 'already-accounted', txId: activeTicketMeta.accountedTxId });
-      toast('Este ticket ya está contabilizado');
+      const message = 'Este ticket ya está contabilizado';
+      setProductsReceiptError(message);
+      toast(message);
       return;
     }
     const persistedList = await ensurePersistedActiveProductsList(draft);
     const persistedTicketMeta = persistedList.tickets?.[activeTicketId] || {};
     if (persistedTicketMeta.accountedTxId) {
       financeReceiptLog('validation:error', { reason: 'already-accounted-persisted', txId: persistedTicketMeta.accountedTxId });
-      toast('Este ticket ya fue contabilizado');
+      const message = 'Este ticket ya fue contabilizado';
+      setProductsReceiptError(message);
+      toast(message);
       return;
     }
 
+    const persistedActiveTicketLines = Object.fromEntries(
+      Object.entries(persistedList.lines || {}).filter(([, line]) => String(line?.ticketId || persistedList.primaryTicketId || '').trim() === activeTicketId),
+    );
     const confirmedAtTs = nowTs();
     const confirmedDateISO = toIsoDay(String(activeTicketMeta.plannedFor || persistedList.plannedFor || dayKeyFromTs(confirmedAtTs))) || dayKeyFromTs(confirmedAtTs);
     const ticketPayload = normalizeProductsHubList(persistedList.id, {
       ...persistedList,
       store: activeTicketMeta.store || persistedList.store,
       accountId: activeTicketMeta.accountId || persistedList.accountId,
+      ticketCategoryId: activeTicketMeta.ticketCategoryId || persistedList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '',
       paymentMethod: activeTicketMeta.paymentMethod || persistedList.paymentMethod,
       plannedFor: activeTicketMeta.plannedFor || persistedList.plannedFor,
       confirmedAt: confirmedAtTs,
@@ -6110,23 +6197,22 @@ async function confirmProductsTicketFromDom() {
       ticketId: activeTicketId,
       ticketLabel: activeTicketMeta.label || '',
       ticketRef: activeTicketMeta.label ? `ticket ${activeTicketMeta.label}` : `ticket ${activeTicketId}`,
-      lines: activeTicketLines,
+      lines: persistedActiveTicketLines,
     });
 
     const validation = validateProductsTicketForConfirm(ticketPayload, activeTicketId, activeTicketMeta);
     if (!validation.ok) {
-      if (validation.reason === 'missing-category') {
-        toast('Selecciona una categoría vinculada antes de confirmar');
-      }
       financeReceiptLog('validation:error', {
         reason: validation.reason,
         ticketId: activeTicketId,
       });
-      toast(validation.message || 'No se puede confirmar el ticket');
+      const message = validation.message || 'No se puede confirmar el ticket';
+      setProductsReceiptError(message);
+      toast(message);
       return;
     }
-    console.info('[ticket:confirm:category]', { ticketCategoryId: validation.ticketCategoryId });
-    console.info('[ticket:confirm:ticketPayload]', ticketPayload);
+    ticketPayload.ticketCategoryId = validation.ticketCategoryId;
+    console.log('[ticket:confirm:ticketPayload]', ticketPayload);
 
     financeReceiptLog('confirm:start', {
       ticketId: activeTicketId,
@@ -6138,48 +6224,45 @@ async function confirmProductsTicketFromDom() {
 
     const movementId = String(push(ref(db, `${state.financePath}/transactions`)).key || createFinanceRecordId('tx')).trim();
     const ticketId = createFinanceRecordId('ticket');
-    const estimatedTotal = Object.values(activeTicketLines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.estimatedPrice, 0)), 0);
+    const estimatedTotal = Object.values(persistedActiveTicketLines || {}).reduce((sum, line) => sum + (Math.max(1, Number(line.qty || 1)) * normalizeProductPositiveNumber(line.estimatedPrice, 0)), 0);
     const remainingLines = Object.fromEntries(
       Object.entries(persistedList.lines || {}).filter(([, line]) => String(line?.ticketId || persistedList.primaryTicketId || '').trim() !== activeTicketId),
     );
     const nextTicketsMeta = Object.fromEntries(
-      Object.entries(persistedList.tickets || {}).map(([ticketMetaId, ticketMeta]) => {
-        if (ticketMetaId !== activeTicketId) return [ticketMetaId, ticketMeta];
-        return [
-          ticketMetaId,
-          normalizeProductsListTicketMeta(ticketMetaId, {
-            ...ticketMeta,
-            confirmedAt: confirmedAtTs,
-            accountedTxId: movementId,
-            confirmedTicketId: ticketId,
-            updatedAt: confirmedAtTs,
-          }),
-        ];
-      }),
+      Object.entries(persistedList.tickets || {})
+        .filter(([ticketMetaId]) => ticketMetaId !== activeTicketId)
+        .map(([ticketMetaId, ticketMeta]) => [ticketMetaId, normalizeProductsListTicketMeta(ticketMetaId, ticketMeta)]),
     );
-    const remainingTicketIds = Object.keys(nextTicketsMeta).filter((ticketMetaId) => ticketMetaId !== activeTicketId);
+    const remainingTicketIds = Object.keys(nextTicketsMeta);
     const nextActiveTicketId = remainingTicketIds.find((ticketMetaId) => (
       Object.values(remainingLines).some((line) => String(line?.ticketId || '').trim() === ticketMetaId)
-    )) || remainingTicketIds[0] || persistedList.primaryTicketId;
+    )) || remainingTicketIds[0] || '';
+    const nextPrimaryTicketId = remainingTicketIds.includes(String(persistedList.primaryTicketId || ''))
+      ? String(persistedList.primaryTicketId || '')
+      : (nextActiveTicketId || remainingTicketIds[0] || String(persistedList.primaryTicketId || activeTicketId || 'ticket-1'));
     const convertedList = ensureProductsListTickets({
       ...persistedList,
       lines: remainingLines,
       tickets: nextTicketsMeta,
+      ticketCategoryId: validation.ticketCategoryId,
       status: Object.keys(remainingLines).length ? 'draft' : 'converted',
       sourceTicketId: Object.keys(remainingLines).length ? persistedList.sourceTicketId : ticketId,
-      activeTicketId: nextActiveTicketId,
-      updatedAt: nowTs(),
+      primaryTicketId: nextPrimaryTicketId,
+      activeTicketId: nextActiveTicketId || nextPrimaryTicketId,
+      updatedAt: confirmedAtTs,
     });
     const nextActiveList = createEmptyProductsList({
       name: 'Lista activa',
       store: validation.store,
       accountId: validation.accountId,
+      ticketCategoryId: validation.ticketCategoryId,
       paymentMethod: ticketPayload.paymentMethod,
     });
     const shouldRotateList = !Object.keys(remainingLines).length;
     const ticketRecord = normalizeProductsHubTicket(ticketId, {
       listId: persistedList.id,
       txId: movementId,
+      categoryId: validation.ticketCategoryId,
       store: validation.store,
       accountId: validation.accountId,
       paymentMethod: ticketPayload.paymentMethod,
@@ -6188,7 +6271,7 @@ async function confirmProductsTicketFromDom() {
       confirmedAt: confirmedAtTs,
       estimatedTotal,
       actualTotal: validation.total,
-      lines: activeTicketLines,
+      lines: persistedActiveTicketLines,
       createdAt: confirmedAtTs,
       updatedAt: confirmedAtTs,
     });
@@ -6199,7 +6282,6 @@ async function confirmProductsTicketFromDom() {
       [productsHubPath('settings/activeListId')]: shouldRotateList ? nextActiveList.id : convertedList.id,
     };
 
-    console.info('[ticket:confirm]', { ticketId: activeTicketId, confirmedDateISO });
     if (validation.ticketCategoryId !== String(state.productsHub?.settings?.ticketCategoryId || '').trim()) {
       shoppingHubUpdates[productsHubPath('settings/ticketCategoryId')] = validation.ticketCategoryId;
       state.productsHub = state.productsHub || {};
@@ -6216,7 +6298,7 @@ async function confirmProductsTicketFromDom() {
       receiptId: ticketId,
       extraUpdates: shoppingHubUpdates,
     });
-    console.info('[ticket:confirm:movementPayload]', txResult?.payload || null);
+    console.log('[ticket:confirm:movementPayload]', txResult?.payload || null);
 
     const primaryCacheKey = getPrimaryFinanceCacheKey();
     patchFinanceCacheRoot(primaryCacheKey, `transactions/${txResult.txId}`, txResult.payload);
@@ -6247,7 +6329,8 @@ async function confirmProductsTicketFromDom() {
     });
 
     setReceiptSelectionMap(shouldRotateList ? nextActiveList.id : convertedList.id, {});
-    console.info('[ticket:confirm:success]', { ticketId: activeTicketId, txId: txResult.txId });
+    setProductsReceiptError('');
+    console.log('[ticket:confirm:success]', { ticketId, txId: txResult.txId });
     toast('Compra confirmada y gasto registrado');
   } catch (error) {
     const message = error?.message || String(error || '');
@@ -6255,8 +6338,10 @@ async function confirmProductsTicketFromDom() {
       stage: 'confirm',
       message,
     });
-    console.error('[ticket:confirm:error]', { message, error });
-    toast(message && !/^receipt-/.test(message) ? message : 'No se pudo confirmar la compra');
+    console.error('[ticket:confirm:error]', error);
+    const visibleMessage = resolveProductsTicketConfirmErrorMessage(error);
+    setProductsReceiptError(visibleMessage);
+    toast(visibleMessage);
   } finally {
     setProductsReceiptBusy(false);
   }
@@ -6336,6 +6421,7 @@ function normalizeProductsHubList(id = '', payload = {}) {
     store: normalizeFoodName(payload?.store || ''),
     accountId: normalizeProductText(payload?.accountId || ''),
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
+    ticketCategoryId: normalizeProductText(payload?.ticketCategoryId || ''),
     plannedFor: toIsoDay(String(payload?.plannedFor || '')) || dayKeyFromTs(nowTs()),
     notes: normalizeProductText(payload?.notes || ''),
     ticketId: normalizeProductText(payload?.ticketId || ''),
@@ -6363,6 +6449,7 @@ function normalizeProductsHubTicket(id = '', payload = {}) {
     id: safeId,
     listId: normalizeProductText(payload?.listId || ''),
     txId: normalizeProductText(payload?.txId || ''),
+    categoryId: normalizeProductText(payload?.categoryId || payload?.ticketCategoryId || ''),
     store: normalizeFoodName(payload?.store || ''),
     accountId: normalizeProductText(payload?.accountId || ''),
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
@@ -6392,6 +6479,7 @@ function normalizeProductsHub(rawHub = {}) {
     defaultAccountId: normalizeProductText(raw?.settings?.defaultAccountId || ''),
     defaultStore: normalizeFoodName(raw?.settings?.defaultStore || ''),
     defaultPaymentMethod: normalizeProductText(raw?.settings?.defaultPaymentMethod || 'Tarjeta') || 'Tarjeta',
+    ticketCategoryId: normalizeProductText(raw?.settings?.ticketCategoryId || ''),
     activeListId: normalizeProductText(raw?.settings?.activeListId || ''),
   };
   return {
@@ -15232,7 +15320,8 @@ view.addEventListener('focusout', async (event) => {
       toggleReceiptLineSelection(event.target.dataset.productsReceiptSelect, event.target.checked);
       return;
     }
-    if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment]')) {
+    if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment], [data-products-ticket-category]')) {
+      if (state.productsReceiptError) setProductsReceiptError('');
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;

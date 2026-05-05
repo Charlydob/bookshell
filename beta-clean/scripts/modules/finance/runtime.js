@@ -5790,11 +5790,20 @@ function validateProductsTicketForConfirm(list = {}, activeTicketId = '', active
     return { ok: false, reason: 'missing-store', message: 'Selecciona un supermercado antes de confirmar' };
   }
 
+  const ticketCategoryId = String(activeTicketMeta.ticketCategoryId || list.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '').trim();
+  if (!ticketCategoryId) {
+    return { ok: false, reason: 'missing-ticket-category', message: 'Selecciona una categoría para registrar el ticket' };
+  }
+  if (!state.balance?.categories?.[ticketCategoryId]) {
+    return { ok: false, reason: 'invalid-ticket-category', message: 'La categoría vinculada ya no existe. Selecciona otra.' };
+  }
+
   return {
     ok: true,
     total,
     accountId,
     store,
+    ticketCategoryId,
     lineCount: normalizedLines.length,
     activeTicketId: String(activeTicketId || '').trim() || 'ticket-1',
     lines: normalizedLines,
@@ -5932,7 +5941,8 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
   const confirmedAt = Number(list.confirmedAt || list.registeredAt || 0);
   const confirmedDateISO = confirmedAt > 0 ? dayKeyFromTs(confirmedAt) : '';
   const dateISO = toIsoDay(String(list.confirmedDateISO || confirmedDateISO || list.plannedFor || '')) || dayKeyFromTs(nowTs());
-  const category = 'comida';
+  const category = String(list.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '').trim();
+  if (!category) throw new Error('receipt-missing-ticket-category');
   const ticketReference = normalizeProductText(list.ticketRef || list.ticketLabel || '');
   const note = normalizeProductText(
     list.notes
@@ -6001,7 +6011,6 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
   };
   const updatesMap = {
     [`${state.financePath}/transactions/${saveId}`]: payload,
-    [`${state.financePath}/catalog/categories/${category}`]: { name: category, lastUsedAt: nowTs() },
     ...Object.fromEntries(Object.entries(options.extraUpdates || {}).filter(([path]) => String(path || '').trim())),
   };
   financeReceiptLog('payload', {
@@ -6185,10 +6194,17 @@ async function confirmProductsTicketFromDom() {
     };
 
     console.info('[ticket:confirm]', { ticketId: activeTicketId, confirmedDateISO });
+    if (validation.ticketCategoryId !== String(state.productsHub?.settings?.ticketCategoryId || '').trim()) {
+      shoppingHubUpdates[productsHubPath('settings/ticketCategoryId')] = validation.ticketCategoryId;
+      state.productsHub = state.productsHub || {};
+      state.productsHub.settings = { ...(state.productsHub.settings || {}), ticketCategoryId: validation.ticketCategoryId };
+    }
+
     const txResult = await saveProductsPurchaseTransaction({
       ...ticketPayload,
       accountId: validation.accountId,
       store: validation.store,
+      ticketCategoryId: validation.ticketCategoryId,
     }, {
       txId: movementId,
       receiptId: ticketId,
@@ -6197,7 +6213,6 @@ async function confirmProductsTicketFromDom() {
 
     const primaryCacheKey = getPrimaryFinanceCacheKey();
     patchFinanceCacheRoot(primaryCacheKey, `transactions/${txResult.txId}`, txResult.payload);
-    patchFinanceCacheRoot(primaryCacheKey, 'catalog/categories/comida', { name: 'comida', lastUsedAt: nowTs() });
     Object.entries(shoppingHubUpdates).forEach(([fullPath, value]) => {
       const safePath = String(fullPath || '');
       const prefix = `${state.financePath}/shoppingHub/`;

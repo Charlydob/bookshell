@@ -127,6 +127,7 @@ const HABITS_SCHEDULE_STORAGE = "bookshell-habits-schedule-cache:v1";
 const HABITS_SCHEDULE_VIEW_MODE_STORAGE = "scheduleViewMode";
 const HABITS_SCHEDULE_SCORE_MODE_STORAGE = "scheduleScoreMode";
 const HABIT_QUICK_PANEL_STORAGE = "bookshell-habits-quick-panel:v1";
+const HISTORY_STATS_COLLAPSED_STORAGE = "bookshell-habits-history-stats-collapsed:v1";
 const DEFAULT_COLOR = "#7f5dff";
 const PARAM_EMPTY_LABEL = "Sin parámetro";
 const PARAM_COLOR_PALETTE = [
@@ -226,6 +227,7 @@ let habitStatsView = "MEAN";
 let habitStatsGranularity = "day";
 let habitStatsBaseMode = "CALENDAR";
 let habitStatsSort = "desc";
+let habitHistoryStatsCollapsed = (()=>{ try { return localStorage.getItem(HISTORY_STATS_COLLAPSED_STORAGE)==='1'; } catch(_) { return true; } })();
 const habitCompareAggregateCache = new Map();
 const habitCompareAverageCache = new Map();
 const habitStatsSeriesCache = new Map();
@@ -244,6 +246,7 @@ let scheduleConfigOpen = false;
 let scheduleViewMode = loadScheduleViewMode();
 let scheduleScoreMode = loadScheduleScoreMode();
 let scheduleCoinSpenderState = null;
+let scheduleTimelineDateKey = todayKey();
 let habitDetailScheduleSelection = { types: ["Libre"], dows: [] };
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
@@ -1226,6 +1229,8 @@ function buildScheduleDayData(dateKey = scheduleDayKeyFromTs(Date.now(), schedul
 
 function buildScheduleDaySummaryPayload(dateKey = todayKey(), source = "manual") {
   const data = buildScheduleDayData(dateKey);
+  if (!scheduleTimelineDateKey) scheduleTimelineDateKey = currentDateKey;
+  const dayTimelineHtml = renderScheduleDayTimelineHtml(scheduleTimelineDateKey);
   const stats = data.headerStats || computeScheduleHeaderStats(dateKey, {}, {}, {}, {});
   const perHabit = {};
   [...data.rows, ...data.limits, ...data.neutrals, ...(data.neutralPlannedRows || [])].forEach((row) => {
@@ -1764,6 +1769,8 @@ function renderSchedule(reason = "manual") {
   console.warn("EDITOR RENDER", reason);
   const currentDateKey = scheduleDayKeyFromTs(Date.now(), scheduleState?.settings?.dayCloseTime || "00:00");
   const data = buildScheduleDayData(currentDateKey);
+  if (!scheduleTimelineDateKey) scheduleTimelineDateKey = currentDateKey;
+  const dayTimelineHtml = renderScheduleDayTimelineHtml(scheduleTimelineDateKey);
   const stats = data.headerStats || computeScheduleHeaderStats(currentDateKey, scheduleTemplateForDate(currentDateKey).template || {}, {}, {}, {});
   scheduleCoinSpenderState = null;
   const threshold = scheduleState?.settings?.successThreshold || 70;
@@ -1905,6 +1912,12 @@ function renderSchedule(reason = "manual") {
     </section>
     <section class="habits-history-section">
       <div class="habits-history-section-header">
+        <div class="habits-history-section-title">Horario del día</div>
+      </div>
+      ${dayTimelineHtml}
+    </section>
+    <section class="habits-history-section">
+      <div class="habits-history-section-header">
         <div class="habits-history-section-title">Calendario de resultados</div>
         <div class="habits-history-month-nav">
           <button class="habits-history-month-nav-btn" type="button" data-role="schedule-cal-prev">←</button>
@@ -2027,6 +2040,17 @@ function renderSchedule(reason = "manual") {
     scheduleCalYear = next.getFullYear();
     scheduleCalMonth = next.getMonth();
     renderSchedule("manual");
+  });
+
+  $habitScheduleView.querySelector('[data-role="schedule-day-prev"]')?.addEventListener("click", (event) => {
+    const nextKey = event.currentTarget?.getAttribute('data-day') || dateKeyLocal(addDays(parseDateKey(scheduleTimelineDateKey) || new Date(), -1));
+    scheduleTimelineDateKey = nextKey;
+    renderSchedule('manual');
+  });
+  $habitScheduleView.querySelector('[data-role="schedule-day-next"]')?.addEventListener("click", (event) => {
+    const nextKey = event.currentTarget?.getAttribute('data-day') || dateKeyLocal(addDays(parseDateKey(scheduleTimelineDateKey) || new Date(), 1));
+    scheduleTimelineDateKey = nextKey;
+    renderSchedule('manual');
   });
   $habitScheduleView.querySelector('[data-role="schedule-close-day"]')?.addEventListener("click", () => {
     closeScheduleDay(currentDateKey, "manual");
@@ -2803,10 +2827,14 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
     const prevRaw = habitSessions[habitId][dateKey];
     const prevSessions = Array.isArray(prevRaw?.sessions) ? prevRaw.sessions.slice() : [];
     if (bounds) {
+      const localDayKey = dateKeyLocal(new Date(bounds.startTs));
       prevSessions.push({
         startTs: bounds.startTs,
         endTs: bounds.endTs,
-        durationSec: Math.max(1, Math.round((bounds.endTs - bounds.startTs) / 1000))
+        startedAt: bounds.startTs,
+        endedAt: bounds.endTs,
+        durationSec: Math.max(1, Math.round((bounds.endTs - bounds.startTs) / 1000)),
+        dateKey: localDayKey
       });
       if (!habitSessionTimeline[habitId]) habitSessionTimeline[habitId] = [];
       habitSessionTimeline[habitId].push({ habitId, ...prevSessions[prevSessions.length - 1], dateKey, source: "live" });
@@ -7958,6 +7986,13 @@ function getStatExplanation(view, granularity, baseMode) {
 
 function renderHistoryStatsCard(habitsList) {
   const section = createHistorySection("Estadísticas");
+  section.section.classList.toggle('is-collapsed', !!habitHistoryStatsCollapsed);
+  const toggleBtn = document.createElement('button');
+  toggleBtn.type = 'button';
+  toggleBtn.className = 'habits-history-action-btn';
+  toggleBtn.textContent = habitHistoryStatsCollapsed ? 'Mostrar' : 'Ocultar';
+  toggleBtn.addEventListener('click', ()=>{ habitHistoryStatsCollapsed = !habitHistoryStatsCollapsed; try { localStorage.setItem(HISTORY_STATS_COLLAPSED_STORAGE, habitHistoryStatsCollapsed ? '1':'0'); } catch(_){}; renderHistory(); });
+  section.header.appendChild(toggleBtn);
   const controls = document.createElement("div");
   controls.className = "habits-history-section-controls habit-stats-controls";
 
@@ -8038,7 +8073,7 @@ function renderHistoryStatsCard(habitsList) {
     rowEl.appendChild(value);
     list.appendChild(rowEl);
   });
-  section.body.appendChild(list);
+  if (!habitHistoryStatsCollapsed) section.body.appendChild(list);
 
   const explanation = getStatExplanation(habitStatsView, habitStatsGranularity, habitStatsBaseMode);
   const box = document.createElement("div");
@@ -8053,7 +8088,7 @@ function renderHistoryStatsCard(habitsList) {
     p.textContent = line;
     box.appendChild(p);
   });
-  section.body.appendChild(box);
+  if (!habitHistoryStatsCollapsed) section.body.appendChild(box);
 
   return section.section;
 }
@@ -8387,6 +8422,23 @@ function isHabitBudgetCompleted(habit) {
   return progress.target > 0 && progress.value >= progress.target;
 }
 
+
+function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
+  const date = parseDateKey(dateKey) || new Date();
+  const prev = dateKeyLocal(addDays(date, -1));
+  const next = dateKeyLocal(addDays(date, 1));
+  const rows = [];
+  activeHabits().forEach((habit)=>{
+    const sessions = getSessionsForHabitDate(habit.id, dateKey) || [];
+    sessions.forEach((s)=>rows.push({habit, ...s}));
+  });
+  const timed = rows.filter((r)=>Number(r.startTs)>0 && Number(r.endTs)>Number(r.startTs)).sort((a,b)=>a.startTs-b.startTs);
+  const legacy = rows.filter((r)=>!(Number(r.startTs)>0 && Number(r.endTs)>Number(r.startTs)));
+  let blocks = timed.map((r)=>`<div class="habit-day-slot" style="--slot-color:${escapeHtml(resolveHabitColor(r.habit)||DEFAULT_COLOR)}"><div><strong>${escapeHtml(r.habit?.name||'Hábito')}</strong></div><div>${escapeHtml(formatTime(Number(r.startTs)))}-${escapeHtml(formatTime(Number(r.endTs)))} · ${escapeHtml(formatMinutes(minutesFromSession(r)))}</div></div>`).join('');
+  if (legacy.length) blocks += `<div class="habit-day-slot is-legacy">${legacy.length} sesiones sin hora</div>`;
+  if (!blocks) blocks = '<div class="habits-history-empty">Sin sesiones en este día.</div>';
+  return `<div class="habit-day-timeline"><div class="habit-day-timeline-nav"><button type="button" class="habits-history-month-nav-btn" data-role="schedule-day-prev" data-day="${prev}">←</button><div class="habits-history-month-label">${escapeHtml(formatShortDate(dateKey,true))}</div><button type="button" class="habits-history-month-nav-btn" data-role="schedule-day-next" data-day="${next}">→</button></div>${blocks}</div>`;
+}
 function formatHistoryMonthLabel(year, month) {
   const date = new Date(year, month, 1);
   return date.toLocaleDateString("es-ES", { month: "long", year: "numeric" });

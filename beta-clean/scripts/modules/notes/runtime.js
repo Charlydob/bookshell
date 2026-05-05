@@ -3124,7 +3124,7 @@ function buildReminderCalendarPanelMarkup(dateKey = "", reminders = []) {
             const categories = Array.isArray(reminder?.categories) ? reminder.categories : [];
             const timeLabel = buildReminderDayTimeLabel(reminder, dateKey);
             return `
-              <article class="notes-reminders-calendar-panel__item is-${escapeHtml(computedStatus)}" style="${escapeHtml(accentStyle)}">
+              <article class="notes-reminders-calendar-panel__item ${item?.status === 'completado' ? 'reminder--done' : ''} is-${escapeHtml(computedStatus)}" style="${escapeHtml(accentStyle)}">
                 <button
                   class="notes-reminders-calendar-panel__itemMain"
                   type="button"
@@ -3195,7 +3195,7 @@ function renderReminderCalendarView(reminders = []) {
           <div class="notes-reminders-calendar__dots">
             ${visibleDots.map((reminder) => `
               <button
-                class="notes-reminders-calendar__dot"
+                class="notes-reminders-calendar__dot ${reminder?.status === 'completado' ? 'reminder-dot--done' : ''}"
                 type="button"
                 title="${escapeHtml(reminder?.title || "Recordatorio")}"
                 aria-label="${escapeHtml(reminder?.title || "Recordatorio")}"
@@ -4020,6 +4020,7 @@ function getReminderNotificationItems() {
 }
 
 function runReminderChecks() {
+  console.info('[reminders:global-check]', { total: (state.reminders || []).length });
   const now = Date.now();
   for (const reminder of state.reminders || []) {
     if (getReminderComputedStatus(reminder) !== "pendiente") continue;
@@ -4035,7 +4036,8 @@ function runReminderChecks() {
         const label = alert.unit === "days" ? "días" : alert.unit === "hours" ? "horas" : "minutos";
         const prefix = reminder.type === "cumpleaños" ? "🎂" : (reminder.type === "checklist" ? "🧾" : "⏰");
         const noun = reminder.type === "checklist" ? "checklist" : "recordatorio";
-        appendReminderToast(`${prefix} Quedan ${alert.amount} ${label} para ${noun}: ${reminder.title || "sin título"}`, reminder.id, key);
+        const msg = alert.unit === 'days' ? `${prefix} En ${alert.amount} días: ${reminder.title || "sin título"}` : `${prefix} Quedan ${alert.amount} ${label} para ${noun}: ${reminder.title || "sin título"}`;
+        appendReminderToast(msg, reminder.id, key);
       }
     }
     const dueKey = `${reminder.id}:due:${targetAt}`;

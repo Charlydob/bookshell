@@ -2350,3 +2350,6 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
 }
 /* #endregion recordatorios */
 
+
+.reminder--done{color:#63d66f;}
+.reminder-dot--done{background:#3bcf5a !important;}

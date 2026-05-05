@@ -5128,7 +5128,15 @@ button#habit-detail-edit, #habit-detail-close{
 
   
 /* #endregion */
+/* #region HORARIO */
 
+    .habit-daySchedule__body{
+    display: grid  !important;
+    grid-template-columns: 1fr 40px !important;
+  }
+
+
+/* #endregion HORARIO */
 /* #region reportes */
 
 .habit-kpi-grid.app-kpi-grid{
@@ -5152,6 +5160,135 @@ button#habit-detail-edit, #habit-detail-close{
   border: 1px rgba(177, 177, 177, 0.3) solid;
   border-radius: 4px;
   padding: 4px;
+}
+
+.habit-daySchedule {
+  display: grid;
+  gap: 12px;
+}
+
+.habit-daySchedule__nav {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 2px;
+}
+
+.habit-daySchedule__navBtn {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  margin: 0;
+  justify-self: center;
+  border-radius: 999px;
+}
+
+.habit-daySchedule__date {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgba(255,255,255,0.92);
+}
+
+.habit-daySchedule__timeline {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  padding-left: 22px;
+}
+
+.habit-daySchedule__timeline::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.24), rgba(255,255,255,0.08));
+}
+
+.habit-daySchedule__item {
+  position: relative;
+  min-width: 0;
+}
+
+.habit-daySchedule__marker {
+  position: absolute;
+  left: -18px;
+  top: 18px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--slot-color, rgba(255,255,255,0.72));
+  box-shadow: 0 0 0 4px rgba(10, 10, 14, 0.88), 0 0 18px color-mix(in srgb, var(--slot-color, #8b8b95) 35%, transparent);
+}
+
+.habit-daySchedule__card {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--slot-color, rgba(255,255,255,0.18)) 42%, rgba(255,255,255,0.14));
+  border-left: 4px solid var(--slot-color, rgba(255,255,255,0.5));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--slot-color, rgba(255,255,255,0.08)) 12%, rgba(255,255,255,0.03)), rgba(255,255,255,0.02)),
+    var(--glass);
+  box-shadow: 0 14px 30px rgba(0,0,0,0.18);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.habit-daySchedule__time {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: rgba(255,255,255,0.64);
+}
+
+.habit-daySchedule__body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.habit-daySchedule__title {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.96);
+}
+
+.habit-daySchedule__duration {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.72);
+}
+
+.habit-daySchedule__untimed {
+  justify-self: start;
+  margin-left: 2px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: var(--glass-2);
+  color: rgba(255,255,255,0.7);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+@media (max-width: 520px) {
+  .habit-daySchedule__body {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .habit-daySchedule__duration {
+    font-size: 11px;
+  }
 }
 /* #endregion */
 

@@ -1841,6 +1841,15 @@ function renderSchedule(reason = "manual") {
       <div class="habit-schedule-total-row"><strong>Planificado hoy:</strong> ${formatMinutes(stats.totalPlanned24hMinEq)} / 24h</div>
       <div class="habit-schedule-total-sub">Sin asignar ${formatMinutes(stats.remaining24hMinEq)}${includeLimits24h ? " · incluye límites" : " · sin límites"}</div>
     </section>
+
+            <section class="habits-history-section">
+      <div class="habits-history-section-header">
+        
+      <div class="habits-history-section-title">Horario del día</div>
+      </div>
+      ${dayTimelineHtml}
+    </section>
+
     <section class="habits-history-section habit-schedule-controls">
 
       <button class="btn-habits-horario" type="button" data-role="schedule-score-toggle">${scheduleScoreMode === "credits" ? "Aprovechado" : "Plan"}</button>
@@ -1852,6 +1861,9 @@ function renderSchedule(reason = "manual") {
       <button class="btn-habits-horario" type="button" data-role="schedule-close-day">Cerrar día</button>
 
     </section>
+
+
+    
     <section class="habits-history-section habit-schedule-config ${scheduleConfigOpen ? "" : "is-hidden"}">
       <div class="habits-history-section-header">
         <button class="habits-history-section-title habit-schedule-config-toggle" type="button" data-role="schedule-config-toggle" aria-expanded="${scheduleConfigOpen ? "true" : "false"}">Plantillas</button>
@@ -1895,6 +1907,8 @@ function renderSchedule(reason = "manual") {
         <button class="btn ghost btn-compact" type="button" data-role="schedule-cancel-editor">Cerrar</button>
       </div>
     </section>
+
+
     <section class="habits-history-section">
       <div class="habit-schedule-list" data-role="schedule-progress-list"></div>
       <details class="habit-accordion habit-schedule-extras" data-role="schedule-limits">
@@ -1910,12 +1924,10 @@ function renderSchedule(reason = "manual") {
         <div class="habit-accordion-body" data-role="schedule-neutrals-planned-list"></div>
       </details>
     </section>
-    <section class="habits-history-section">
-      <div class="habits-history-section-header">
-        <div class="habits-history-section-title">Horario del día</div>
-      </div>
-      ${dayTimelineHtml}
-    </section>
+   
+
+
+
     <section class="habits-history-section">
       <div class="habits-history-section-header">
         <div class="habits-history-section-title">Calendario de resultados</div>
@@ -8446,8 +8458,24 @@ function isHabitBudgetCompleted(habit) {
   return progress.target > 0 && progress.value >= progress.target;
 }
 
+function formatScheduleTime(value) {
+  if (!value) return "—";
+  const date = value instanceof Date
+    ? value
+    : (typeof value === "number" ? new Date(value) : new Date(value));
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleTimeString("es-ES", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
 
-function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
+function formatTime(value) {
+  return formatScheduleTime(value);
+}
+
+
+function renderScheduleDayTimelineHtmlLegacyUnused(dateKey = todayKey()) {
   const date = parseDateKey(dateKey) || new Date();
   const prev = dateKeyLocal(addDays(date, -1));
   const next = dateKeyLocal(addDays(date, 1));
@@ -8478,6 +8506,59 @@ function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
 function formatHistoryMonthLabel(year, month) {
   const date = new Date(year, month, 1);
   return date.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+}
+
+function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
+  const date = parseDateKey(dateKey) || new Date();
+  const prev = dateKeyLocal(addDays(date, -1));
+  const next = dateKeyLocal(addDays(date, 1));
+  const rows = [];
+  activeHabits().forEach((habit) => {
+    const sessions = getSessionsForHabitDate(habit.id, dateKey) || [];
+    sessions.forEach((session) => rows.push({ habit, ...session }));
+  });
+
+  const timed = rows
+    .map((row) => {
+      const bounds = parseSessionBounds(row);
+      return bounds ? { ...row, startTs: bounds.startTs, endTs: bounds.endTs } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.startTs - b.startTs);
+
+  const legacy = rows.filter((row) => !parseSessionBounds(row));
+
+  let blocks = timed.map((row) => {
+    const accent = escapeHtml(resolveHabitColor(row.habit) || DEFAULT_COLOR);
+    return `<article class="habit-daySchedule__item" style="--slot-color:${accent}">
+      <span class="habit-daySchedule__marker" aria-hidden="true"></span>
+      <div class="habit-daySchedule__card">
+        <div class="habit-daySchedule__time">${escapeHtml(formatScheduleTime(row.startTs))}–${escapeHtml(formatScheduleTime(row.endTs))}</div>
+        <div class="habit-daySchedule__body">
+          <strong class="habit-daySchedule__title">${escapeHtml(row.habit?.name || "Hábito")}</strong>
+          <span class="habit-daySchedule__duration">${escapeHtml(formatMinutes(minutesFromSession(row)))}</span>
+        </div>
+      </div>
+    </article>`;
+  }).join("");
+
+  if (legacy.length) {
+    const legacyLabel = legacy.length === 1
+      ? "1 sesión antigua sin hora"
+      : `${legacy.length} sesiones antiguas sin hora`;
+    blocks += `<div class="habit-daySchedule__untimed">${escapeHtml(legacyLabel)}</div>`;
+  }
+
+  if (!blocks) blocks = '<div class="habits-history-empty">Sin sesiones en este día.</div>';
+
+  return `<section class="habit-daySchedule">
+    <div class="habit-daySchedule__nav">
+      <button type="button" class="habits-history-month-nav-btn habit-daySchedule__navBtn" data-role="schedule-day-prev" data-day="${prev}" aria-label="Día anterior">←</button>
+      <div class="habit-daySchedule__date">${escapeHtml(formatShortDate(dateKey, true))}</div>
+      <button type="button" class="habits-history-month-nav-btn habit-daySchedule__navBtn" data-role="schedule-day-next" data-day="${next}" aria-label="Día siguiente">→</button>
+    </div>
+    <div class="habit-daySchedule__timeline">${blocks}</div>
+  </section>`;
 }
 
 function getHistoryWeekAnchorDate() {

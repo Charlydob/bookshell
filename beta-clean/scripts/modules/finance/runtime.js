@@ -6071,6 +6071,7 @@ async function confirmProductsTicketFromDom() {
   financeReceiptLog('food-history-btn:click');
   setProductsReceiptBusy(true);
   try {
+    console.info('[ticket:confirm:start]');
     const draft = ensureProductsListTickets(readProductsListDraftFromDom());
     const activeTicketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
     const activeTicketMeta = draft.tickets?.[activeTicketId] || {};
@@ -6114,6 +6115,9 @@ async function confirmProductsTicketFromDom() {
 
     const validation = validateProductsTicketForConfirm(ticketPayload, activeTicketId, activeTicketMeta);
     if (!validation.ok) {
+      if (validation.reason === 'missing-category') {
+        toast('Selecciona una categoría vinculada antes de confirmar');
+      }
       financeReceiptLog('validation:error', {
         reason: validation.reason,
         ticketId: activeTicketId,
@@ -6121,6 +6125,8 @@ async function confirmProductsTicketFromDom() {
       toast(validation.message || 'No se puede confirmar el ticket');
       return;
     }
+    console.info('[ticket:confirm:category]', { ticketCategoryId: validation.ticketCategoryId });
+    console.info('[ticket:confirm:ticketPayload]', ticketPayload);
 
     financeReceiptLog('confirm:start', {
       ticketId: activeTicketId,
@@ -6210,6 +6216,7 @@ async function confirmProductsTicketFromDom() {
       receiptId: ticketId,
       extraUpdates: shoppingHubUpdates,
     });
+    console.info('[ticket:confirm:movementPayload]', txResult?.payload || null);
 
     const primaryCacheKey = getPrimaryFinanceCacheKey();
     patchFinanceCacheRoot(primaryCacheKey, `transactions/${txResult.txId}`, txResult.payload);
@@ -6240,6 +6247,7 @@ async function confirmProductsTicketFromDom() {
     });
 
     setReceiptSelectionMap(shouldRotateList ? nextActiveList.id : convertedList.id, {});
+    console.info('[ticket:confirm:success]', { ticketId: activeTicketId, txId: txResult.txId });
     toast('Compra confirmada y gasto registrado');
   } catch (error) {
     const message = error?.message || String(error || '');
@@ -6247,6 +6255,7 @@ async function confirmProductsTicketFromDom() {
       stage: 'confirm',
       message,
     });
+    console.error('[ticket:confirm:error]', { message, error });
     toast(message && !/^receipt-/.test(message) ? message : 'No se pudo confirmar la compra');
   } finally {
     setProductsReceiptBusy(false);
@@ -15864,6 +15873,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
           || dateISO)
         : '';
       const payload = {
+        ...(prev && typeof prev === 'object' ? clonePlain(prev) : {}),
         id: saveId,
         type,
         amount,
@@ -15873,6 +15883,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         fromAccountId: type === 'transfer' ? fromAccountId : '',
         toAccountId: type === 'transfer' ? toAccountId : '',
         category,
+        categoryId: String(form.get('categoryId') || prev?.categoryId || category || '').trim(),
         note,
         ...(Number.isFinite(nextPersonalRatio) ? { personalRatio: nextPersonalRatio } : {}),
         linkedHabitId,
@@ -15883,10 +15894,11 @@ if (event.target.matches('[data-fixed-expense-form]')) {
           recurringDueDateISO: scheduledRecurringDateISO,
         } : {}),
         extras: extras || null,
-        status: 'synced',
+        status: String(prev?.status || 'synced').trim() || 'synced',
         updatedAt: writeTs,
         createdAt: Number(prev?.createdAt || 0) || writeTs
       };
+      if (!payload.dateISO) payload.dateISO = `${dateISO}T00:00:00`;
       console.log('[finance:edit:save:payload]', {
         id: payload.id,
         date: payload.date,

@@ -2574,8 +2574,8 @@ function splitSessionByDay(startTs, endTs) {
 
 function parseSessionBounds(rawSession) {
   if (!rawSession || typeof rawSession !== "object") return null;
-  const startTs = Number(rawSession.startTs);
-  let endTs = Number(rawSession.endTs);
+  const startTs = Number(rawSession.startTs ?? rawSession.startedAt);
+  let endTs = Number(rawSession.endTs ?? rawSession.endedAt);
   const durationSec = Math.max(0, Number(rawSession.durationSec) || 0);
   if (!Number.isFinite(startTs) || startTs <= 0) return null;
   if (!Number.isFinite(endTs) || endTs <= startTs) {
@@ -8432,10 +8432,22 @@ function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
     const sessions = getSessionsForHabitDate(habit.id, dateKey) || [];
     sessions.forEach((s)=>rows.push({habit, ...s}));
   });
-  const timed = rows.filter((r)=>Number(r.startTs)>0 && Number(r.endTs)>Number(r.startTs)).sort((a,b)=>a.startTs-b.startTs);
-  const legacy = rows.filter((r)=>!(Number(r.startTs)>0 && Number(r.endTs)>Number(r.startTs)));
-  let blocks = timed.map((r)=>`<div class="habit-day-slot" style="--slot-color:${escapeHtml(resolveHabitColor(r.habit)||DEFAULT_COLOR)}"><div><strong>${escapeHtml(r.habit?.name||'Hábito')}</strong></div><div>${escapeHtml(formatTime(Number(r.startTs)))}-${escapeHtml(formatTime(Number(r.endTs)))} · ${escapeHtml(formatMinutes(minutesFromSession(r)))}</div></div>`).join('');
-  if (legacy.length) blocks += `<div class="habit-day-slot is-legacy">${legacy.length} sesiones sin hora</div>`;
+  const timed = rows
+    .map((r) => {
+      const bounds = parseSessionBounds(r);
+      return bounds ? { ...r, startTs: bounds.startTs, endTs: bounds.endTs } : null;
+    })
+    .filter(Boolean)
+    .sort((a,b)=>a.startTs-b.startTs);
+  const legacy = rows.filter((r)=>!parseSessionBounds(r));
+  let blocks = timed.map((r)=>{
+    const startMin = new Date(r.startTs).getHours() * 60 + new Date(r.startTs).getMinutes();
+    const endMin = new Date(r.endTs).getHours() * 60 + new Date(r.endTs).getMinutes();
+    const topPct = Math.max(0, Math.min(100, (startMin / 1440) * 100));
+    const heightPct = Math.max(1.2, ((Math.max(endMin, startMin + 1) - startMin) / 1440) * 100);
+    return `<div class="habit-day-slot" style="--slot-color:${escapeHtml(resolveHabitColor(r.habit)||DEFAULT_COLOR)};--slot-top:${topPct.toFixed(2)}%;--slot-height:${heightPct.toFixed(2)}%"><div><strong>${escapeHtml(r.habit?.name||'Hábito')}</strong></div><div>${escapeHtml(formatTime(Number(r.startTs)))}–${escapeHtml(formatTime(Number(r.endTs)))} · ${escapeHtml(formatMinutes(minutesFromSession(r)))}</div></div>`;
+  }).join('');
+  if (legacy.length) blocks += `<div class="habit-day-slot is-legacy">Sesiones antiguas sin hora: ${legacy.length}</div>`;
   if (!blocks) blocks = '<div class="habits-history-empty">Sin sesiones en este día.</div>';
   return `<div class="habit-day-timeline"><div class="habit-day-timeline-nav"><button type="button" class="habits-history-month-nav-btn" data-role="schedule-day-prev" data-day="${prev}">←</button><div class="habits-history-month-label">${escapeHtml(formatShortDate(dateKey,true))}</div><button type="button" class="habits-history-month-nav-btn" data-role="schedule-day-next" data-day="${next}">→</button></div>${blocks}</div>`;
 }

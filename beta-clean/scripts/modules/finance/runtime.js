@@ -33,6 +33,7 @@ let financeNeedsLegacyAccountsMerge = false;
 let financeRenderPromise = null;
 let financeRenderQueued = false;
 let financePendingPreserveUi = true;
+let financeEditDraftLogTimer = 0;
 let financeRemoteApplyTimer = 0;
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
@@ -8255,14 +8256,25 @@ function openCreateMovementModal(overrides = {}) {
 
 function openEditMovementModal(movement = null) {
   const row = movement || null;
+  const clonedRow = row
+    ? (typeof structuredClone === 'function'
+      ? structuredClone(row)
+      : JSON.parse(JSON.stringify(row)))
+    : null;
+  state.editingMovementDraft = clonedRow;
+  console.log('[finance:edit:open]', {
+    txId: clonedRow?.id || '',
+    status: clonedRow?.status || '',
+    monthKey: clonedRow?.monthKey || '',
+  });
   resetMovementForm({
-    recurringId: String(row?.recurringId || '').trim(),
-    recurringMonthKey: recurringInstanceMonthKey(row) || normalizeRecurringMonthKey(row?.monthKey || row?.date || row?.dateISO || '') || getMonthKeyFromDate(),
-    recurringDueDateISO: String(row?.recurringDueDateISO || '').trim(),
+    recurringId: String(clonedRow?.recurringId || '').trim(),
+    recurringMonthKey: recurringInstanceMonthKey(clonedRow) || normalizeRecurringMonthKey(clonedRow?.monthKey || clonedRow?.date || clonedRow?.dateISO || '') || getMonthKeyFromDate(),
+    recurringDueDateISO: String(clonedRow?.recurringDueDateISO || '').trim(),
     recurringEnabled: false,
     mode: 'edit',
   });
-  state.modal = { type: 'tx', txId: String(row?.id || '').trim() };
+  state.modal = { type: 'tx', txId: String(clonedRow?.id || '').trim() };
   return triggerRender({ preserveUi: false, force: true });
 }
 
@@ -8277,6 +8289,7 @@ function openRecurringMovementModal(recurringId = '', monthKey = getSelectedBala
 }
 
 function closeMovementModal() {
+  state.editingMovementDraft = null;
   resetMovementForm();
   state.modal = { type: null };
   return triggerRender({ preserveUi: false, force: true });
@@ -11805,7 +11818,10 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
 }
   if (state.modal.type === 'tx') {
   const accountsById = Object.fromEntries(resolvedAccounts.map((a) => [a.id, a]));
-  const txEdit = state.modal.txId ? resolvedTxRows.find((row) => row.id === state.modal.txId) : null;
+  const txEditSource = state.modal.txId ? resolvedTxRows.find((row) => row.id === state.modal.txId) : null;
+  const txEdit = state.editingMovementDraft && state.modal.txId && String(state.editingMovementDraft.id || '') === String(state.modal.txId)
+    ? state.editingMovementDraft
+    : txEditSource;
   const defaultAccountId = txEdit?.accountId || state.balanceFormState.accountId || state.balance.defaultAccountId || '';
   const defaultType = txEdit?.type || state.balanceFormState.type || 'expense';
   const defaultCategory = txEdit?.category || state.balanceFormState.category || '';
@@ -12812,6 +12828,30 @@ function persistBalanceFormState(form) {
     ticketData: prev.ticketData,
     ticketScanMeta: prev.ticketScanMeta,
   };
+  if (state.modal?.type === 'tx' && state.modal?.txId) {
+    const draftBase = state.editingMovementDraft && String(state.editingMovementDraft.id || '') === String(state.modal.txId)
+      ? state.editingMovementDraft
+      : {};
+    state.editingMovementDraft = {
+      ...(draftBase || {}),
+      id: String(state.modal.txId || draftBase?.id || ''),
+      ...next,
+      date: next.dateISO || draftBase?.date || '',
+      monthKey: (next.dateISO || draftBase?.date || '').slice(0, 7),
+      amount: parseMoney(next.amount || draftBase?.amount || 0),
+      type: normalizeTxType(next.type || draftBase?.type || 'expense'),
+    };
+    if (financeEditDraftLogTimer) clearTimeout(financeEditDraftLogTimer);
+    financeEditDraftLogTimer = window.setTimeout(() => {
+      console.log('[finance:edit:draft-change]', {
+        txId: state.editingMovementDraft?.id || '',
+        type: state.editingMovementDraft?.type || '',
+        amount: state.editingMovementDraft?.amount || 0,
+        category: state.editingMovementDraft?.category || '',
+      });
+      financeEditDraftLogTimer = 0;
+    }, 450);
+  }
 }
 
 function renderToast() {
@@ -15765,6 +15805,9 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       const recurringEndRaw = toIsoDay(String(form.get('recurringEnd') || ''));
       const recurringMonthKey = dateISO.slice(0, 7);
       let prev = txId ? balanceTxList().find((row) => row.id === txId) : null;
+      if (!prev && txId && state.editingMovementDraft && String(state.editingMovementDraft.id || '') === txId) {
+        prev = state.editingMovementDraft;
+      }
       let effectiveRecurringId = String(form.get('recurringId') || prev?.recurringId || '').trim();
       if (requestedRecurringTemplateUpdate && !effectiveRecurringId) {
         effectiveRecurringId = push(ref(db, `${state.financePath}/recurring`)).key;
@@ -15798,6 +15841,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         if (duplicate) prev = duplicate;
       }
       const saveId = txId || prev?.id || push(ref(db, `${state.financePath}/transactions`)).key;
+      console.log('[finance:edit:save:start]', { txId, saveId, hasPrev: !!prev });
       const writeTs = nowTs();
       const scheduledRecurringDateISO = effectiveRecurringId
         ? (toIsoDay(String(form.get('recurringDueDateISO') || ''))
@@ -15828,6 +15872,15 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         updatedAt: writeTs,
         createdAt: Number(prev?.createdAt || 0) || writeTs
       };
+      console.log('[finance:edit:save:payload]', {
+        id: payload.id,
+        date: payload.date,
+        amount: payload.amount,
+        accountId: payload.accountId,
+        category: payload.category,
+        type: payload.type,
+        status: payload.status,
+      });
       const canonicalTxPath = `${state.financePath}/transactions/${saveId}`;
       const legacySourcePath = prev?.__path && prev.__path !== canonicalTxPath ? String(prev.__path) : '';
       console.log('[FINANCE][BALANCE] save transaction', canonicalTxPath);
@@ -15915,6 +15968,11 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         ...(state.balance.transactions || {}),
         [saveId]: payload
       };
+      console.log('[finance:edit:computed-status]', {
+        txId: saveId,
+        status: payload.status,
+        accounted: Boolean(payload.id && payload.date && Number.isFinite(Number(payload.amount)) && Number(payload.amount) > 0 && (payload.type === 'transfer' ? (payload.fromAccountId && payload.toAccountId) : payload.accountId)),
+      });
       if (recurringPayload && effectiveRecurringId) {
         state.balance.recurring = {
           ...(state.balance.recurring || {}),
@@ -15933,6 +15991,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       try { localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId || fromAccountId || ''); } catch (_) {}
       state.lastMovementAccountId = accountId || fromAccountId || '';
       toast((txId || prev?.id) ? 'Movimiento actualizado' : 'Movimiento guardado');
+      console.log('[finance:edit:save:done]', { txId: saveId });
       closeMovementModal();
       return;
     }

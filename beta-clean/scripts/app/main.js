@@ -988,9 +988,12 @@ function ensureReminderNotificationsButton(indicator) {
   button.textContent = "🔔";
   button.title = "Notificaciones";
   button.setAttribute("aria-label", "Abrir notificaciones");
-  button.addEventListener("click", (event) => {
+  button.addEventListener("click", async (event) => {
     event.preventDefault();
     event.stopPropagation();
+    if (!window.__bookshellNotes?.openReminderNotificationsPanel && window.__bookshellOpenViewRoot) {
+      await window.__bookshellOpenViewRoot("view-notes", { pushHash: false });
+    }
     window.__bookshellNotes?.openReminderNotificationsPanel?.();
   });
   actionsNode.append(button);

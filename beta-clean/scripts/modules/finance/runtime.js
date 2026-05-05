@@ -4801,6 +4801,7 @@ async function exportActiveProductsTicketNamesFromDom() {
 }
 
 async function deleteProductsHistoryTicket(ticketId = '') {
+  console.info('[ticket:delete]', { ticketId });
   const safeTicketId = String(ticketId || '').trim();
   if (!safeTicketId) return;
 
@@ -4852,6 +4853,9 @@ async function deleteProductsHistoryTicket(ticketId = '') {
 
   if (txId) {
     updatesMap[`${state.financePath}/transactions/${txId}`] = null;
+    const monthKey = String(ticket?.dateISO || '').slice(0,7);
+    if (monthKey) updatesMap[`${state.financePath}/movements/${monthKey}/${txId}`] = null;
+    updatesMap[`${state.financePath}/tx/${txId}`] = null;
   }
 
   await safeFirebase(() => update(ref(db), updatesMap));
@@ -5399,6 +5403,7 @@ async function createProductFromReceiptRow() {
     defaultPrice: unitPrice,
     unit: 'ud',
     usualQty: 1,
+    ...(safePrice ? { estimatedPrice: safePrice, usualPrice: safePrice, defaultPrice: safePrice } : {}),
     active: true,
   }, false);
   if (!savedId) return;
@@ -5406,12 +5411,16 @@ async function createProductFromReceiptRow() {
 }
 
 async function createProductFromQuickSearch(query = '') {
-  const name = normalizeFoodName(query);
+  const rawQuery = String(query || '');
+  const [rawName, rawPrice] = rawQuery.split(/[:=]/);
+  const name = normalizeFoodName(rawName || rawQuery);
   if (!name) {
     toast('Escribe un nombre de producto');
     return;
   }
   const defaultStore = normalizeFoodName(state.productsHub?.settings?.defaultStore || '');
+  const parsedPrice = Number(String(rawPrice || '').replace(',', '.').trim());
+  const safePrice = Number.isFinite(parsedPrice) && parsedPrice > 0 ? parsedPrice : 0;
   const savedId = await upsertFoodItem({
     name,
     displayName: name,
@@ -5419,6 +5428,7 @@ async function createProductFromQuickSearch(query = '') {
     preferredStore: defaultStore,
     unit: 'ud',
     usualQty: 1,
+    ...(safePrice ? { estimatedPrice: safePrice, usualPrice: safePrice, defaultPrice: safePrice } : {}),
     active: true,
   }, false);
   if (!savedId) return;
@@ -5428,6 +5438,7 @@ async function createProductFromQuickSearch(query = '') {
     listQuery: '',
   };
   await addProductToActiveProductsList(savedId);
+  console.info('[ticket:add]', { name, savedId, added: true });
 }
 
 async function addSelectedProductsToActiveList() {
@@ -5920,7 +5931,7 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
   const confirmedAt = Number(list.confirmedAt || list.registeredAt || 0);
   const confirmedDateISO = confirmedAt > 0 ? dayKeyFromTs(confirmedAt) : '';
   const dateISO = toIsoDay(String(list.confirmedDateISO || confirmedDateISO || list.plannedFor || '')) || dayKeyFromTs(nowTs());
-  const category = 'Compra';
+  const category = 'comida';
   const ticketReference = normalizeProductText(list.ticketRef || list.ticketLabel || '');
   const note = normalizeProductText(
     list.notes
@@ -6075,7 +6086,7 @@ async function confirmProductsTicketFromDom() {
     }
 
     const confirmedAtTs = nowTs();
-    const confirmedDateISO = dayKeyFromTs(confirmedAtTs);
+    const confirmedDateISO = toIsoDay(String(activeTicketMeta.plannedFor || persistedList.plannedFor || dayKeyFromTs(confirmedAtTs))) || dayKeyFromTs(confirmedAtTs);
     const ticketPayload = normalizeProductsHubList(persistedList.id, {
       ...persistedList,
       store: activeTicketMeta.store || persistedList.store,
@@ -6172,6 +6183,7 @@ async function confirmProductsTicketFromDom() {
       [productsHubPath('settings/activeListId')]: shouldRotateList ? nextActiveList.id : convertedList.id,
     };
 
+    console.info('[ticket:confirm]', { ticketId: activeTicketId, confirmedDateISO });
     const txResult = await saveProductsPurchaseTransaction({
       ...ticketPayload,
       accountId: validation.accountId,
@@ -6184,7 +6196,7 @@ async function confirmProductsTicketFromDom() {
 
     const primaryCacheKey = getPrimaryFinanceCacheKey();
     patchFinanceCacheRoot(primaryCacheKey, `transactions/${txResult.txId}`, txResult.payload);
-    patchFinanceCacheRoot(primaryCacheKey, 'catalog/categories/Compra', { name: 'Compra', lastUsedAt: nowTs() });
+    patchFinanceCacheRoot(primaryCacheKey, 'catalog/categories/comida', { name: 'comida', lastUsedAt: nowTs() });
     Object.entries(shoppingHubUpdates).forEach(([fullPath, value]) => {
       const safePath = String(fullPath || '');
       const prefix = `${state.financePath}/shoppingHub/`;
@@ -10618,6 +10630,9 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
       <div class="financeStats__compareRow">
         <div class="financeStats__row"><span>Gastos</span><strong>${fmtCurrency(totalSpentRange)}</strong></div>
         <div class="financeStats__bar"><div class="financeStats__barFill financeStats__barFill--expense" style="width:${(totalSpentRange / comparisonMax) * 100}%"></div></div>
+      </div>
+      <div class="financeStats__compareRow">
+        <div class="financeStats__row"><span>Diferencia</span><strong>${fmtCurrency(totalIncome - totalSpentRange)}</strong></div>
       </div>
     </div>
 
@@ -15790,6 +15805,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
           || dateISO)
         : '';
       const payload = {
+        id: saveId,
         type,
         amount,
         date: dateISO,
@@ -15808,6 +15824,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
           recurringDueDateISO: scheduledRecurringDateISO,
         } : {}),
         extras: extras || null,
+        status: 'synced',
         updatedAt: writeTs,
         createdAt: Number(prev?.createdAt || 0) || writeTs
       };

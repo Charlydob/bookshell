@@ -639,18 +639,38 @@ function buildWorkDayPayload(minutes, shift, quickAddCounts = null) {
   return payload;
 }
 
+function normalizeStoredHabitSessionEntry(session = {}) {
+  const bounds = parseSessionBounds(session);
+  if (!bounds) return null;
+  const effectiveStartTs = Number(session.effectiveStartedAt ?? session.startTs ?? session.startedAt ?? bounds.startTs) || bounds.startTs;
+  const effectiveEndTs = Number(session.effectiveEndedAt ?? session.endTs ?? session.endedAt ?? bounds.endTs) || bounds.endTs;
+  const realStartedAt = Number(session.realStartedAt ?? session.startedAt ?? bounds.startTs) || bounds.startTs;
+  const realEndedAt = Number(session.realEndedAt ?? session.endedAt ?? bounds.endTs) || bounds.endTs;
+  return {
+    id: String(session.id || session.sessionId || createOfflinePushId("habit-session-entry") || `habit-session-${bounds.startTs}`).trim(),
+    sessionId: String(session.sessionId || session.id || "").trim(),
+    startTs: effectiveStartTs,
+    endTs: Math.max(effectiveStartTs + 1000, effectiveEndTs),
+    startedAt: effectiveStartTs,
+    endedAt: Math.max(effectiveStartTs + 1000, effectiveEndTs),
+    realStartedAt,
+    realEndedAt: Math.max(realStartedAt + 1000, realEndedAt),
+    effectiveStartedAt: effectiveStartTs,
+    effectiveEndedAt: Math.max(effectiveStartTs + 1000, effectiveEndTs),
+    durationSec: Math.max(1, Math.round((Math.max(effectiveStartTs + 1000, effectiveEndTs) - effectiveStartTs) / 1000)),
+    dateKey: String(session.dateKey || dateKeyLocal(new Date(effectiveStartTs)) || "").trim(),
+    source: String(session.source || "ts").trim() || "ts"
+  };
+}
+
 function buildHabitTimeDayPayload(totalSec, options = {}) {
   const sec = Math.max(0, Math.round(Number(totalSec) || 0));
   const safeQuickAddCounts = sec > 0 ? normalizeDayQuickAddCounts(options?.quickAddCounts) : [0, 0];
   const hasQuickAddUsage = safeQuickAddCounts.some((count) => count > 0);
   const safeSessions = Array.isArray(options?.sessions)
     ? options.sessions
-      .filter((session) => session && Number(session.durationSec) > 0)
-      .map((session) => ({
-        startTs: Number(session.startTs) || undefined,
-        endTs: Number(session.endTs) || undefined,
-        durationSec: Math.max(1, Math.round(Number(session.durationSec) || 0))
-      }))
+      .map((session) => normalizeStoredHabitSessionEntry(session))
+      .filter(Boolean)
     : [];
 
   if (options?.isWork) {
@@ -2651,16 +2671,16 @@ function normalizeSessionsStore(raw, persistRemote = false) {
   };
 
   const pushTimeline = (habitId, session, dayKeyHint = null) => {
-    const bounds = parseSessionBounds(session);
-    if (!bounds || !habitId) return;
+    const normalizedSession = normalizeStoredHabitSessionEntry({
+      ...(session || {}),
+      dateKey: dayKeyHint || session?.dateKey
+    });
+    if (!normalizedSession || !habitId) return;
     if (!timeline[habitId]) timeline[habitId] = [];
     timeline[habitId].push({
       habitId,
-      startTs: bounds.startTs,
-      endTs: bounds.endTs,
-      durationSec: Math.max(1, Math.round((bounds.endTs - bounds.startTs) / 1000)),
-      dateKey: dayKeyHint || session.dateKey || dateKeyLocal(new Date(bounds.startTs)),
-      source: session.source || "ts"
+      ...normalizedSession,
+      source: normalizedSession.source || "ts"
     });
     if (dayKeyHint) {
       if (!coverage[habitId]) coverage[habitId] = new Set();
@@ -2705,6 +2725,9 @@ function normalizeSessionsStore(raw, persistRemote = false) {
       }
 
       if (val && typeof val === "object") {
+        const normalizedSessions = Array.isArray(val.sessions)
+          ? val.sessions.map((session) => normalizeStoredHabitSessionEntry({ ...(session || {}), dateKey })).filter(Boolean)
+          : [];
         if (Array.isArray(val.sessions)) {
           val.sessions.forEach((session) => pushTimeline(habitId, session, dateKey));
         }
@@ -2724,6 +2747,7 @@ function normalizeSessionsStore(raw, persistRemote = false) {
           } else if (roundedMin > 0 || shift || hasQuickAddUsage) {
             const payload = shift ? { min: roundedMin, shift } : { min: roundedMin };
             if (roundedMin > 0 && hasQuickAddUsage) payload.quickAddCounts = quickAddCounts;
+            if (normalizedSessions.length) payload.sessions = normalizedSessions;
             totals[habitId][dateKey] = payload;
           } else {
             changed = true;
@@ -2742,10 +2766,11 @@ function normalizeSessionsStore(raw, persistRemote = false) {
             : (shift || hasQuickAddUsage
               ? {
                 totalSec: sec,
+                ...(normalizedSessions.length ? { sessions: normalizedSessions } : {}),
                 ...(shift ? { shift } : {}),
                 ...(hasQuickAddUsage ? { quickAddCounts } : {})
               }
-              : sec);
+              : (normalizedSessions.length ? { totalSec: sec, sessions: normalizedSessions } : sec));
 
           // si venía como objeto con totalSec sin min, lo “arreglamos” a min (más estable)
           changed = true;
@@ -2841,10 +2866,16 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
     if (bounds) {
       const localDayKey = dateKeyLocal(new Date(bounds.startTs));
       prevSessions.push({
+        id: String(options?.sessionId || createOfflinePushId("habit-session-entry") || `habit-session-${bounds.startTs}-${prevSessions.length}`).trim(),
+        sessionId: String(options?.sessionId || "").trim(),
         startTs: bounds.startTs,
         endTs: bounds.endTs,
         startedAt: bounds.startTs,
         endedAt: bounds.endTs,
+        realStartedAt: Number(options?.realStartedAt) || bounds.startTs,
+        realEndedAt: Number(options?.realEndedAt) || bounds.endTs,
+        effectiveStartedAt: Number(options?.effectiveStartedAt) || bounds.startTs,
+        effectiveEndedAt: Number(options?.effectiveEndedAt) || bounds.endTs,
         durationSec: Math.max(1, Math.round((bounds.endTs - bounds.startTs) / 1000)),
         dateKey: localDayKey
       });
@@ -3569,6 +3600,8 @@ function normalizeRunningSession(raw) {
     pausedAt: Number(raw.pausedAt) || null,
     accMs: Math.max(0, Number(raw.accMs) || 0),
     elapsedMs: Math.max(0, Number(raw.accMs) || 0),
+    startAdjustMs: Math.max(0, Number(raw.startAdjustMs) || 0),
+    endAdjustMs: Number(raw.endAdjustMs) || 0,
     emoji: raw.emoji || "•",
     meta: raw.meta && typeof raw.meta === "object" ? { ...raw.meta } : null
   };
@@ -3631,7 +3664,7 @@ function syncPrimaryRunningSession() {
   runningSession = activeSessions?.[primaryId] || null;
 }
 
-function getRunningElapsedMs(session = runningSession, nowTs = Date.now()) {
+function getRunningRawElapsedMs(session = runningSession, nowTs = Date.now()) {
   if (!session) return 0;
   const base = Math.max(0, Number(session.accMs ?? session.elapsedMs) || 0);
   const paused = session.status === "paused" || session.isPaused;
@@ -3640,8 +3673,37 @@ function getRunningElapsedMs(session = runningSession, nowTs = Date.now()) {
   return Math.max(0, base + (nowTs - startTs));
 }
 
+function getRunningElapsedMs(session = runningSession, nowTs = Date.now()) {
+  if (!session) return 0;
+  const rawElapsedMs = getRunningRawElapsedMs(session, nowTs);
+  const startAdjustMs = Math.max(0, Number(session.startAdjustMs) || 0);
+  const endAdjustMs = Number(session.endAdjustMs) || 0;
+  return Math.max(0, rawElapsedMs + startAdjustMs + endAdjustMs);
+}
+
 function getRunningElapsedSec(session = runningSession, nowTs = Date.now()) {
   return Math.max(0, Math.round(getRunningElapsedMs(session, nowTs) / 1000));
+}
+
+function getRunningEffectiveBounds(session = runningSession, nowTs = Date.now()) {
+  if (!session) return null;
+  const realStartedAt = Number(session.firstStartedAt || session.createdAt || session.startedAt || nowTs) || nowTs;
+  const paused = session.status === "paused" || session.isPaused;
+  const realEndedAt = paused ? (Number(session.pausedAt) || nowTs) : nowTs;
+  const rawElapsedMs = getRunningRawElapsedMs(session, nowTs);
+  const startAdjustMs = Math.max(0, Number(session.startAdjustMs) || 0);
+  const endAdjustMs = Number(session.endAdjustMs) || 0;
+  const effectiveStartedAt = realStartedAt - startAdjustMs;
+  const effectiveDurationMs = Math.max(60000, rawElapsedMs + startAdjustMs + endAdjustMs);
+  const effectiveEndedAt = Math.max(effectiveStartedAt + 60000, effectiveStartedAt + effectiveDurationMs);
+  return {
+    realStartedAt,
+    realEndedAt: Math.max(realStartedAt + 1000, realEndedAt),
+    effectiveStartedAt,
+    effectiveEndedAt,
+    durationMs: effectiveDurationMs,
+    durationSec: Math.max(60, Math.round(effectiveDurationMs / 1000))
+  };
 }
 
 function getSessionHabitMeta(session = runningSession) {
@@ -4357,10 +4419,15 @@ function getSessionsForHabitDate(habitId, dateKey) {
       const endTs = Math.min(bounds.endTs, dayEndTs);
       if (!(endTs > startTs)) return null;
       return {
+        ...session,
         habitId,
         dateKey,
         startTs,
         endTs,
+        startedAt: startTs,
+        endedAt: endTs,
+        effectiveStartedAt: startTs,
+        effectiveEndedAt: endTs,
         durationSec: Math.max(1, Math.round((endTs - startTs) / 1000)),
         source: session.source || "ts"
       };
@@ -8508,6 +8575,103 @@ function formatHistoryMonthLabel(year, month) {
   return date.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
 }
 
+const DAY_SCHEDULE_MIN_HEIGHT_PX = 720;
+const DAY_SCHEDULE_PX_PER_MINUTE = 1;
+
+function buildScheduleSessionLayout(rows = []) {
+  const normalized = rows.map((row, index) => {
+    const bounds = parseSessionBounds(row);
+    if (!bounds) return null;
+    const startDate = new Date(bounds.startTs);
+    const endDate = new Date(bounds.endTs);
+    const startMin = (startDate.getHours() * 60) + startDate.getMinutes() + (startDate.getSeconds() / 60);
+    const endMin = (endDate.getHours() * 60) + endDate.getMinutes() + (endDate.getSeconds() / 60);
+    return {
+      ...row,
+      layoutId: String(row.id || row.sessionId || `${row.habitId || "habit"}-${bounds.startTs}-${index}`),
+      startTs: bounds.startTs,
+      endTs: bounds.endTs,
+      startMin,
+      endMin: Math.max(startMin + 1, endMin),
+      children: [],
+      parentId: "",
+      lane: 0,
+      laneCount: 1,
+      concurrentDepth: 1
+    };
+  }).filter(Boolean).sort((a, b) => (
+    a.startMin - b.startMin
+    || (b.endMin - a.endMin) - (a.endMin - a.startMin)
+    || String(a.layoutId).localeCompare(String(b.layoutId))
+  ));
+
+  normalized.forEach((node, index) => {
+    let parent = null;
+    for (let i = 0; i < normalized.length; i += 1) {
+      if (i === index) continue;
+      const candidate = normalized[i];
+      if (candidate.startMin <= node.startMin && candidate.endMin >= node.endMin) {
+        if (!parent || ((candidate.endMin - candidate.startMin) < (parent.endMin - parent.startMin))) {
+          if (candidate.layoutId !== node.layoutId) parent = candidate;
+        }
+      }
+    }
+    if (parent) {
+      node.parentId = parent.layoutId;
+      parent.children.push(node);
+    }
+  });
+
+  const assignLanes = (items) => {
+    const ordered = items.slice().sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+    const laneEnds = [];
+    ordered.forEach((item) => {
+      let lane = 0;
+      while (lane < laneEnds.length && laneEnds[lane] > item.startMin) lane += 1;
+      laneEnds[lane] = item.endMin;
+      item.lane = lane;
+    });
+    ordered.forEach((item) => {
+      const overlapCount = ordered.filter((other) => other.startMin < item.endMin && other.endMin > item.startMin).length;
+      item.laneCount = Math.max(1, overlapCount);
+    });
+    items.forEach((item) => assignLanes(item.children || []));
+  };
+
+  assignLanes(normalized.filter((node) => !node.parentId));
+  return normalized.filter((node) => !node.parentId);
+}
+
+function renderScheduleSessionTree(items = [], rangeStartMin = 0, rangeEndMin = 1440, options = {}) {
+  const containerRange = Math.max(1, rangeEndMin - rangeStartMin);
+  const isNested = options.nested === true;
+  return items.map((item) => {
+    const topPct = Math.max(0, ((item.startMin - rangeStartMin) / containerRange) * 100);
+    const heightPct = Math.max(isNested ? 18 : 3, ((item.endMin - item.startMin) / containerRange) * 100);
+    const widthPct = isNested
+      ? Math.max(42, 100 / Math.max(1, item.laneCount))
+      : Math.max(58, 100 / Math.max(1, item.laneCount));
+    const leftPct = Math.min(100 - widthPct, item.lane * widthPct);
+    const accent = escapeHtml(resolveHabitColor(item.habit) || DEFAULT_COLOR);
+    const childrenHtml = item.children?.length
+      ? `<div class="habit-daySchedule__children">${renderScheduleSessionTree(item.children, item.startMin, item.endMin, { nested: true })}</div>`
+      : "";
+    return `<article class="habit-daySchedule__item${isNested ? " is-nested" : ""}" style="--slot-color:${accent};top:${topPct.toFixed(3)}%;height:${heightPct.toFixed(3)}%;left:${leftPct.toFixed(3)}%;width:${widthPct.toFixed(3)}%;">
+      <span class="habit-daySchedule__marker" aria-hidden="true"></span>
+      <div class="habit-daySchedule__card">
+        <div class="habit-daySchedule__summary">
+        <div class="habit-daySchedule__time">${escapeHtml(formatScheduleTime(item.startTs))}–${escapeHtml(formatScheduleTime(item.endTs))}</div>
+        <div class="habit-daySchedule__meta">
+          <strong class="habit-daySchedule__title">${escapeHtml(item.habit?.name || "Hábito")}</strong>
+          <span class="habit-daySchedule__duration">${escapeHtml(formatMinutes(minutesFromSession(item)))}</span>
+        </div>
+        </div>
+        ${childrenHtml}
+      </div>
+    </article>`;
+  }).join("");
+}
+
 function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
   const date = parseDateKey(dateKey) || new Date();
   const prev = dateKeyLocal(addDays(date, -1));
@@ -8518,36 +8682,24 @@ function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
     sessions.forEach((session) => rows.push({ habit, ...session }));
   });
 
-  const timed = rows
-    .map((row) => {
-      const bounds = parseSessionBounds(row);
-      return bounds ? { ...row, startTs: bounds.startTs, endTs: bounds.endTs } : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.startTs - b.startTs);
-
+  const timed = rows.filter((row) => parseSessionBounds(row)).sort((a, b) => {
+    const aBounds = parseSessionBounds(a);
+    const bBounds = parseSessionBounds(b);
+    return (aBounds?.startTs || 0) - (bBounds?.startTs || 0);
+  });
   const legacy = rows.filter((row) => !parseSessionBounds(row));
-
-  let blocks = timed.map((row) => {
-    const accent = escapeHtml(resolveHabitColor(row.habit) || DEFAULT_COLOR);
-    return `<article class="habit-daySchedule__item" style="--slot-color:${accent}">
-      <span class="habit-daySchedule__marker" aria-hidden="true"></span>
-      <div class="habit-daySchedule__card">
-        <div class="habit-daySchedule__time">${escapeHtml(formatScheduleTime(row.startTs))}–${escapeHtml(formatScheduleTime(row.endTs))}</div>
-        <div class="habit-daySchedule__body">
-          <strong class="habit-daySchedule__title">${escapeHtml(row.habit?.name || "Hábito")}</strong>
-          <span class="habit-daySchedule__duration">${escapeHtml(formatMinutes(minutesFromSession(row)))}</span>
-        </div>
-      </div>
-    </article>`;
+  const layoutRoots = buildScheduleSessionLayout(timed);
+  const canvasHeight = Math.max(DAY_SCHEDULE_MIN_HEIGHT_PX, Math.round(1440 * DAY_SCHEDULE_PX_PER_MINUTE));
+  const hourMarkers = Array.from({ length: 25 }, (_, hour) => {
+    const top = Math.min(100, (hour / 24) * 100);
+    return `<div class="habit-daySchedule__hour" style="top:${top.toFixed(3)}%;">
+      <span class="habit-daySchedule__hourLabel">${escapeHtml(formatHHMM(hour * 60))}</span>
+      <span class="habit-daySchedule__hourLine" aria-hidden="true"></span>
+    </div>`;
   }).join("");
-
-  if (legacy.length) {
-    const legacyLabel = legacy.length === 1
-      ? "1 sesión antigua sin hora"
-      : `${legacy.length} sesiones antiguas sin hora`;
-    blocks += `<div class="habit-daySchedule__untimed">${escapeHtml(legacyLabel)}</div>`;
-  }
+  let blocks = layoutRoots.length
+    ? renderScheduleSessionTree(layoutRoots, 0, 1440, { nested: false })
+    : "";
 
   if (!blocks) blocks = '<div class="habits-history-empty">Sin sesiones en este día.</div>';
 
@@ -8557,7 +8709,15 @@ function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
       <div class="habit-daySchedule__date">${escapeHtml(formatShortDate(dateKey, true))}</div>
       <button type="button" class="habits-history-month-nav-btn habit-daySchedule__navBtn" data-role="schedule-day-next" data-day="${next}" aria-label="Día siguiente">→</button>
     </div>
-    <div class="habit-daySchedule__timeline">${blocks}</div>
+    <div class="habit-daySchedule__body">
+      <div class="habit-daySchedule__timelineScroll">
+        <div class="habit-daySchedule__timeline" style="height:${canvasHeight}px;">
+          ${hourMarkers}
+          ${blocks}
+        </div>
+      </div>
+      ${legacy.length ? `<div class="habit-daySchedule__untimed">${escapeHtml(legacy.length === 1 ? "1 sesión antigua sin hora" : `${legacy.length} sesiones antiguas sin hora`)}</div>` : ""}
+    </div>
   </section>`;
 }
 
@@ -11847,6 +12007,8 @@ async function startSessionLegacy(habitId = null, meta = null) {
     status: "running",
     pausedAt: null,
     accMs: 0,
+    startAdjustMs: 0,
+    endAdjustMs: 0,
     emoji: (targetHabitId && habits?.[targetHabitId]?.emoji) || meta?.habitEmoji || "•",
     deviceId: currentUid,
     meta: meta && typeof meta === "object" ? { ...meta } : null
@@ -11895,7 +12057,7 @@ async function pauseRunningSession(sessionId = runningSession?.sessionId) {
   if (!session || session.status === "paused") return;
   const now = Date.now();
   await patchSession(sessionId, {
-    accMs: getRunningElapsedMs(session, now),
+    accMs: getRunningRawElapsedMs(session, now),
     status: "paused",
     pausedAt: now
   });
@@ -11924,9 +12086,16 @@ async function adjustRunningSessionByMinutes(deltaMin = 0, sessionId = runningSe
   const session = sessionId ? activeSessions?.[sessionId] : null;
   if (!session) return;
   const deltaMs = Math.round((Number(deltaMin) || 0) * 60000);
-  const nextMs = Math.max(0, getRunningElapsedMs(session) + deltaMs);
-  const patch = { accMs: nextMs };
-  if (session.status === "running") patch.startedAt = Date.now();
+  if (!deltaMs) return;
+  const rawElapsedMs = getRunningRawElapsedMs(session);
+  let startAdjustMs = Math.max(0, Number(session.startAdjustMs) || 0);
+  let endAdjustMs = Number(session.endAdjustMs) || 0;
+  if (deltaMs > 0) startAdjustMs += deltaMs;
+  else endAdjustMs += deltaMs;
+  const minDurationMs = 60000;
+  const minAllowedEndAdjust = -(Math.max(0, rawElapsedMs + startAdjustMs - minDurationMs));
+  endAdjustMs = Math.max(minAllowedEndAdjust, endAdjustMs);
+  const patch = { startAdjustMs, endAdjustMs };
   await patchSession(sessionId, patch);
   updateSessionUI();
 }
@@ -11940,12 +12109,15 @@ async function stopSessionLegacy(assignHabitId = null, silent = false, sessionId
   const session = sessionId ? activeSessions?.[sessionId] : null;
   if (!session) return;
 
-  const endTs = Date.now();
-  const duration = Math.max(1, Math.round(getRunningElapsedMs(session, endTs) / 1000));
+  const nowTs = Date.now();
+  const effectiveBounds = getRunningEffectiveBounds(session, nowTs);
+  if (!effectiveBounds) return;
+  const endTs = effectiveBounds.effectiveEndedAt;
+  const duration = effectiveBounds.durationSec;
   const target = (typeof assignHabitId === "string" && assignHabitId)
     ? assignHabitId
     : (session?.habitId || session?.targetHabitId || null);
-  const startTs = Number(session.firstStartedAt || session.createdAt || session.startedAt || endTs);
+  const startTs = effectiveBounds.effectiveStartedAt;
   const dateKey = dateKeyLocal(new Date(startTs));
 
   const wasPrimarySession = runningSession?.sessionId === sessionId;
@@ -11976,10 +12148,29 @@ async function stopSessionLegacy(assignHabitId = null, silent = false, sessionId
       const sec = Math.max(0, Math.round(minutes * 60 * scale));
       if (sec > 0) {
         splitSummary[day] = sec;
-        addHabitTimeSec(target, day, sec, { startTs, endTs });
+        addHabitTimeSec(target, day, sec, {
+          sessionId,
+          startTs,
+          endTs,
+          realStartedAt: effectiveBounds.realStartedAt,
+          realEndedAt: effectiveBounds.realEndedAt,
+          effectiveStartedAt: effectiveBounds.effectiveStartedAt,
+          effectiveEndedAt: effectiveBounds.effectiveEndedAt
+        });
       }
     });
-    const savedPayload = { targetHabitId: target, startTs, endTs, durationSec: duration, splitByDay: splitSummary };
+    const savedPayload = {
+      targetHabitId: target,
+      sessionId,
+      startTs,
+      endTs,
+      realStartedAt: effectiveBounds.realStartedAt,
+      realEndedAt: effectiveBounds.realEndedAt,
+      effectiveStartedAt: effectiveBounds.effectiveStartedAt,
+      effectiveEndedAt: effectiveBounds.effectiveEndedAt,
+      durationSec: duration,
+      splitByDay: splitSummary
+    };
     console.warn("[STOP] saved session", savedPayload);
     console.log("[HABIT] session stop", { startTs, endTs, splitByDay: splitSummary });
     localStorage.setItem(LAST_HABIT_KEY, target);
@@ -13949,6 +14140,8 @@ async function startSession(habitId = null, meta = null) {
     status: "running",
     pausedAt: null,
     accMs: 0,
+    startAdjustMs: 0,
+    endAdjustMs: 0,
     emoji: (targetHabitId && habits?.[targetHabitId]?.emoji) || meta?.habitEmoji || "â€¢",
     deviceId: currentUid,
     meta: meta && typeof meta === "object" ? { ...meta } : null
@@ -14027,12 +14220,15 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
   const session = sessionId ? activeSessions?.[sessionId] : null;
   if (!session) return;
 
-  const endTs = Date.now();
-  const duration = Math.max(1, Math.round(getRunningElapsedMs(session, endTs) / 1000));
+  const nowTs = Date.now();
+  const effectiveBounds = getRunningEffectiveBounds(session, nowTs);
+  if (!effectiveBounds) return;
+  const endTs = effectiveBounds.effectiveEndedAt;
+  const duration = effectiveBounds.durationSec;
   const target = (typeof assignHabitId === "string" && assignHabitId)
     ? assignHabitId
     : (session?.habitId || session?.targetHabitId || null);
-  const startTs = Number(session.firstStartedAt || session.createdAt || session.startedAt || endTs);
+  const startTs = effectiveBounds.effectiveStartedAt;
   const dateKey = dateKeyLocal(new Date(startTs));
 
   const wasPrimarySession = runningSession?.sessionId === sessionId;
@@ -14077,10 +14273,29 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
       const sec = Math.max(0, Math.round(minutes * 60 * scale));
       if (sec > 0) {
         splitSummary[day] = sec;
-        addHabitTimeSec(target, day, sec, { startTs, endTs });
+        addHabitTimeSec(target, day, sec, {
+          sessionId,
+          startTs,
+          endTs,
+          realStartedAt: effectiveBounds.realStartedAt,
+          realEndedAt: effectiveBounds.realEndedAt,
+          effectiveStartedAt: effectiveBounds.effectiveStartedAt,
+          effectiveEndedAt: effectiveBounds.effectiveEndedAt
+        });
       }
     });
-    const savedPayload = { targetHabitId: target, startTs, endTs, durationSec: duration, splitByDay: splitSummary };
+    const savedPayload = {
+      targetHabitId: target,
+      sessionId,
+      startTs,
+      endTs,
+      realStartedAt: effectiveBounds.realStartedAt,
+      realEndedAt: effectiveBounds.realEndedAt,
+      effectiveStartedAt: effectiveBounds.effectiveStartedAt,
+      effectiveEndedAt: effectiveBounds.effectiveEndedAt,
+      durationSec: duration,
+      splitByDay: splitSummary
+    };
     console.warn("[STOP] saved session", savedPayload);
     console.log("[HABIT] session stop", { startTs, endTs, splitByDay: splitSummary });
     localStorage.setItem(LAST_HABIT_KEY, target);

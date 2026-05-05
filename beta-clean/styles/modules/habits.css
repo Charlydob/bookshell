@@ -5130,9 +5130,9 @@ button#habit-detail-edit, #habit-detail-close{
 /* #endregion */
 /* #region HORARIO */
 
-    .habit-daySchedule__body{
-    display: grid  !important;
-    grid-template-columns: 1fr 40px !important;
+  .habit-daySchedule__legacyBody{
+    display: grid;
+    grid-template-columns: 1fr 40px;
   }
 
 
@@ -5167,6 +5167,11 @@ button#habit-detail-edit, #habit-detail-close{
   gap: 12px;
 }
 
+.habit-daySchedule__body {
+  display: grid;
+  gap: 12px;
+}
+
 .habit-daySchedule__nav {
   display: grid;
   grid-template-columns: 40px 1fr 40px;
@@ -5192,31 +5197,72 @@ button#habit-detail-edit, #habit-detail-close{
   color: rgba(255,255,255,0.92);
 }
 
+.habit-daySchedule__timelineScroll {
+  max-height: min(68vh, 620px);
+  overflow-y: auto;
+  padding-right: 4px;
+  border-radius: 18px;
+}
+
 .habit-daySchedule__timeline {
   position: relative;
-  display: grid;
-  gap: 14px;
-  padding-left: 22px;
+  min-height: 720px;
+  padding: 10px 10px 10px 62px;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)),
+    var(--glass);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
 }
 
 .habit-daySchedule__timeline::before {
   content: "";
   position: absolute;
-  left: 8px;
-  top: 2px;
-  bottom: 2px;
+  left: 46px;
+  top: 0;
+  bottom: 0;
   width: 1px;
   background: linear-gradient(180deg, rgba(255,255,255,0.24), rgba(255,255,255,0.08));
 }
 
+.habit-daySchedule__hour {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.habit-daySchedule__hourLabel {
+  position: absolute;
+  left: -52px;
+  top: -8px;
+  width: 42px;
+  text-align: right;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(255,255,255,0.42);
+}
+
+.habit-daySchedule__hourLine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
 .habit-daySchedule__item {
-  position: relative;
+  position: absolute;
   min-width: 0;
+  padding-left: 16px;
+  box-sizing: border-box;
 }
 
 .habit-daySchedule__marker {
   position: absolute;
-  left: -18px;
+  left: -6px;
   top: 18px;
   width: 12px;
   height: 12px;
@@ -5226,8 +5272,11 @@ button#habit-detail-edit, #habit-detail-close{
 }
 
 .habit-daySchedule__card {
+  position: relative;
+  overflow: hidden;
   display: grid;
   gap: 8px;
+  min-height: 100%;
   padding: 12px 14px;
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--slot-color, rgba(255,255,255,0.18)) 42%, rgba(255,255,255,0.14));
@@ -5240,13 +5289,39 @@ button#habit-detail-edit, #habit-detail-close{
   -webkit-backdrop-filter: blur(14px);
 }
 
+.habit-daySchedule__item.is-nested {
+  padding-left: 10px;
+}
+
+.habit-daySchedule__item.is-nested .habit-daySchedule__marker {
+  left: -3px;
+  top: 10px;
+  width: 8px;
+  height: 8px;
+  box-shadow: 0 0 0 3px rgba(10, 10, 14, 0.84);
+}
+
+.habit-daySchedule__item.is-nested .habit-daySchedule__card {
+  padding: 8px 10px;
+  border-radius: 12px;
+  gap: 4px;
+  box-shadow: none;
+}
+
 .habit-daySchedule__time {
   font-size: 12px;
   letter-spacing: 0.04em;
   color: rgba(255,255,255,0.64);
 }
 
-.habit-daySchedule__body {
+.habit-daySchedule__summary {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 8px;
+}
+
+.habit-daySchedule__meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -5267,6 +5342,14 @@ button#habit-detail-edit, #habit-detail-close{
   color: rgba(255,255,255,0.72);
 }
 
+.habit-daySchedule__children {
+  position: absolute;
+  inset: 42px 8px 8px 10px;
+  min-height: 0;
+  margin-top: 0;
+  z-index: 1;
+}
+
 .habit-daySchedule__untimed {
   justify-self: start;
   margin-left: 2px;
@@ -5280,10 +5363,18 @@ button#habit-detail-edit, #habit-detail-close{
 }
 
 @media (max-width: 520px) {
-  .habit-daySchedule__body {
+  .habit-daySchedule__timeline {
+    padding-left: 54px;
+  }
+
+  .habit-daySchedule__meta {
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .habit-daySchedule__item {
+    padding-left: 12px;
   }
 
   .habit-daySchedule__duration {

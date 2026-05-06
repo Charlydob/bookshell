@@ -5258,6 +5258,8 @@ button#habit-detail-edit, #habit-detail-close{
   min-width: 0;
   padding-left: 16px;
   box-sizing: border-box;
+  z-index: var(--schedule-z, 1);
+  cursor: pointer;
 }
 
 .habit-daySchedule__marker {
@@ -5287,6 +5289,19 @@ button#habit-detail-edit, #habit-detail-close{
   box-shadow: 0 14px 30px rgba(0,0,0,0.18);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+}
+
+.habit-daySchedule__item--active {
+  z-index: 999;
+}
+
+.habit-daySchedule__item--active .habit-daySchedule__card {
+  box-shadow: 0 18px 45px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.18);
+  transform: translateY(-1px);
+}
+
+.habit-daySchedule__item--active .habit-daySchedule__marker {
+  box-shadow: 0 0 0 4px rgba(10, 10, 14, 0.9), 0 0 24px color-mix(in srgb, var(--slot-color, #8b8b95) 52%, transparent);
 }
 
 .habit-daySchedule__item.is-nested {
@@ -5360,6 +5375,17 @@ button#habit-detail-edit, #habit-detail-close{
   color: rgba(255,255,255,0.7);
   font-size: 12px;
   line-height: 1.2;
+}
+
+.habit-manual-error {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,126,148,0.32);
+  background: rgba(120,24,38,0.26);
+  color: rgba(255,236,240,0.94);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 @media (max-width: 520px) {

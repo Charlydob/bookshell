@@ -820,14 +820,26 @@
 </label>
 <div class="inputs">
   <label class="field">
-    <span class="field-label">Minutos</span>
-    <input id="habit-manual-minutes" min="00:00" placeholder="00:25" required="" step="60" type="time"/>
+    <span class="field-label">Hora inicio</span>
+    <input id="habit-manual-start" step="60" type="time"/>
     </label>
     <label class="field">
+    <span class="field-label">Hora fin</span>
+    <input id="habit-manual-end" step="60" type="time"/>
+  </label>
+  <label class="field">
     <span class="field-label">Fecha</span>
     <input id="habit-manual-date" type="date"/>
   </label>
   </div>
+  <div class="inputs">
+    <label class="field">
+    <span class="field-label">Minutos</span>
+    <input id="habit-manual-minutes" min="00:00" placeholder="00:25" step="60" type="time"/>
+    <div class="checkbox-field-hint">Si indicas inicio y fin, se calculan automaticamente.</div>
+    </label>
+  </div>
+  <div class="habit-manual-error hidden" id="habit-manual-error" role="alert" aria-live="polite"></div>
 </div>
 </div>
 <div class="modal-footer sheet-footer">

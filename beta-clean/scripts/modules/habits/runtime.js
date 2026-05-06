@@ -247,6 +247,7 @@ let scheduleViewMode = loadScheduleViewMode();
 let scheduleScoreMode = loadScheduleScoreMode();
 let scheduleCoinSpenderState = null;
 let scheduleTimelineDateKey = todayKey();
+let activeScheduleSessionId = null;
 let habitDetailScheduleSelection = { types: ["Libre"], dows: [] };
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
@@ -646,9 +647,13 @@ function normalizeStoredHabitSessionEntry(session = {}) {
   const effectiveEndTs = Number(session.effectiveEndedAt ?? session.endTs ?? session.endedAt ?? bounds.endTs) || bounds.endTs;
   const realStartedAt = Number(session.realStartedAt ?? session.startedAt ?? bounds.startTs) || bounds.startTs;
   const realEndedAt = Number(session.realEndedAt ?? session.endedAt ?? bounds.endTs) || bounds.endTs;
+  const id = String(session.id || session.sessionId || createOfflinePushId("habit-session-entry") || `habit-session-${bounds.startTs}`).trim();
+  const durationMs = Math.max(1000, Number(session.durationMs) || (Math.max(effectiveStartTs + 1000, effectiveEndTs) - effectiveStartTs));
   return {
-    id: String(session.id || session.sessionId || createOfflinePushId("habit-session-entry") || `habit-session-${bounds.startTs}`).trim(),
-    sessionId: String(session.sessionId || session.id || "").trim(),
+    id,
+    sessionId: String(session.sessionId || session.id || "").trim() || id,
+    habitId: String(session.habitId || "").trim(),
+    habitNameSnapshot: String(session.habitNameSnapshot || "").trim(),
     startTs: effectiveStartTs,
     endTs: Math.max(effectiveStartTs + 1000, effectiveEndTs),
     startedAt: effectiveStartTs,
@@ -657,7 +662,8 @@ function normalizeStoredHabitSessionEntry(session = {}) {
     realEndedAt: Math.max(realStartedAt + 1000, realEndedAt),
     effectiveStartedAt: effectiveStartTs,
     effectiveEndedAt: Math.max(effectiveStartTs + 1000, effectiveEndTs),
-    durationSec: Math.max(1, Math.round((Math.max(effectiveStartTs + 1000, effectiveEndTs) - effectiveStartTs) / 1000)),
+    durationSec: Math.max(1, Math.round(durationMs / 1000)),
+    durationMs,
     dateKey: String(session.dateKey || dateKeyLocal(new Date(effectiveStartTs)) || "").trim(),
     source: String(session.source || "ts").trim() || "ts"
   };
@@ -2084,6 +2090,13 @@ function renderSchedule(reason = "manual") {
     scheduleTimelineDateKey = nextKey;
     renderSchedule('manual');
   });
+  $habitScheduleView.querySelectorAll('[data-role="schedule-session-item"]').forEach((item) => {
+    const activate = () => activateScheduleSession(item.getAttribute("data-session-id"), item.getAttribute("data-habit-name"));
+    item.addEventListener("pointerdown", activate, { passive: true });
+    item.addEventListener("touchstart", activate, { passive: true });
+    item.addEventListener("click", activate);
+  });
+  syncActiveScheduleSessionVisualState();
   $habitScheduleView.querySelector('[data-role="schedule-close-day"]')?.addEventListener("click", () => {
     closeScheduleDay(currentDateKey, "manual");
   });
@@ -2581,6 +2594,8 @@ function isSessionActive(session) {
 }
 
 function minutesFromSession(session) {
+  const durationMs = Number(session?.durationMs);
+  if (Number.isFinite(durationMs) && durationMs > 0) return Math.round(durationMs / 60000);
   return Math.round((session?.durationSec || 0) / 60);
 }
 
@@ -2606,9 +2621,10 @@ function splitSessionByDay(startTs, endTs) {
 
 function parseSessionBounds(rawSession) {
   if (!rawSession || typeof rawSession !== "object") return null;
-  const startTs = Number(rawSession.startTs ?? rawSession.startedAt);
-  let endTs = Number(rawSession.endTs ?? rawSession.endedAt);
-  const durationSec = Math.max(0, Number(rawSession.durationSec) || 0);
+  const startTs = Number(rawSession.effectiveStartedAt ?? rawSession.startTs ?? rawSession.startedAt);
+  let endTs = Number(rawSession.effectiveEndedAt ?? rawSession.endTs ?? rawSession.endedAt);
+  const durationMs = Math.max(0, Number(rawSession.durationMs) || 0);
+  const durationSec = Math.max(0, Number(rawSession.durationSec) || (durationMs > 0 ? Math.round(durationMs / 1000) : 0));
   if (!Number.isFinite(startTs) || startTs <= 0) return null;
   if (!Number.isFinite(endTs) || endTs <= startTs) {
     if (rawSession.active || rawSession.isRunning) endTs = Date.now();
@@ -2865,9 +2881,13 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
     const prevSessions = Array.isArray(prevRaw?.sessions) ? prevRaw.sessions.slice() : [];
     if (bounds) {
       const localDayKey = dateKeyLocal(new Date(bounds.startTs));
-      prevSessions.push({
-        id: String(options?.sessionId || createOfflinePushId("habit-session-entry") || `habit-session-${bounds.startTs}-${prevSessions.length}`).trim(),
-        sessionId: String(options?.sessionId || "").trim(),
+      const entryId = String(options?.sessionId || createOfflinePushId("habit-session-entry") || `habit-session-${bounds.startTs}-${prevSessions.length}`).trim();
+      const durationMs = Math.max(1000, Number(options?.durationMs) || (bounds.endTs - bounds.startTs));
+      const nextSession = {
+        id: entryId,
+        sessionId: String(options?.sessionId || "").trim() || entryId,
+        habitId,
+        habitNameSnapshot: String(options?.habitNameSnapshot || habit?.name || "").trim(),
         startTs: bounds.startTs,
         endTs: bounds.endTs,
         startedAt: bounds.startTs,
@@ -2876,11 +2896,14 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
         realEndedAt: Number(options?.realEndedAt) || bounds.endTs,
         effectiveStartedAt: Number(options?.effectiveStartedAt) || bounds.startTs,
         effectiveEndedAt: Number(options?.effectiveEndedAt) || bounds.endTs,
+        durationMs,
         durationSec: Math.max(1, Math.round((bounds.endTs - bounds.startTs) / 1000)),
-        dateKey: localDayKey
-      });
+        dateKey: localDayKey,
+        source: String(options?.source || "live").trim() || "live"
+      };
+      prevSessions.push(nextSession);
       if (!habitSessionTimeline[habitId]) habitSessionTimeline[habitId] = [];
-      habitSessionTimeline[habitId].push({ habitId, ...prevSessions[prevSessions.length - 1], dateKey, source: "live" });
+      habitSessionTimeline[habitId].push({ habitId, ...nextSession, dateKey, source: nextSession.source || "live" });
       if (!habitSessionTimelineCoverage[habitId]) habitSessionTimelineCoverage[habitId] = new Set();
       habitSessionTimelineCoverage[habitId].add(dateKey);
     }
@@ -4428,6 +4451,7 @@ function getSessionsForHabitDate(habitId, dateKey) {
         endedAt: endTs,
         effectiveStartedAt: startTs,
         effectiveEndedAt: endTs,
+        durationMs: Math.max(1000, endTs - startTs),
         durationSec: Math.max(1, Math.round((endTs - startTs) / 1000)),
         source: session.source || "ts"
       };
@@ -4988,8 +5012,11 @@ const $habitSessionSheet = $habitSessionModal?.querySelector(".modal");
 const $habitManualModal = document.getElementById("habit-manual-modal");
 const $habitManualForm = document.getElementById("habit-manual-form");
 const $habitManualHabit = document.getElementById("habit-manual-habit");
+const $habitManualStart = document.getElementById("habit-manual-start");
+const $habitManualEnd = document.getElementById("habit-manual-end");
 const $habitManualMinutes = document.getElementById("habit-manual-minutes");
 const $habitManualDate = document.getElementById("habit-manual-date");
+const $habitManualError = document.getElementById("habit-manual-error");
 
 // Entry edit modal
 const $habitEntryModal = document.getElementById("habit-entry-modal-backdrop");
@@ -8642,6 +8669,34 @@ function buildScheduleSessionLayout(rows = []) {
   return normalized.filter((node) => !node.parentId);
 }
 
+function syncActiveScheduleSessionVisualState(root = $habitScheduleView) {
+  const items = Array.from(root?.querySelectorAll?.('[data-role="schedule-session-item"]') || []);
+  items.forEach((item) => item.classList.remove("habit-daySchedule__item--active"));
+  if (!activeScheduleSessionId) return;
+  items
+    .filter((item) => item.getAttribute("data-session-id") === activeScheduleSessionId)
+    .forEach((item) => {
+      let current = item;
+      while (current?.classList?.contains("habit-daySchedule__item")) {
+        current.classList.add("habit-daySchedule__item--active");
+        current = current.parentElement?.closest?.(".habit-daySchedule__item") || null;
+      }
+    });
+}
+
+function activateScheduleSession(sessionId, habitName = "") {
+  const nextId = String(sessionId || "").trim();
+  if (!nextId) return;
+  if (activeScheduleSessionId !== nextId) {
+    activeScheduleSessionId = nextId;
+    console.log("[habit:schedule:item:activate]", {
+      sessionId: nextId,
+      habitName: String(habitName || "").trim()
+    });
+  }
+  syncActiveScheduleSessionVisualState();
+}
+
 function renderScheduleSessionTree(items = [], rangeStartMin = 0, rangeEndMin = 1440, options = {}) {
   const containerRange = Math.max(1, rangeEndMin - rangeStartMin);
   const isNested = options.nested === true;
@@ -8653,10 +8708,13 @@ function renderScheduleSessionTree(items = [], rangeStartMin = 0, rangeEndMin = 
       : Math.max(58, 100 / Math.max(1, item.laneCount));
     const leftPct = Math.min(100 - widthPct, item.lane * widthPct);
     const accent = escapeHtml(resolveHabitColor(item.habit) || DEFAULT_COLOR);
+    const sessionId = String(item.id || item.sessionId || item.layoutId || "").trim();
+    const isActive = !!sessionId && sessionId === activeScheduleSessionId;
+    const baseZIndex = Math.max(1, (isNested ? 2 : 1) + Math.max(0, Number(item.lane) || 0));
     const childrenHtml = item.children?.length
       ? `<div class="habit-daySchedule__children">${renderScheduleSessionTree(item.children, item.startMin, item.endMin, { nested: true })}</div>`
       : "";
-    return `<article class="habit-daySchedule__item${isNested ? " is-nested" : ""}" style="--slot-color:${accent};top:${topPct.toFixed(3)}%;height:${heightPct.toFixed(3)}%;left:${leftPct.toFixed(3)}%;width:${widthPct.toFixed(3)}%;">
+    return `<article class="habit-daySchedule__item${isNested ? " is-nested" : ""}${isActive ? " habit-daySchedule__item--active" : ""}" data-role="schedule-session-item" data-session-id="${escapeHtml(sessionId)}" data-habit-name="${escapeHtml(item.habit?.name || item.habitNameSnapshot || "Habito")}" style="--slot-color:${accent};--schedule-z:${baseZIndex};top:${topPct.toFixed(3)}%;height:${heightPct.toFixed(3)}%;left:${leftPct.toFixed(3)}%;width:${widthPct.toFixed(3)}%;">
       <span class="habit-daySchedule__marker" aria-hidden="true"></span>
       <div class="habit-daySchedule__card">
         <div class="habit-daySchedule__summary">
@@ -12670,6 +12728,33 @@ function assignSession(habitId) {
   renderHabits();
 }
 
+function setManualTimeFormError(message = "") {
+  if (!$habitManualError) return;
+  const text = String(message || "").trim();
+  $habitManualError.textContent = text;
+  $habitManualError.classList.toggle("hidden", !text);
+}
+
+function buildManualSessionTimestamp(dateKey, timeValue) {
+  const day = parseDateKey(dateKey);
+  const normalizedTime = normalizeWorkScheduleTimeValue(timeValue, "");
+  if (!day || !normalizedTime) return Number.NaN;
+  const [hours, minutes] = normalizedTime.split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return Number.NaN;
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate(), hours, minutes, 0, 0).getTime();
+}
+
+function syncManualMinutesFromRange() {
+  if (!$habitManualMinutes) return;
+  const startTime = normalizeWorkScheduleTimeValue($habitManualStart?.value || "", "");
+  const endTime = normalizeWorkScheduleTimeValue($habitManualEnd?.value || "", "");
+  if (!startTime || !endTime) return;
+  const startMinutes = timeToMinutes(startTime);
+  const endMinutes = timeToMinutes(endTime);
+  if (endMinutes <= startMinutes) return;
+  $habitManualMinutes.value = formatHHMM(endMinutes - startMinutes);
+}
+
 function openManualTimeModal(dateKey = todayKey()) {
   if (!$habitManualModal) return;
   $habitManualHabit.innerHTML = "";
@@ -12691,14 +12776,18 @@ function openManualTimeModal(dateKey = todayKey()) {
   if (lastHabitId) {
     $habitManualHabit.value = lastHabitId;
   }
+  if ($habitManualStart) $habitManualStart.value = "";
+  if ($habitManualEnd) $habitManualEnd.value = "";
   $habitManualMinutes.value = "";
   $habitManualDate.value = dateKey;
+  setManualTimeFormError("");
   $habitManualModal.classList.remove("hidden");
   syncHabitModalOpenState();
 }
 
 function closeManualTimeModal() {
   $habitManualModal?.classList.add("hidden");
+  setManualTimeFormError("");
   syncHabitModalOpenState();
 }
 
@@ -12706,11 +12795,82 @@ function closeManualTimeModal() {
 function handleManualSubmit(e) {
   e.preventDefault();
   const habitId = $habitManualHabit.value;
-  const minutes = parseTimeToMinutes($habitManualMinutes.value);
+  const habit = habits[habitId];
   const dateKey = $habitManualDate.value || todayKey();
-  if (!habitId || minutes <= 0) return;
+  const startTime = normalizeWorkScheduleTimeValue($habitManualStart?.value || "", "");
+  const endTime = normalizeWorkScheduleTimeValue($habitManualEnd?.value || "", "");
+  const hasRangeInput = !!(startTime || endTime);
+  let minutes = parseTimeToMinutes($habitManualMinutes.value);
 
-  addHabitTimeSec(habitId, dateKey, minutes * 60);
+  setManualTimeFormError("");
+
+  if (!habitId || !habit) {
+    setManualTimeFormError("Selecciona un habito valido.");
+    return;
+  }
+
+  if (hasRangeInput && (!startTime || !endTime)) {
+    setManualTimeFormError("Para crear un bloque horario, indica hora de inicio y hora de fin.");
+    return;
+  }
+
+  if (hasRangeInput) {
+    const startMinutes = timeToMinutes(startTime);
+    const endMinutes = timeToMinutes(endTime);
+    if (endMinutes <= startMinutes) {
+      setManualTimeFormError("La hora de fin debe ser posterior a la de inicio. De momento no se admiten sesiones que crucen medianoche.");
+      return;
+    }
+    minutes = endMinutes - startMinutes;
+    $habitManualMinutes.value = formatHHMM(minutes);
+  }
+
+  if (minutes <= 0) {
+    setManualTimeFormError("Indica minutos o un rango horario valido.");
+    return;
+  }
+
+  if (hasRangeInput) {
+    const startTimestamp = buildManualSessionTimestamp(dateKey, startTime);
+    const endTimestamp = buildManualSessionTimestamp(dateKey, endTime);
+    if (!Number.isFinite(startTimestamp) || !Number.isFinite(endTimestamp)) {
+      setManualTimeFormError("Revisa la fecha y las horas de la sesion.");
+      return;
+    }
+    if (dateKeyLocal(new Date(startTimestamp)) !== dateKeyLocal(new Date(endTimestamp))) {
+      setManualTimeFormError("De momento no se admiten sesiones que crucen medianoche.");
+      return;
+    }
+
+    const sessionId = String(createOfflinePushId("habit-session-entry") || `habit-manual-${startTimestamp}`).trim();
+    const payload = {
+      id: sessionId,
+      sessionId,
+      habitId,
+      habitNameSnapshot: habit.name || "",
+      source: "manual",
+      dateKey,
+      startTs: startTimestamp,
+      endTs: endTimestamp,
+      realStartedAt: startTimestamp,
+      realEndedAt: endTimestamp,
+      effectiveStartedAt: startTimestamp,
+      effectiveEndedAt: endTimestamp,
+      durationMs: Math.max(60000, endTimestamp - startTimestamp),
+      durationSec: Math.max(60, Math.round((endTimestamp - startTimestamp) / 1000))
+    };
+    console.log("[habit:manual-session:save:start]", {
+      habitId,
+      dateKey,
+      startTime,
+      endTime
+    });
+    console.log("[habit:manual-session:payload]", payload);
+    addHabitTimeSec(habitId, dateKey, minutes * 60, payload);
+  } else {
+    addHabitTimeSec(habitId, dateKey, minutes * 60);
+  }
+
   localStorage.setItem(LAST_HABIT_KEY, habitId);
 
   closeManualTimeModal();
@@ -13501,7 +13661,7 @@ function bindEvents() {
     syncHabitGroupSelect("");
     renderToday();
   });
-  $btnAddTime?.addEventListener("click", () => openManualTimeModal(selectedDateKey));
+  $btnAddTime?.addEventListener("click", () => openManualTimeModal(activeTab === "schedule" ? scheduleTimelineDateKey : selectedDateKey));
   $habitModalClose.addEventListener("click", closeHabitModal);
   $habitModalCancel.addEventListener("click", closeHabitModal);
   $habitForm.addEventListener("submit", handleHabitSubmit);
@@ -13729,6 +13889,18 @@ function bindEvents() {
 
   $habitManualClose?.addEventListener("click", closeManualTimeModal);
   $habitManualCancel?.addEventListener("click", closeManualTimeModal);
+  $habitManualStart?.addEventListener("input", () => {
+    setManualTimeFormError("");
+    syncManualMinutesFromRange();
+  });
+  $habitManualEnd?.addEventListener("input", () => {
+    setManualTimeFormError("");
+    syncManualMinutesFromRange();
+  });
+  $habitManualDate?.addEventListener("input", () => setManualTimeFormError(""));
+  $habitManualMinutes?.addEventListener("input", () => {
+    if (!$habitManualStart?.value && !$habitManualEnd?.value) setManualTimeFormError("");
+  });
   $habitManualForm?.addEventListener("submit", handleManualSubmit);
 
 

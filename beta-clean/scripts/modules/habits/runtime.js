@@ -2373,7 +2373,8 @@ function foldKey(s) {
 
 function isWorkHabit(habit) {
   if (!habit || habit.archived) return false;
-  return foldKey(habit.name) === "trabajo";
+  const nameKey = foldKey(habit.name);
+  return nameKey === "trabajo" || nameKey === "trabajar";
 }
 
 function normalizeShiftValue(value) {
@@ -8711,16 +8712,20 @@ function renderScheduleSessionTree(items = [], rangeStartMin = 0, rangeEndMin = 
     const sessionId = String(item.id || item.sessionId || item.layoutId || "").trim();
     const isActive = !!sessionId && sessionId === activeScheduleSessionId;
     const baseZIndex = Math.max(1, (isNested ? 2 : 1) + Math.max(0, Number(item.lane) || 0));
+    const sourceClass = item.isPlanned || item.source === "planned-work"
+      ? " is-planned"
+      : (item.isRegistered ? " is-recorded" : "");
+    const title = item.timelineLabel || item.habitNameSnapshot || item.habit?.name || "Hábito";
     const childrenHtml = item.children?.length
       ? `<div class="habit-daySchedule__children">${renderScheduleSessionTree(item.children, item.startMin, item.endMin, { nested: true })}</div>`
       : "";
-    return `<article class="habit-daySchedule__item${isNested ? " is-nested" : ""}${isActive ? " habit-daySchedule__item--active" : ""}" data-role="schedule-session-item" data-session-id="${escapeHtml(sessionId)}" data-habit-name="${escapeHtml(item.habit?.name || item.habitNameSnapshot || "Habito")}" style="--slot-color:${accent};--schedule-z:${baseZIndex};top:${topPct.toFixed(3)}%;height:${heightPct.toFixed(3)}%;left:${leftPct.toFixed(3)}%;width:${widthPct.toFixed(3)}%;">
+    return `<article class="habit-daySchedule__item${isNested ? " is-nested" : ""}${sourceClass}${isActive ? " habit-daySchedule__item--active" : ""}" data-role="schedule-session-item" data-session-id="${escapeHtml(sessionId)}" data-habit-name="${escapeHtml(title)}" data-source="${escapeHtml(String(item.source || ""))}" style="--slot-color:${accent};--schedule-z:${baseZIndex};top:${topPct.toFixed(3)}%;height:${heightPct.toFixed(3)}%;left:${leftPct.toFixed(3)}%;width:${widthPct.toFixed(3)}%;">
       <span class="habit-daySchedule__marker" aria-hidden="true"></span>
       <div class="habit-daySchedule__card">
         <div class="habit-daySchedule__summary">
         <div class="habit-daySchedule__time">${escapeHtml(formatScheduleTime(item.startTs))}–${escapeHtml(formatScheduleTime(item.endTs))}</div>
         <div class="habit-daySchedule__meta">
-          <strong class="habit-daySchedule__title">${escapeHtml(item.habit?.name || "Hábito")}</strong>
+          <strong class="habit-daySchedule__title">${escapeHtml(title)}</strong>
           <span class="habit-daySchedule__duration">${escapeHtml(formatMinutes(minutesFromSession(item)))}</span>
         </div>
         </div>
@@ -8730,15 +8735,104 @@ function renderScheduleSessionTree(items = [], rangeStartMin = 0, rangeEndMin = 
   }).join("");
 }
 
+function isSameTimedRange(session, startTs, endTs) {
+  const bounds = parseSessionBounds(session);
+  if (!bounds) return false;
+  return bounds.startTs === startTs && bounds.endTs === endTs;
+}
+
+function sessionOverlapsRange(session, startTs, endTs) {
+  const bounds = parseSessionBounds(session);
+  if (!bounds) return false;
+  return bounds.startTs < endTs && bounds.endTs > startTs;
+}
+
+function buildPlannedWorkRangesForDate(dateKey = todayKey()) {
+  const dayInfo = getStoredWorkScheduleDayInfo(dateKey);
+  if (!dayInfo || dayInfo.isFree) return [];
+  const slots = Array.isArray(dayInfo.slots) && dayInfo.slots.length
+    ? dayInfo.slots
+    : ((dayInfo.start && dayInfo.end) ? [{
+        start: dayInfo.start,
+        end: dayInfo.end,
+        breakMinutes: dayInfo.hasBreak ? 30 : 0,
+        hasHalfHourBreak: !!dayInfo.hasBreak
+      }] : []);
+  return slots.map((slot) => {
+    const startTs = buildManualSessionTimestamp(dateKey, slot.start);
+    const endTs = buildManualSessionTimestamp(dateKey, slot.end);
+    if (!Number.isFinite(startTs) || !Number.isFinite(endTs) || endTs <= startTs) return null;
+    return {
+      ...slot,
+      startTs,
+      endTs,
+      breakMinutes: Math.max(0, Number(slot?.breakMinutes) || 0)
+    };
+  }).filter(Boolean);
+}
+
+function buildPlannedWorkTimelineSessions(dateKey = todayKey()) {
+  const workHabit = activeHabits().find((habit) => isWorkHabit(habit)) || null;
+  const plannedRanges = buildPlannedWorkRangesForDate(dateKey);
+  if (!plannedRanges.length) return [];
+  const realSessions = workHabit ? getSessionsForHabitDate(workHabit.id, dateKey).filter((session) => parseSessionBounds(session)) : [];
+  const habitName = String(workHabit?.name || "Trabajar").trim() || "Trabajar";
+  return plannedRanges
+    .map((slot) => {
+      if (realSessions.some((session) => isSameTimedRange(session, slot.startTs, slot.endTs))) return null;
+      const durationMs = Math.max(60000, (slot.endTs - slot.startTs) - (slot.breakMinutes * 60000));
+      return {
+        id: `planned-work-${dateKey}-${slot.start}-${slot.end}`,
+        sessionId: `planned-work-${dateKey}-${slot.start}-${slot.end}`,
+        habitId: workHabit?.id || "planned-work",
+        habitNameSnapshot: habitName,
+        timelineLabel: `${habitName} · planificado`,
+        source: "planned-work",
+        dateKey,
+        startTs: slot.startTs,
+        endTs: slot.endTs,
+        startedAt: slot.startTs,
+        endedAt: slot.endTs,
+        effectiveStartedAt: slot.startTs,
+        effectiveEndedAt: slot.endTs,
+        durationMs,
+        durationSec: Math.max(60, Math.round(durationMs / 1000)),
+        isPlanned: true,
+        habit: workHabit
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildScheduleTimelineRows(dateKey = todayKey()) {
+  const plannedRanges = buildPlannedWorkRangesForDate(dateKey);
+  const plannedSessions = buildPlannedWorkTimelineSessions(dateKey);
+  const rows = [];
+
+  activeHabits().forEach((habit) => {
+    const sessions = getSessionsForHabitDate(habit.id, dateKey) || [];
+    sessions.forEach((session) => {
+      const hasTimedBounds = !!parseSessionBounds(session);
+      const overlapsPlannedWork = isWorkHabit(habit) && plannedRanges.some((slot) => sessionOverlapsRange(session, slot.startTs, slot.endTs));
+      if (isWorkHabit(habit) && plannedRanges.length && !hasTimedBounds) return;
+      rows.push({
+        habit,
+        ...session,
+        isRegistered: overlapsPlannedWork,
+        timelineLabel: overlapsPlannedWork ? `${habit.name || "Trabajar"} · registrado` : undefined
+      });
+    });
+  });
+
+  plannedSessions.forEach((session) => rows.push(session));
+  return rows;
+}
+
 function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
   const date = parseDateKey(dateKey) || new Date();
   const prev = dateKeyLocal(addDays(date, -1));
   const next = dateKeyLocal(addDays(date, 1));
-  const rows = [];
-  activeHabits().forEach((habit) => {
-    const sessions = getSessionsForHabitDate(habit.id, dateKey) || [];
-    sessions.forEach((session) => rows.push({ habit, ...session }));
-  });
+  const rows = buildScheduleTimelineRows(dateKey);
 
   const timed = rows.filter((row) => parseSessionBounds(row)).sort((a, b) => {
     const aBounds = parseSessionBounds(a);

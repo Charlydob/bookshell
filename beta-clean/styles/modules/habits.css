@@ -5304,6 +5304,17 @@ button#habit-detail-edit, #habit-detail-close{
   box-shadow: 0 0 0 4px rgba(10, 10, 14, 0.9), 0 0 24px color-mix(in srgb, var(--slot-color, #8b8b95) 52%, transparent);
 }
 
+.habit-daySchedule__item.is-planned .habit-daySchedule__card {
+  border-style: dashed;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--slot-color, rgba(255,255,255,0.08)) 8%, rgba(255,255,255,0.025)), rgba(255,255,255,0.02)),
+    var(--glass);
+}
+
+.habit-daySchedule__item.is-planned .habit-daySchedule__time {
+  color: rgba(255,255,255,0.58);
+}
+
 .habit-daySchedule__item.is-nested {
   padding-left: 10px;
 }

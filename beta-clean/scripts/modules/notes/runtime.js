@@ -642,11 +642,34 @@ function renderFolderStatsSectionView(folder, insights, childFolders = []) {
   console.debug("[notes:map] section rendered");
 }
 
-function collectNoteLocations(notes = []) { return (notes || []).map((note) => ({ ...note.location, noteId: note.id })).filter((loc) => Number.isFinite(Number(loc?.lat || loc?.coords?.lat)) && Number.isFinite(Number(loc?.lng || loc?.coords?.lng))); }
+function hasRealLocationCoordinates(lat, lng) {
+  const safeLat = Number(lat);
+  const safeLng = Number(lng);
+  return Number.isFinite(safeLat) && Number.isFinite(safeLng) && !(safeLat === 0 && safeLng === 0);
+}
+function collectNoteLocations(notes = []) { return (notes || []).map((note) => ({ ...note.location, noteId: note.id })).filter((loc) => hasRealLocationCoordinates(loc?.lat || loc?.coords?.lat, loc?.lng || loc?.coords?.lng)); }
 function buildLocationClusters(locations = []) { const map = new Map(); locations.forEach((loc) => { const lat = Number(loc.lat || loc.coords?.lat); const lng = Number(loc.lng || loc.coords?.lng); const key = `${lat.toFixed(2)},${lng.toFixed(2)}`; const prev = map.get(key) || { label: key, count: 0 }; prev.count += 1; map.set(key, prev); }); return Array.from(map.values()).sort((a, b) => b.count - a.count); }
 function normalizeTitleKey(title = "") { return String(title || "").trim().toLowerCase().replace(/\s+/g, " "); }
 function buildDuplicateTitleGroups(notes = []) { const groups = new Map(); notes.forEach((note) => { const key = normalizeTitleKey(note?.title); if (!key) return; const g = groups.get(key) || { key: encodeURIComponent(key), title: note.title.trim(), count: 0, notes: [] }; g.count += 1; g.notes.push(note); groups.set(key, g); }); return Array.from(groups.values()).filter((g) => g.count > 1); }
-async function initStatsMap(locations = []) { if (!window.L) { await new Promise((resolve) => { const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(css); const script = document.createElement("script"); script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"; script.onload = resolve; document.body.appendChild(script); }); } const el = $id("notes-stats-map"); if (!el || !window.L) return; el.innerHTML = ""; const map = window.L.map(el).setView([0, 0], 2); window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map); const markers = []; locations.forEach((loc) => { const lat = Number(loc.lat || loc.coords?.lat); const lng = Number(loc.lng || loc.coords?.lng); const marker = window.L.marker([lat, lng]).addTo(map); marker.bindPopup(escapeHtml(loc.label || loc.text || "Ubicación")); markers.push([lat, lng]); }); if (markers.length) map.fitBounds(markers, { padding: [24, 24] }); setTimeout(() => map.invalidateSize(), 50); }
+async function initStatsMap(locations = []) { if (!window.L) { await new Promise((resolve) => { const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(css); const script = document.createElement("script"); script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"; script.onload = resolve; document.body.appendChild(script); }); } const el = $id("notes-stats-map"); if (!el || !window.L) return; el.innerHTML = ""; const map = window.L.map(el).setView([0, 0], 2); window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map); const markers = []; const dotIcon = window.L.divIcon({ className: "notes-map-dot-icon", html: '<span class="notes-map-dot" aria-hidden="true"></span>', iconSize: [12, 12], iconAnchor: [6, 6] }); locations.forEach((loc) => { const lat = Number(loc.lat || loc.coords?.lat); const lng = Number(loc.lng || loc.coords?.lng); if (!hasRealLocationCoordinates(lat, lng)) return; const marker = window.L.marker([lat, lng], { icon: dotIcon }).addTo(map); marker.bindPopup(escapeHtml(loc.label || loc.text || "Ubicación")); markers.push([lat, lng]); }); if (markers.length) map.fitBounds(markers, { padding: [24, 24] }); setTimeout(() => map.invalidateSize(), 50); }
+
+function selectLocationSuggestion(suggestion = {}) {
+  const label = String(suggestion?.label || "").trim();
+  const lat = Number(suggestion?.lat);
+  const lng = Number(suggestion?.lng);
+  $id("notes-note-location-search").value = label;
+  $id("notes-note-location-label").value = label;
+  $id("notes-note-location-country").value = suggestion?.country || "";
+  $id("notes-note-location-region").value = suggestion?.region || "";
+  $id("notes-note-location-city").value = suggestion?.city || "";
+  $id("notes-note-location-postal-code").value = suggestion?.postalCode || "";
+  $id("notes-note-location-lat").value = hasRealLocationCoordinates(lat, lng) ? String(lat) : "";
+  $id("notes-note-location-lng").value = hasRealLocationCoordinates(lat, lng) ? String(lng) : "";
+  $id("notes-note-location-source").value = suggestion?.source || "nominatim";
+  $id("notes-note-location-coords").value = hasRealLocationCoordinates(lat, lng) ? `${lat}, ${lng}` : "";
+  $id("notes-note-location-suggestions").classList.add("hidden");
+  $id("notes-note-location-status").textContent = label ? "Ubicación seleccionada." : "Selecciona una ubicación de la lista.";
+}
 
 function emitNotesData(reason = "") {
   try {
@@ -4471,6 +4494,16 @@ function bindNoteModalEvents() {
     }
     noteId = noteId || createNoteId(state.rootPath);
 
+    const rawLocationLat = Number.isFinite(locationLat) && locationLat ? locationLat : Number(locationCoords?.lat || 0);
+    const rawLocationLng = Number.isFinite(locationLng) && locationLng ? locationLng : Number(locationCoords?.lng || 0);
+    const hasValidLocationCoordinates = hasRealLocationCoordinates(rawLocationLat, rawLocationLng);
+    const hasLocationText = Boolean(locationLabel || $id("notes-note-location-search")?.value?.trim?.());
+    if (hasLocationText && !hasValidLocationCoordinates) {
+      errorField.textContent = "Selecciona una ubicación de la lista.";
+      $id("notes-note-location-search")?.focus();
+      return;
+    }
+
     const payload = {
       folderId,
       title,
@@ -4496,11 +4529,11 @@ function bindNoteModalEvents() {
         region: locationRegion,
         city: locationCity,
         postalCode: locationPostalCode,
-        lat: Number.isFinite(locationLat) && locationLat ? locationLat : Number(locationCoords?.lat || 0),
-        lng: Number.isFinite(locationLng) && locationLng ? locationLng : Number(locationCoords?.lng || 0),
+        lat: hasValidLocationCoordinates ? rawLocationLat : null,
+        lng: hasValidLocationCoordinates ? rawLocationLng : null,
         source: locationSource || "manual",
         text: locationLabel,
-        coords: locationCoords || { lat: locationLat, lng: locationLng },
+        coords: hasValidLocationCoordinates ? { lat: rawLocationLat, lng: rawLocationLng } : null,
       },
     };
 
@@ -4754,21 +4787,14 @@ function bindUiEvents() {
       const note = state.notes.find((row) => row.id === target.dataset.noteId);
       if (note) openNoteModal(note);
     }
-    if (target.dataset.act === "select-location-suggestion") {
-      const data = JSON.parse(target.dataset.location || "{}");
-      console.debug("[notes:location] suggestion selected", data?.label || "");
-      $id("notes-note-location-search").value = data.label || "";
-      $id("notes-note-location-label").value = data.label || "";
-      $id("notes-note-location-country").value = data.country || "";
-      $id("notes-note-location-region").value = data.region || "";
-      $id("notes-note-location-city").value = data.city || "";
-      $id("notes-note-location-postal-code").value = data.postalCode || "";
-      $id("notes-note-location-lat").value = data.lat || "";
-      $id("notes-note-location-lng").value = data.lng || "";
-      $id("notes-note-location-source").value = data.source || "nominatim";
-      $id("notes-note-location-coords").value = `${data.lat}, ${data.lng}`;
-      $id("notes-note-location-suggestions").classList.add("hidden");
-    }
+  });
+  $id("notes-note-location-suggestions")?.addEventListener("pointerdown", (event) => {
+    const target = event.target.closest("[data-act='select-location-suggestion']");
+    if (!target) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const data = JSON.parse(target.dataset.location || "{}");
+    selectLocationSuggestion(data);
   });
   $id("notes-note-folder-select")?.addEventListener("change", (event) => {
     const folderId = String(event.target.value || "").trim();

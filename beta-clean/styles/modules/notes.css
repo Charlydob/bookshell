@@ -1273,6 +1273,21 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   border: 0;
 }
 
+.notes-map-dot-icon {
+  background: transparent;
+  border: 0;
+}
+
+.notes-map-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #d93025;
+  border: 2px solid rgba(255, 255, 255, 0.88);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+  display: block;
+}
+
 .notes-location-autocomplete {
   margin-top: 8px;
   display: grid;

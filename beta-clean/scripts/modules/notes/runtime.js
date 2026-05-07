@@ -637,7 +637,8 @@ function renderFolderStatsSectionView(folder, insights, childFolders = []) {
         <select class="field-select" data-act="set-location-grouping">
           <option value="country" ${activeLocationGrouping === "country" ? "selected" : ""}>País</option>
           <option value="region" ${activeLocationGrouping === "region" ? "selected" : ""}>Comunidad / región</option>
-          <option value="city" ${activeLocationGrouping === "city" ? "selected" : ""}>Ciudad</option>
+          <option value="province" ${activeLocationGrouping === "province" ? "selected" : ""}>Provincia</option>
+          <option value="city" ${activeLocationGrouping === "city" ? "selected" : ""}>Municipio / ciudad</option>
           <option value="postalCode" ${activeLocationGrouping === "postalCode" ? "selected" : ""}>Código postal</option>
           <option value="label" ${activeLocationGrouping === "label" ? "selected" : ""}>Dirección / ubicación exacta</option>
         </select>
@@ -659,7 +660,7 @@ function hasRealLocationCoordinates(lat, lng) {
   return Number.isFinite(safeLat) && Number.isFinite(safeLng) && !(safeLat === 0 && safeLng === 0);
 }
 function collectNoteLocations(notes = []) { return (notes || []).map((note) => ({ ...note.location, noteId: note.id })).filter((loc) => hasRealLocationCoordinates(loc?.lat || loc?.coords?.lat, loc?.lng || loc?.coords?.lng)); }
-function buildLocationClusters(locations = [], level = "country") { const map = new Map(); locations.forEach((loc) => { const byLevel = { country: loc?.country, region: loc?.region, city: loc?.city, postalCode: loc?.postalCode, label: loc?.label || loc?.text }; const raw = String(byLevel[level] || "").trim(); const label = raw || String(loc?.label || loc?.text || loc?.city || loc?.region || loc?.country || "Ubicación sin nombre").trim(); const key = label.toLowerCase(); const prev = map.get(key) || { label, count: 0 }; prev.count += 1; map.set(key, prev); }); return Array.from(map.values()).sort((a, b) => b.count - a.count); }
+function buildLocationClusters(locations = [], level = "country") { const map = new Map(); locations.forEach((loc) => { const raw = getLocationValueForLevel(loc, level); const label = raw || String(loc?.label || loc?.exactAddress || loc?.text || getLocationValueForLevel(loc, "city") || getLocationValueForLevel(loc, "region") || getLocationValueForLevel(loc, "country") || "Ubicación sin nombre").trim(); const key = label.toLowerCase(); const prev = map.get(key) || { label, count: 0 }; prev.count += 1; map.set(key, prev); }); return Array.from(map.values()).sort((a, b) => b.count - a.count); }
 function normalizeTitleKey(title = "") { return String(title || "").trim().toLowerCase().replace(/\s+/g, " "); }
 function buildDuplicateTitleGroups(notes = []) { const groups = new Map(); notes.forEach((note) => { const key = normalizeTitleKey(note?.title); if (!key) return; const g = groups.get(key) || { key: encodeURIComponent(key), title: note.title.trim(), count: 0, notes: [] }; g.count += 1; g.notes.push(note); groups.set(key, g); }); return Array.from(groups.values()).filter((g) => g.count > 1); }
 async function initStatsMap(locations = []) { if (!window.L) { await new Promise((resolve) => { const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(css); const script = document.createElement("script"); script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"; script.onload = resolve; document.body.appendChild(script); }); } const el = $id("notes-stats-map"); if (!el || !window.L) return; el.innerHTML = ""; const map = window.L.map(el).setView([0, 0], 2); window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map); const markers = []; const dotIcon = window.L.divIcon({ className: "notes-map-dot-icon", html: '<span class="notes-map-dot" aria-hidden="true"></span>', iconSize: [12, 12], iconAnchor: [6, 6] }); locations.forEach((loc) => { const lat = Number(loc.lat || loc.coords?.lat); const lng = Number(loc.lng || loc.coords?.lng); if (!hasRealLocationCoordinates(lat, lng)) return; const marker = window.L.marker([lat, lng], { icon: dotIcon }).addTo(map); marker.bindPopup(escapeHtml(loc.label || loc.text || "Ubicación")); markers.push([lat, lng]); }); if (markers.length) map.fitBounds(markers, { padding: [24, 24] }); setTimeout(() => map.invalidateSize(), 50); }
@@ -672,7 +673,7 @@ function selectLocationSuggestion(suggestion = {}) {
   $id("notes-note-location-label").value = label;
   $id("notes-note-location-country").value = suggestion?.country || "";
   $id("notes-note-location-region").value = suggestion?.region || "";
-  $id("notes-note-location-city").value = suggestion?.city || "";
+  $id("notes-note-location-city").value = suggestion?.city || suggestion?.municipality || "";
   $id("notes-note-location-postal-code").value = suggestion?.postalCode || "";
   $id("notes-note-location-lat").value = hasRealLocationCoordinates(lat, lng) ? String(lat) : "";
   $id("notes-note-location-lng").value = hasRealLocationCoordinates(lat, lng) ? String(lng) : "";
@@ -755,6 +756,43 @@ function formatNumber(value = 0) {
   return NUMBER_FORMATTER.format(Number(value || 0));
 }
 
+function normalizeLocationAddress(result = {}) {
+  const address = result?.address || {};
+  const fallbackRegion = String(address.state || address.region || "").trim();
+  const fallbackProvince = String(address.province || address.county || "").trim();
+  const fallbackCity = String(address.city || address.town || address.village || address.municipality || "").trim();
+  const fallbackStreet = [String(address.road || "").trim(), String(address.house_number || "").trim()].filter(Boolean).join(" ").trim();
+  const label = String(result?.display_name || result?.label || "").trim();
+  return {
+    label: label || fallbackStreet,
+    country: String(address.country || result?.country || "").trim(),
+    region: String(result?.region || fallbackRegion).trim(),
+    province: String(result?.province || fallbackProvince).trim(),
+    city: String(result?.city || fallbackCity).trim(),
+    municipality: String(result?.municipality || address.municipality || "").trim(),
+    postalCode: String(result?.postalCode || address.postcode || "").trim(),
+    exactAddress: String(result?.exactAddress || fallbackStreet || label).trim(),
+    lat: Number(result?.lat),
+    lng: Number(result?.lon ?? result?.lng),
+    source: String(result?.source || "nominatim").trim() || "nominatim",
+  };
+}
+
+function getLocationValueForLevel(location = {}, level = "country") {
+  const cityValue = location?.city || location?.town || location?.village || location?.municipality || location?.place;
+  const provinceValue = location?.province || location?.county;
+  const regionValue = location?.region || location?.state;
+  const byLevel = {
+    country: location?.country,
+    region: regionValue,
+    province: provinceValue,
+    city: cityValue,
+    postalCode: location?.postalCode,
+    label: location?.label || location?.exactAddress || location?.text,
+  };
+  return String(byLevel[level] || "").trim();
+}
+
 async function searchLocationSuggestions(query = "") {
   const safe = String(query || "").trim();
   if (safe.length < 3) return [];
@@ -762,16 +800,9 @@ async function searchLocationSuggestions(query = "") {
     const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(safe)}`;
     const response = await fetch(url, { headers: { Accept: "application/json" } });
     const data = await response.json();
-    return (Array.isArray(data) ? data : []).map((item) => ({
-      label: item.display_name || safe,
-      country: item.address?.country || "",
-      region: item.address?.state || item.address?.region || "",
-      city: item.address?.city || item.address?.town || item.address?.village || item.address?.municipality || "",
-      postalCode: item.address?.postcode || "",
-      lat: Number(item.lat),
-      lng: Number(item.lon),
-      source: "nominatim",
-    })).filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lng));
+    return (Array.isArray(data) ? data : [])
+      .map((item) => normalizeLocationAddress(item))
+      .filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lng));
   } catch (error) {
     console.warn("[notes:location] autocomplete failed", error);
     return [];
@@ -4564,14 +4595,17 @@ function bindNoteModalEvents() {
       imageUpdatedAt: Number(current?.imageUpdatedAt || 0),
       tagImageKey: "",
       location: {
-        label: locationLabel,
-        country: locationCountry,
-        region: locationRegion,
-        city: locationCity,
-        postalCode: locationPostalCode,
-        lat: hasValidLocationCoordinates ? rawLocationLat : null,
-        lng: hasValidLocationCoordinates ? rawLocationLng : null,
-        source: locationSource || "manual",
+        ...normalizeLocationAddress({
+          label: locationLabel,
+          country: locationCountry,
+          region: locationRegion,
+          city: locationCity,
+          postalCode: locationPostalCode,
+          lat: hasValidLocationCoordinates ? rawLocationLat : null,
+          lng: hasValidLocationCoordinates ? rawLocationLng : null,
+          source: locationSource || "manual",
+          exactAddress: locationLabel,
+        }),
         text: locationLabel,
         coords: hasValidLocationCoordinates ? { lat: rawLocationLat, lng: rawLocationLng } : null,
       },

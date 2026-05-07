@@ -102,6 +102,7 @@ let reminderCheckTimer = null;
 let reminderToastQueue = [];
 let reminderToastActive = null;
 let reminderNotificationsOpen = false;
+let notesLocationSearchTimer = null;
 const reminderExpandedChecklist = new Set();
 const expandedSnippetNotes = new Set();
 const REMINDER_TYPES = ["normal", "cumpleaños", "tarea", "evento", "trámite", "checklist", "personalizado"];
@@ -615,16 +616,37 @@ function renderFolderStatsSectionView(folder, insights, childFolders = []) {
     },
   ]);
 
-  empty.classList.toggle("hidden", totalNotes > 0);
-  grid.classList.toggle("hidden", totalNotes === 0);
-  if (!totalNotes) {
-    grid.innerHTML = "";
-    return;
-  }
+  const folderNotes = filterNotesByFolder(state.notes, folder?.id || "");
+  const locations = collectNoteLocations(folderNotes);
+  const duplicateGroups = buildDuplicateTitleGroups(folderNotes);
+  console.debug("[notes:stats] repeated names computed", duplicateGroups.length);
+  console.debug("[notes:map] locations count", locations.length);
+
+  empty.classList.add("hidden");
+  grid.classList.remove("hidden");
 
   activeNotesStatsSection = normalizeNotesStatsSection(activeNotesStatsSection);
-  grid.innerHTML = buildActiveStatsCardMarkup(insights, averageRatingLabel, activeNotesStatsSection);
+  grid.innerHTML = `
+    ${totalNotes ? buildActiveStatsCardMarkup(insights, averageRatingLabel, activeNotesStatsSection) : ""}
+    <article class="notes-stats-card">
+      <div class="notes-stats-card-head"><h3 class="notes-stats-card-title">Mapa de ubicaciones</h3></div>
+      ${locations.length ? `<div class="notes-map-shell"><div class="notes-map-frame" id="notes-stats-map"></div></div>` : '<div class="notes-stats-empty-copy">No hay notas con ubicación en esta carpeta.</div>'}
+      ${buildStatsBarList(buildLocationClusters(locations), { labelFormatter: (row) => row.label, valueFormatter: (row) => `${formatNumber(row.count)} notas`, emptyText: "Sin clusters de ubicación." })}
+    </article>
+    <article class="notes-stats-card">
+      <div class="notes-stats-card-head"><h3 class="notes-stats-card-title">Notas con el mismo nombre</h3></div>
+      ${duplicateGroups.length ? `<div class="notes-stats-list">${duplicateGroups.map((group) => `<button class="notes-location-option" type="button" data-act="toggle-duplicate-group" data-title-key="${escapeHtml(group.key)}">${escapeHtml(group.title)} · ${formatNumber(group.count)} notas</button><div class="notes-stats-list hidden" id="notes-duplicate-${escapeHtml(group.key)}">${group.notes.map((note) => `<button class="notes-location-option" type="button" data-act="open-note-from-stats" data-note-id="${escapeHtml(note.id)}">${escapeHtml(note.title || "Sin título")}</button>`).join("")}</div>`).join("")}</div>` : '<div class="notes-stats-empty-copy">No hay nombres repetidos en esta carpeta.</div>'}
+    </article>
+  `;
+  if (locations.length) initStatsMap(locations);
+  console.debug("[notes:map] section rendered");
 }
+
+function collectNoteLocations(notes = []) { return (notes || []).map((note) => ({ ...note.location, noteId: note.id })).filter((loc) => Number.isFinite(Number(loc?.lat || loc?.coords?.lat)) && Number.isFinite(Number(loc?.lng || loc?.coords?.lng))); }
+function buildLocationClusters(locations = []) { const map = new Map(); locations.forEach((loc) => { const lat = Number(loc.lat || loc.coords?.lat); const lng = Number(loc.lng || loc.coords?.lng); const key = `${lat.toFixed(2)},${lng.toFixed(2)}`; const prev = map.get(key) || { label: key, count: 0 }; prev.count += 1; map.set(key, prev); }); return Array.from(map.values()).sort((a, b) => b.count - a.count); }
+function normalizeTitleKey(title = "") { return String(title || "").trim().toLowerCase().replace(/\s+/g, " "); }
+function buildDuplicateTitleGroups(notes = []) { const groups = new Map(); notes.forEach((note) => { const key = normalizeTitleKey(note?.title); if (!key) return; const g = groups.get(key) || { key: encodeURIComponent(key), title: note.title.trim(), count: 0, notes: [] }; g.count += 1; g.notes.push(note); groups.set(key, g); }); return Array.from(groups.values()).filter((g) => g.count > 1); }
+async function initStatsMap(locations = []) { if (!window.L) { await new Promise((resolve) => { const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(css); const script = document.createElement("script"); script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"; script.onload = resolve; document.body.appendChild(script); }); } const el = $id("notes-stats-map"); if (!el || !window.L) return; el.innerHTML = ""; const map = window.L.map(el).setView([0, 0], 2); window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map); const markers = []; locations.forEach((loc) => { const lat = Number(loc.lat || loc.coords?.lat); const lng = Number(loc.lng || loc.coords?.lng); const marker = window.L.marker([lat, lng]).addTo(map); marker.bindPopup(escapeHtml(loc.label || loc.text || "Ubicación")); markers.push([lat, lng]); }); if (markers.length) map.fitBounds(markers, { padding: [24, 24] }); setTimeout(() => map.invalidateSize(), 50); }
 
 function emitNotesData(reason = "") {
   try {
@@ -696,6 +718,29 @@ function normalizeCodeLanguage(value = "") {
 
 function formatNumber(value = 0) {
   return NUMBER_FORMATTER.format(Number(value || 0));
+}
+
+async function searchLocationSuggestions(query = "") {
+  const safe = String(query || "").trim();
+  if (safe.length < 3) return [];
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(safe)}`;
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    const data = await response.json();
+    return (Array.isArray(data) ? data : []).map((item) => ({
+      label: item.display_name || safe,
+      country: item.address?.country || "",
+      region: item.address?.state || item.address?.region || "",
+      city: item.address?.city || item.address?.town || item.address?.village || item.address?.municipality || "",
+      postalCode: item.address?.postcode || "",
+      lat: Number(item.lat),
+      lng: Number(item.lon),
+      source: "nominatim",
+    })).filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lng));
+  } catch (error) {
+    console.warn("[notes:location] autocomplete failed", error);
+    return [];
+  }
 }
 
 function formatDecimal(value = 0, digits = 1) {
@@ -3822,9 +3867,15 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-rating").value = note?.rating === null || note?.rating === undefined ? "" : String(note.rating);
   $id("notes-note-is-link").checked = note?.type === "link";
   $id("notes-note-url").value = note?.url || "";
+  $id("notes-note-location-search").value = note?.location?.label || note?.location?.text || "";
+  $id("notes-note-location-label").value = note?.location?.label || "";
   $id("notes-note-location-country").value = note?.location?.country || "";
-  $id("notes-note-location-place").value = note?.location?.place || "";
-  $id("notes-note-location-text").value = note?.location?.text || "";
+  $id("notes-note-location-region").value = note?.location?.region || "";
+  $id("notes-note-location-city").value = note?.location?.city || note?.location?.place || "";
+  $id("notes-note-location-postal-code").value = note?.location?.postalCode || "";
+  $id("notes-note-location-lat").value = note?.location?.lat || note?.location?.coords?.lat || "";
+  $id("notes-note-location-lng").value = note?.location?.lng || note?.location?.coords?.lng || "";
+  $id("notes-note-location-source").value = note?.location?.source || "";
   $id("notes-note-location-coords").value = note?.location?.coords
     ? `${note.location.coords.lat}, ${note.location.coords.lng}`
     : "";
@@ -4336,6 +4387,27 @@ function bindNoteModalEvents() {
     $id("notes-note-form-error").textContent = "";
   });
 
+  $id("notes-note-location-search")?.addEventListener("input", async (event) => {
+    const query = String(event.target?.value || "").trim();
+    const list = $id("notes-note-location-suggestions");
+    const status = $id("notes-note-location-status");
+    if (!list || !status) return;
+    clearTimeout(notesLocationSearchTimer);
+    if (query.length < 3) {
+      list.classList.add("hidden");
+      list.innerHTML = "";
+      status.textContent = "Escribe al menos 3 caracteres.";
+      return;
+    }
+    status.textContent = "Buscando ubicación…";
+    notesLocationSearchTimer = setTimeout(async () => {
+      const rows = await searchLocationSuggestions(query);
+      list.innerHTML = rows.map((item) => `<button class="notes-location-option" type="button" data-act="select-location-suggestion" data-location='${escapeHtml(JSON.stringify(item))}'>${escapeHtml(item.label)}</button>`).join("");
+      list.classList.toggle("hidden", rows.length === 0);
+      status.textContent = rows.length ? `${rows.length} sugerencias` : "Sin resultados.";
+    }, 300);
+  });
+
   $id("notes-note-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (noteSaveInFlight) return;
@@ -4358,9 +4430,14 @@ function bindNoteModalEvents() {
     const rating = normalizeNoteRatingValue(ratingSelect?.value);
     const isLink = noteKind !== "code" && $id("notes-note-is-link").checked;
     const url = $id("notes-note-url").value.trim();
+    const locationLabel = $id("notes-note-location-label")?.value?.trim?.() || $id("notes-note-location-search")?.value?.trim?.() || "";
     const locationCountry = $id("notes-note-location-country")?.value?.trim?.() || "";
-    const locationPlace = $id("notes-note-location-place")?.value?.trim?.() || "";
-    const locationText = $id("notes-note-location-text")?.value?.trim?.() || "";
+    const locationRegion = $id("notes-note-location-region")?.value?.trim?.() || "";
+    const locationCity = $id("notes-note-location-city")?.value?.trim?.() || "";
+    const locationPostalCode = $id("notes-note-location-postal-code")?.value?.trim?.() || "";
+    const locationLat = Number($id("notes-note-location-lat")?.value || 0);
+    const locationLng = Number($id("notes-note-location-lng")?.value || 0);
+    const locationSource = $id("notes-note-location-source")?.value?.trim?.() || "";
     const locationCoords = parseLocationCoords($id("notes-note-location-coords")?.value || "");
     const errorField = $id("notes-note-form-error");
     const submitButton = $id("notes-note-form")?.querySelector?.("button[type='submit']");
@@ -4414,10 +4491,16 @@ function bindNoteModalEvents() {
       imageUpdatedAt: Number(current?.imageUpdatedAt || 0),
       tagImageKey: "",
       location: {
+        label: locationLabel,
         country: locationCountry,
-        place: locationPlace,
-        text: locationText,
-        coords: locationCoords,
+        region: locationRegion,
+        city: locationCity,
+        postalCode: locationPostalCode,
+        lat: Number.isFinite(locationLat) && locationLat ? locationLat : Number(locationCoords?.lat || 0),
+        lng: Number.isFinite(locationLng) && locationLng ? locationLng : Number(locationCoords?.lng || 0),
+        source: locationSource || "manual",
+        text: locationLabel,
+        coords: locationCoords || { lat: locationLat, lng: locationLng },
       },
     };
 
@@ -4660,6 +4743,32 @@ function bindUiEvents() {
     if (nextSection === activeNotesStatsSection) return;
     activeNotesStatsSection = nextSection;
     renderFolderDetail();
+  });
+  $id("notes-folder-stats-view")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act]");
+    if (!target) return;
+    if (target.dataset.act === "toggle-duplicate-group") {
+      $id(`notes-duplicate-${target.dataset.titleKey}`)?.classList.toggle("hidden");
+    }
+    if (target.dataset.act === "open-note-from-stats") {
+      const note = state.notes.find((row) => row.id === target.dataset.noteId);
+      if (note) openNoteModal(note);
+    }
+    if (target.dataset.act === "select-location-suggestion") {
+      const data = JSON.parse(target.dataset.location || "{}");
+      console.debug("[notes:location] suggestion selected", data?.label || "");
+      $id("notes-note-location-search").value = data.label || "";
+      $id("notes-note-location-label").value = data.label || "";
+      $id("notes-note-location-country").value = data.country || "";
+      $id("notes-note-location-region").value = data.region || "";
+      $id("notes-note-location-city").value = data.city || "";
+      $id("notes-note-location-postal-code").value = data.postalCode || "";
+      $id("notes-note-location-lat").value = data.lat || "";
+      $id("notes-note-location-lng").value = data.lng || "";
+      $id("notes-note-location-source").value = data.source || "nominatim";
+      $id("notes-note-location-coords").value = `${data.lat}, ${data.lng}`;
+      $id("notes-note-location-suggestions").classList.add("hidden");
+    }
   });
   $id("notes-note-folder-select")?.addEventListener("change", (event) => {
     const folderId = String(event.target.value || "").trim();

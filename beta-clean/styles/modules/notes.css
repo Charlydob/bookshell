@@ -1260,6 +1260,42 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   gap: 10px;
 }
 
+.notes-map-shell {
+  min-height: 260px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.notes-map-frame {
+  width: 100%;
+  min-height: 260px;
+  border: 0;
+}
+
+.notes-location-autocomplete {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.notes-location-option {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(244, 248, 255, 0.95);
+}
+
+.notes-location-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(220, 229, 239, 0.7);
+}
+
 .notes-tag-media-panel {
   display: grid;
   gap: 10px;

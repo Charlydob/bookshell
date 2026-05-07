@@ -253,6 +253,7 @@ function createEmptyFolderInsights(folderId = "") {
     longestNote: null,
     shortestNote: null,
     activityByMonth: [],
+    duplicateTitles: [],
   };
 }
 
@@ -320,11 +321,23 @@ function computeFolderInsights(notes = [], folderId = "") {
 
   const notesWithTagsCount = folderNotes.filter((note) => Number(note.tagsCount || 0) > 0).length;
   const monthlyCounts = new Map();
+  const titleGroups = new Map();
 
   folderNotes.forEach((note) => {
     const monthKey = buildMonthKey(note.createdAt);
     if (!monthKey) return;
     monthlyCounts.set(monthKey, (monthlyCounts.get(monthKey) || 0) + 1);
+    const normalizedTitle = String(note.title || "").trim().toLocaleLowerCase("es");
+    if (normalizedTitle) {
+      const group = titleGroups.get(normalizedTitle) || { normalizedTitle, title: note.title || "Sin título", count: 0, notes: [] };
+      group.count += 1;
+      group.notes.push({
+        id: note.id,
+        title: note.title || "Sin título",
+        updatedAt: note.updatedAt,
+      });
+      titleGroups.set(normalizedTitle, group);
+    }
   });
 
   const activityByMonthBase = Array.from(monthlyCounts.entries())
@@ -419,6 +432,10 @@ function computeFolderInsights(notes = [], folderId = "") {
       ...row,
       percentage: percentage(row.count, maxMonthCount),
     })),
+    duplicateTitles: Array.from(titleGroups.values())
+      .filter((group) => Number(group?.count || 0) > 1)
+      .sort((a, b) => Number(b?.count || 0) - Number(a?.count || 0) || compareText(a?.title, b?.title))
+      .slice(0, 20),
   };
 }
 

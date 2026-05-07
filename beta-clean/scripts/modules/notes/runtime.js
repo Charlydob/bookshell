@@ -103,6 +103,7 @@ let reminderToastQueue = [];
 let reminderToastActive = null;
 let reminderNotificationsOpen = false;
 let notesLocationSearchTimer = null;
+let activeLocationGrouping = "country";
 const reminderExpandedChecklist = new Set();
 const expandedSnippetNotes = new Set();
 const REMINDER_TYPES = ["normal", "cumpleaños", "tarea", "evento", "trámite", "checklist", "personalizado"];
@@ -631,7 +632,17 @@ function renderFolderStatsSectionView(folder, insights, childFolders = []) {
     <article class="notes-stats-card">
       <div class="notes-stats-card-head"><h3 class="notes-stats-card-title">Mapa de ubicaciones</h3></div>
       ${locations.length ? `<div class="notes-map-shell"><div class="notes-map-frame" id="notes-stats-map"></div></div>` : '<div class="notes-stats-empty-copy">No hay notas con ubicación en esta carpeta.</div>'}
-      ${buildStatsBarList(buildLocationClusters(locations), { labelFormatter: (row) => row.label, valueFormatter: (row) => `${formatNumber(row.count)} notas`, emptyText: "Sin clusters de ubicación." })}
+      <label class="field">
+        <span class="field-label">Agrupar ubicaciones por</span>
+        <select class="field-select" data-act="set-location-grouping">
+          <option value="country" ${activeLocationGrouping === "country" ? "selected" : ""}>País</option>
+          <option value="region" ${activeLocationGrouping === "region" ? "selected" : ""}>Comunidad / región</option>
+          <option value="city" ${activeLocationGrouping === "city" ? "selected" : ""}>Ciudad</option>
+          <option value="postalCode" ${activeLocationGrouping === "postalCode" ? "selected" : ""}>Código postal</option>
+          <option value="label" ${activeLocationGrouping === "label" ? "selected" : ""}>Dirección / ubicación exacta</option>
+        </select>
+      </label>
+      ${buildStatsBarList(buildLocationClusters(locations, activeLocationGrouping), { labelFormatter: (row) => row.label, valueFormatter: (row) => `${formatNumber(row.count)} notas`, emptyText: "Sin agrupaciones de ubicación." })}
     </article>
     <article class="notes-stats-card">
       <div class="notes-stats-card-head"><h3 class="notes-stats-card-title">Notas con el mismo nombre</h3></div>
@@ -648,7 +659,7 @@ function hasRealLocationCoordinates(lat, lng) {
   return Number.isFinite(safeLat) && Number.isFinite(safeLng) && !(safeLat === 0 && safeLng === 0);
 }
 function collectNoteLocations(notes = []) { return (notes || []).map((note) => ({ ...note.location, noteId: note.id })).filter((loc) => hasRealLocationCoordinates(loc?.lat || loc?.coords?.lat, loc?.lng || loc?.coords?.lng)); }
-function buildLocationClusters(locations = []) { const map = new Map(); locations.forEach((loc) => { const lat = Number(loc.lat || loc.coords?.lat); const lng = Number(loc.lng || loc.coords?.lng); const key = `${lat.toFixed(2)},${lng.toFixed(2)}`; const prev = map.get(key) || { label: key, count: 0 }; prev.count += 1; map.set(key, prev); }); return Array.from(map.values()).sort((a, b) => b.count - a.count); }
+function buildLocationClusters(locations = [], level = "country") { const map = new Map(); locations.forEach((loc) => { const byLevel = { country: loc?.country, region: loc?.region, city: loc?.city, postalCode: loc?.postalCode, label: loc?.label || loc?.text }; const raw = String(byLevel[level] || "").trim(); const label = raw || String(loc?.label || loc?.text || loc?.city || loc?.region || loc?.country || "Ubicación sin nombre").trim(); const key = label.toLowerCase(); const prev = map.get(key) || { label, count: 0 }; prev.count += 1; map.set(key, prev); }); return Array.from(map.values()).sort((a, b) => b.count - a.count); }
 function normalizeTitleKey(title = "") { return String(title || "").trim().toLowerCase().replace(/\s+/g, " "); }
 function buildDuplicateTitleGroups(notes = []) { const groups = new Map(); notes.forEach((note) => { const key = normalizeTitleKey(note?.title); if (!key) return; const g = groups.get(key) || { key: encodeURIComponent(key), title: note.title.trim(), count: 0, notes: [] }; g.count += 1; g.notes.push(note); groups.set(key, g); }); return Array.from(groups.values()).filter((g) => g.count > 1); }
 async function initStatsMap(locations = []) { if (!window.L) { await new Promise((resolve) => { const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(css); const script = document.createElement("script"); script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"; script.onload = resolve; document.body.appendChild(script); }); } const el = $id("notes-stats-map"); if (!el || !window.L) return; el.innerHTML = ""; const map = window.L.map(el).setView([0, 0], 2); window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map); const markers = []; const dotIcon = window.L.divIcon({ className: "notes-map-dot-icon", html: '<span class="notes-map-dot" aria-hidden="true"></span>', iconSize: [12, 12], iconAnchor: [6, 6] }); locations.forEach((loc) => { const lat = Number(loc.lat || loc.coords?.lat); const lng = Number(loc.lng || loc.coords?.lng); if (!hasRealLocationCoordinates(lat, lng)) return; const marker = window.L.marker([lat, lng], { icon: dotIcon }).addTo(map); marker.bindPopup(escapeHtml(loc.label || loc.text || "Ubicación")); markers.push([lat, lng]); }); if (markers.length) map.fitBounds(markers, { padding: [24, 24] }); setTimeout(() => map.invalidateSize(), 50); }
@@ -731,7 +742,8 @@ function normalizeNoteRatingValue(value = null) {
 }
 
 function normalizeNoteKind(value = "") {
-  return String(value || "").trim().toLowerCase() === "code" ? "code" : "text";
+  const safe = String(value || "").trim().toLowerCase();
+  return ["text", "code", "persona"].includes(safe) ? safe : "text";
 }
 
 function normalizeCodeLanguage(value = "") {
@@ -898,11 +910,13 @@ function parseLocationCoords(rawValue = "") {
 function updateNoteEditorMode(nextKind = "text") {
   const noteKind = normalizeNoteKind(nextKind);
   const isCode = noteKind === "code";
+  const isPerson = noteKind === "persona";
   const isLink = !isCode && Boolean($id("notes-note-is-link")?.checked);
 
   if ($id("notes-note-kind")) $id("notes-note-kind").value = noteKind;
   $id("notes-note-content-wrap")?.classList.toggle("hidden", isCode);
   $id("notes-note-code-wrap")?.classList.toggle("hidden", !isCode);
+  $id("notes-note-person-wrap")?.classList.toggle("hidden", !isPerson);
   $id("notes-note-link-toggle-wrap")?.classList.toggle("hidden", isCode);
 
   if (isCode && $id("notes-note-is-link")) {
@@ -915,6 +929,18 @@ function updateNoteEditorMode(nextKind = "text") {
 
 function getCurrentFolder() {
   return state.folders.find((folder) => folder.id === state.selectedFolderId) || null;
+}
+async function syncPersonBirthdayReminder(noteId = "", note = {}, previous = null) {
+  const birthday = String(note?.person?.birthday || "").trim();
+  const title = String(note?.title || "Persona").trim();
+  const existing = (state.reminders || []).find((row) => row?.noteId === noteId && row?.type === "cumpleaños");
+  if (!birthday) {
+    if (existing?.id) await deleteReminder(state.rootPath, existing.id);
+    return;
+  }
+  const payload = { title: `Cumpleaños de ${title}`, date: birthday, type: "cumpleaños", isBirthday: true, repeat: "yearly", status: "pendiente", noteId, updatedAt: Date.now(), createdAt: existing?.createdAt || Date.now() };
+  if (existing?.id) await updateReminder(state.rootPath, existing.id, payload);
+  else await createReminder(state.rootPath, payload);
 }
 
 function buildNoteImageRenderUrl(note) {
@@ -2780,6 +2806,7 @@ function renderNoteCards(list, notes = []) {
   list.innerHTML = notes.map((note) => {
     const preview = notePreview(note);
     const isCodeNote = normalizeNoteKind(note?.noteKind) === "code";
+    const isPersonNote = normalizeNoteKind(note?.noteKind) === "persona";
     const noteImageUrl = isCodeNote ? "" : buildNoteImageRenderUrl(note);
     const tagPreview = resolveNoteTagPreview(note);
     const externalUrl = normalizeExternalUrl(note.url);
@@ -2830,6 +2857,9 @@ function renderNoteCards(list, notes = []) {
       : "";
     const metaMarkup = [codeKindMarkup, ratingMarkup, visitsMarkup].filter(Boolean).join("");
     const snippetMarkup = buildSnippetMarkup(note);
+    const personIcons = isPersonNote
+      ? `${note?.person?.phone ? "📞" : ""} ${note?.person?.address || note?.location?.label ? "🏠" : ""} ${note?.person?.socials ? "📱" : ""} ${note?.person?.birthday ? "🎂" : ""}`.trim()
+      : "";
     const isExpanded = expandedSnippetNotes.has(note.id);
     const headClass = isCodeNote ? "notes-item-head is-snippet-toggle" : "notes-item-head";
     const headAttrs = isCodeNote
@@ -2844,7 +2874,8 @@ function renderNoteCards(list, notes = []) {
             <h4 class="notes-item-title">${escapeHtml(note.title || "Sin título")}</h4>
             ${metaMarkup ? `<div class="notes-item-meta">${metaMarkup}</div>` : ""}
           </div>
-          ${preview && note.type === "link" && !isCodeNote ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
+          ${personIcons ? `<p class="notes-item-preview">${escapeHtml(personIcons)}</p>` : ""}
+          ${preview && note.type === "link" && !isCodeNote && !personIcons ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
           ${isCodeNote ? snippetMarkup : linkMarkup}
         </div>
         <div class="notes-item-actions">
@@ -3879,7 +3910,8 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-folder-id").value = folderId || "";
   $id("notes-note-title").value = note?.title || "";
   $id("notes-note-content").value = note?.content || "";
-  $id("notes-note-kind").value = normalizeNoteKind(note?.noteKind);
+  const inferredKind = note?.noteKind || state.folders.find((row) => row.id === folderId)?.defaultNoteKind || "text";
+  $id("notes-note-kind").value = normalizeNoteKind(inferredKind);
   $id("notes-note-code").value = note?.code || "";
   $id("notes-note-code-language").value = normalizeCodeLanguage(note?.codeLanguage);
   $id("notes-note-preview-html").value = note?.previewHtml || "";
@@ -3902,7 +3934,11 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-location-coords").value = note?.location?.coords
     ? `${note.location.coords.lat}, ${note.location.coords.lng}`
     : "";
-  updateNoteEditorMode(note?.noteKind);
+  $id("notes-note-person-phone").value = note?.person?.phone || "";
+  $id("notes-note-person-birthday").value = note?.person?.birthday || "";
+  $id("notes-note-person-address").value = note?.person?.address || "";
+  $id("notes-note-person-socials").value = note?.person?.socials || "";
+  updateNoteEditorMode(inferredKind);
   $id("notes-note-form-error").textContent = "";
   $id("notes-note-modal-title").textContent = note ? "Editar nota" : "Nueva nota";
   updateNoteRatingPreview();
@@ -4462,6 +4498,10 @@ function bindNoteModalEvents() {
     const locationLng = Number($id("notes-note-location-lng")?.value || 0);
     const locationSource = $id("notes-note-location-source")?.value?.trim?.() || "";
     const locationCoords = parseLocationCoords($id("notes-note-location-coords")?.value || "");
+    const personPhone = $id("notes-note-person-phone")?.value?.trim?.() || "";
+    const personBirthday = $id("notes-note-person-birthday")?.value?.trim?.() || "";
+    const personAddress = $id("notes-note-person-address")?.value?.trim?.() || "";
+    const personSocials = $id("notes-note-person-socials")?.value?.trim?.() || "";
     const errorField = $id("notes-note-form-error");
     const submitButton = $id("notes-note-form")?.querySelector?.("button[type='submit']");
     const previousSubmitText = submitButton?.textContent || "Guardar";
@@ -4535,6 +4575,12 @@ function bindNoteModalEvents() {
         text: locationLabel,
         coords: hasValidLocationCoordinates ? { lat: rawLocationLat, lng: rawLocationLng } : null,
       },
+      person: {
+        phone: personPhone,
+        birthday: personBirthday,
+        address: personAddress,
+        socials: personSocials,
+      },
     };
 
     ensureNoteSelectedTagImageKey(tags, current?.tagImageKey);
@@ -4583,6 +4629,12 @@ function bindNoteModalEvents() {
       } else {
         await createNote(state.rootPath, payload, noteId);
       }
+      const selectedFolder = state.folders.find((row) => row.id === folderId);
+      if (selectedFolder && selectedFolder.defaultNoteKind !== noteKind) {
+        await updateFolder(state.rootPath, folderId, { ...selectedFolder, defaultNoteKind: noteKind });
+      }
+      if (noteKind === "persona") await syncPersonBirthdayReminder(noteId, payload, current);
+      else if (current?.person?.birthday) await syncPersonBirthdayReminder(noteId, { ...payload, person: { ...payload.person, birthday: "" } }, current);
 
       const folder = state.folders.find((row) => row.id === folderId);
       closeNoteModal();
@@ -4787,6 +4839,12 @@ function bindUiEvents() {
       const note = state.notes.find((row) => row.id === target.dataset.noteId);
       if (note) openNoteModal(note);
     }
+  });
+  $id("notes-folder-stats-view")?.addEventListener("change", (event) => {
+    const target = event.target.closest("[data-act='set-location-grouping']");
+    if (!target) return;
+    activeLocationGrouping = String(target.value || "country");
+    renderFolderDetail();
   });
   $id("notes-note-location-suggestions")?.addEventListener("pointerdown", (event) => {
     const target = event.target.closest("[data-act='select-location-suggestion']");

@@ -52,17 +52,23 @@ function normalizeNoteVisitTimestamp(value = 0) {
 }
 
 function normalizeNoteLocation(value = {}) {
+  const label = String(value?.label || "").trim();
   const country = String(value?.country || "").trim();
+  const region = String(value?.region || "").trim();
+  const city = String(value?.city || "").trim();
+  const postalCode = String(value?.postalCode || "").trim();
   const place = String(value?.place || "").trim();
   const text = String(value?.text || "").trim();
-  const lat = Number(value?.coords?.lat);
-  const lng = Number(value?.coords?.lng);
+  const lat = Number(value?.lat ?? value?.coords?.lat);
+  const lng = Number(value?.lng ?? value?.coords?.lng);
   const coords = Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
-  return { country, place, text, coords };
+  const source = String(value?.source || "").trim();
+  return { label, country, region, city, postalCode, place, text, lat: coords?.lat ?? null, lng: coords?.lng ?? null, source, coords };
 }
 
 function normalizeNoteKind(value = "") {
-  return String(value || "").trim().toLowerCase() === "code" ? "code" : "text";
+  const safe = String(value || "").trim().toLowerCase();
+  return ["text", "code", "persona"].includes(safe) ? safe : "text";
 }
 
 function normalizeCodeLanguage(value = "") {
@@ -163,6 +169,7 @@ export function mapFolderFromDb(id, value = {}) {
     emoji: String(value?.emoji || "📁").trim() || "📁",
     category: String(value?.category || "").trim(),
     tags: Array.isArray(value?.tags) ? value.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
+    defaultNoteKind: normalizeNoteKind(value?.defaultNoteKind),
   };
 }
 
@@ -178,6 +185,7 @@ export function mapFolderToDb(folder = {}) {
     emoji: String(folder?.emoji || "📁").trim() || "📁",
     category: String(folder?.category || "").trim(),
     tags: Array.isArray(folder?.tags) ? folder.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
+    defaultNoteKind: normalizeNoteKind(folder?.defaultNoteKind),
   };
 }
 
@@ -207,6 +215,12 @@ export function mapNoteFromDb(id, value = {}) {
     visitsCount: normalizeNoteVisitsCount(value?.visitsCount),
     lastVisitedAt: normalizeNoteVisitTimestamp(value?.lastVisitedAt),
     location: normalizeNoteLocation(value?.location),
+    person: {
+      phone: String(value?.person?.phone || "").trim(),
+      birthday: String(value?.person?.birthday || "").trim(),
+      address: String(value?.person?.address || "").trim(),
+      socials: String(value?.person?.socials || "").trim(),
+    },
   };
 }
 
@@ -235,6 +249,12 @@ export function mapNoteToDb(note = {}) {
     visitsCount: normalizeNoteVisitsCount(note?.visitsCount),
     lastVisitedAt: normalizeNoteVisitTimestamp(note?.lastVisitedAt),
     location: normalizeNoteLocation(note?.location),
+    person: {
+      phone: String(note?.person?.phone || "").trim(),
+      birthday: String(note?.person?.birthday || "").trim(),
+      address: String(note?.person?.address || "").trim(),
+      socials: String(note?.person?.socials || "").trim(),
+    },
   };
 }
 
@@ -294,6 +314,7 @@ export function mapReminderFromDb(id, value = {}) {
     completedAt: Number(value?.completedAt || 0),
     dismissedAlerts: normalizeReminderDismissedAlerts(value?.dismissedAlerts),
     notifiedAt: Number(value?.notifiedAt || 0),
+    noteId: String(value?.noteId || "").trim(),
   };
 }
 
@@ -320,6 +341,7 @@ export function mapReminderToDb(reminder = {}) {
     completedAt: Number(reminder?.completedAt || 0),
     dismissedAlerts: normalizeReminderDismissedAlerts(reminder?.dismissedAlerts),
     notifiedAt: Number(reminder?.notifiedAt || 0),
+    noteId: String(reminder?.noteId || "").trim(),
   };
 }
 

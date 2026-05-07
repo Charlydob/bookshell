@@ -387,6 +387,24 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
 }
+.notes-item-card.is-compact-note {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 64px;
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+.notes-item-card.is-compact-note .notes-item-title {
+  font-size: 14px;
+  line-height: 1.25;
+}
+.notes-item-card.is-compact-note .notes-item-actions {
+  gap: 6px;
+}
+.notes-item-card.is-compact-note .icon-btn.icon-btn-large {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+}
 
 .notes-item-card.has-note-image::before {
   background:

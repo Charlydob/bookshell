@@ -2663,6 +2663,16 @@ function renderFolderStatsView(folder, insights, childFolders = []) {
       <div class="notes-stats-split">
         <div class="notes-stats-block">
           <div class="notes-stats-block-head">
+            <strong>Nombres repetidos</strong>
+          </div>
+          ${buildStatsBarList(insights?.duplicateTitles || [], {
+            labelFormatter: (row) => row.title || "",
+            valueFormatter: (row) => `${formatNumber(row.count || 0)} notas`,
+            emptyText: "No hay nombres repetidos en esta carpeta.",
+          })}
+        </div>
+        <div class="notes-stats-block">
+          <div class="notes-stats-block-head">
             <strong>Mas larga</strong>
           </div>
           ${buildStatsNoteList(
@@ -2711,9 +2721,12 @@ function renderNoteCards(list, notes = []) {
         `
         : `<p class="notes-item-link">${escapeHtml(urlHost(note.url) || note.url || "")}</p>`)
       : "";
-    const mediaMarkup = isCodeNote
+    const isNormalNote = !isCodeNote && note.type !== "link";
+    const mediaMarkup = isNormalNote
       ? ""
-      : (tagPreview?.imageUrl
+      : (isCodeNote
+        ? ""
+        : (tagPreview?.imageUrl
         ? `
           <div class="notes-item-media is-image">
             <img class="notes-item-tag-image" src="${escapeHtml(tagPreview.imageUrl)}" alt="${escapeHtml(`Tag ${tagPreview.label || "nota"}`)}" loading="lazy" decoding="async" />
@@ -2723,12 +2736,13 @@ function renderNoteCards(list, notes = []) {
           <div class="notes-item-media is-placeholder">
             <span class="notes-item-icon">${escapeHtml(buildNoteKindIcon(note))}</span>
           </div>
-        `);
+        `));
 
     const cardClass = [
       "notes-item-card",
       noteImageUrl ? "has-note-image" : "",
       isCodeNote ? "is-code-note" : "",
+      isNormalNote ? "is-compact-note" : "",
     ].filter(Boolean).join(" ");
     const cardStyle = buildNoteCardStyleAttribute(note);
     const ratingMarkup = buildRatingBadgeMarkup(note?.rating);
@@ -2752,7 +2766,7 @@ function renderNoteCards(list, notes = []) {
             <h4 class="notes-item-title">${escapeHtml(note.title || "Sin título")}</h4>
             ${metaMarkup ? `<div class="notes-item-meta">${metaMarkup}</div>` : ""}
           </div>
-          ${preview && !isCodeNote ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
+          ${preview && note.type === "link" && !isCodeNote ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
           ${isCodeNote ? snippetMarkup : linkMarkup}
         </div>
         <div class="notes-item-actions">
@@ -4736,7 +4750,15 @@ function bindUiEvents() {
 
   $id("notes-cards-list")?.addEventListener("click", async (event) => {
     const target = event.target.closest("[data-act]");
-    if (!target) return;
+    if (!target) {
+      const card = event.target.closest(".notes-item-card[data-note-id]");
+      if (!card) return;
+      const noteId = String(card.dataset.noteId || "").trim();
+      const note = state.notes.find((row) => row.id === noteId);
+      if (!note) return;
+      openNoteModal(note);
+      return;
+    }
 
     const action = target.dataset.act;
     if (action === "open-note-link") {

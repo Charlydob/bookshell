@@ -354,6 +354,7 @@
           <select id="notes-note-kind" class="field-select">
             <option value="text">Texto</option>
             <option value="code">Codigo</option>
+            <option value="persona">Persona</option>
           </select>
         </label>
 
@@ -394,6 +395,13 @@
             <span class="field-label">HTML de preview (opcional)</span>
             <textarea id="notes-note-preview-html" class="notes-code-preview-input" rows="4" spellcheck="false" placeholder="<button class=&quot;demo-target&quot;>Demo</button>"></textarea>
           </label>
+        </div>
+
+        <div class="hidden" id="notes-note-person-wrap">
+          <label class="field"><span class="field-label">Teléfono</span><input id="notes-note-person-phone" type="text" /></label>
+          <label class="field"><span class="field-label">Cumpleaños</span><input id="notes-note-person-birthday" type="date" /></label>
+          <label class="field"><span class="field-label">Casa / dirección</span><input id="notes-note-person-address" type="text" /></label>
+          <label class="field"><span class="field-label">Redes sociales</span><input id="notes-note-person-socials" type="text" /></label>
         </div>
 
         <label class="toggle-pill notes-toggle-field" id="notes-note-link-toggle-wrap">

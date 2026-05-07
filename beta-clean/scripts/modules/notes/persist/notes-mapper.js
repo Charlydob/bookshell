@@ -54,16 +54,19 @@ function normalizeNoteVisitTimestamp(value = 0) {
 function normalizeNoteLocation(value = {}) {
   const label = String(value?.label || "").trim();
   const country = String(value?.country || "").trim();
-  const region = String(value?.region || "").trim();
-  const city = String(value?.city || "").trim();
+  const region = String(value?.region || value?.state || "").trim();
+  const province = String(value?.province || value?.county || "").trim();
+  const municipality = String(value?.municipality || "").trim();
+  const city = String(value?.city || value?.town || value?.village || municipality || "").trim();
   const postalCode = String(value?.postalCode || "").trim();
   const place = String(value?.place || "").trim();
   const text = String(value?.text || "").trim();
+  const exactAddress = String(value?.exactAddress || value?.road || label || text).trim();
   const lat = Number(value?.lat ?? value?.coords?.lat);
   const lng = Number(value?.lng ?? value?.coords?.lng);
   const coords = Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
   const source = String(value?.source || "").trim();
-  return { label, country, region, city, postalCode, place, text, lat: coords?.lat ?? null, lng: coords?.lng ?? null, source, coords };
+  return { label, country, region, province, city, municipality, postalCode, exactAddress, place, text, lat: coords?.lat ?? null, lng: coords?.lng ?? null, source, coords };
 }
 
 function normalizeNoteKind(value = "") {

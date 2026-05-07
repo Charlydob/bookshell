@@ -464,16 +464,18 @@
 
         <div class="notes-location-fields">
           <label class="field">
-            <span class="field-label">País</span>
-            <input id="notes-note-location-country" type="text" placeholder="Ej: España" />
-          </label>
-          <label class="field">
-            <span class="field-label">Ciudad / lugar</span>
-            <input id="notes-note-location-place" type="text" placeholder="Ej: Madrid" />
-          </label>
-          <label class="field">
-            <span class="field-label">Texto de ubicación</span>
-            <input id="notes-note-location-text" type="text" placeholder="Ej: Centro histórico" />
+            <span class="field-label">Buscar ubicación</span>
+            <input id="notes-note-location-search" type="text" placeholder="Buscar ubicación..." autocomplete="off" />
+            <input id="notes-note-location-label" type="hidden" />
+            <input id="notes-note-location-country" type="hidden" />
+            <input id="notes-note-location-region" type="hidden" />
+            <input id="notes-note-location-city" type="hidden" />
+            <input id="notes-note-location-postal-code" type="hidden" />
+            <input id="notes-note-location-lat" type="hidden" />
+            <input id="notes-note-location-lng" type="hidden" />
+            <input id="notes-note-location-source" type="hidden" />
+            <div class="notes-location-autocomplete hidden" id="notes-note-location-suggestions"></div>
+            <div class="notes-location-hint" id="notes-note-location-status"></div>
           </label>
           <label class="field">
             <span class="field-label">Coordenadas (lat, lng)</span>

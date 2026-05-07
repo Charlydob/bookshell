@@ -813,8 +813,18 @@ function updateNoteLinkDependentFields(isLink) {
   $id("notes-note-photo-wrap")?.classList.toggle("hidden", !isLink);
   $id("notes-note-rating-preview")?.classList.toggle("hidden", !isLink);
   $id("notes-note-tag-images")?.classList.toggle("hidden", !isLink);
-  $id("meta-notas-note")?.classList.toggle("hidden", !isLink);
   document.querySelector(".notes-rating-field")?.classList.toggle("hidden", !isLink);
+}
+
+function parseLocationCoords(rawValue = "") {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return null;
+  const match = raw.match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (!match) return null;
+  const lat = Number(match[1]);
+  const lng = Number(match[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
 }
 
 function updateNoteEditorMode(nextKind = "text") {
@@ -3812,6 +3822,12 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-rating").value = note?.rating === null || note?.rating === undefined ? "" : String(note.rating);
   $id("notes-note-is-link").checked = note?.type === "link";
   $id("notes-note-url").value = note?.url || "";
+  $id("notes-note-location-country").value = note?.location?.country || "";
+  $id("notes-note-location-place").value = note?.location?.place || "";
+  $id("notes-note-location-text").value = note?.location?.text || "";
+  $id("notes-note-location-coords").value = note?.location?.coords
+    ? `${note.location.coords.lat}, ${note.location.coords.lng}`
+    : "";
   updateNoteEditorMode(note?.noteKind);
   $id("notes-note-form-error").textContent = "";
   $id("notes-note-modal-title").textContent = note ? "Editar nota" : "Nueva nota";
@@ -4342,6 +4358,10 @@ function bindNoteModalEvents() {
     const rating = normalizeNoteRatingValue(ratingSelect?.value);
     const isLink = noteKind !== "code" && $id("notes-note-is-link").checked;
     const url = $id("notes-note-url").value.trim();
+    const locationCountry = $id("notes-note-location-country")?.value?.trim?.() || "";
+    const locationPlace = $id("notes-note-location-place")?.value?.trim?.() || "";
+    const locationText = $id("notes-note-location-text")?.value?.trim?.() || "";
+    const locationCoords = parseLocationCoords($id("notes-note-location-coords")?.value || "");
     const errorField = $id("notes-note-form-error");
     const submitButton = $id("notes-note-form")?.querySelector?.("button[type='submit']");
     const previousSubmitText = submitButton?.textContent || "Guardar";
@@ -4393,6 +4413,12 @@ function bindNoteModalEvents() {
       imagePath: current?.imagePath || "",
       imageUpdatedAt: Number(current?.imageUpdatedAt || 0),
       tagImageKey: "",
+      location: {
+        country: locationCountry,
+        place: locationPlace,
+        text: locationText,
+        coords: locationCoords,
+      },
     };
 
     ensureNoteSelectedTagImageKey(tags, current?.tagImageKey);

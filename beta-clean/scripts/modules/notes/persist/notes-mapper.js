@@ -51,6 +51,16 @@ function normalizeNoteVisitTimestamp(value = 0) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
 }
 
+function normalizeNoteLocation(value = {}) {
+  const country = String(value?.country || "").trim();
+  const place = String(value?.place || "").trim();
+  const text = String(value?.text || "").trim();
+  const lat = Number(value?.coords?.lat);
+  const lng = Number(value?.coords?.lng);
+  const coords = Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+  return { country, place, text, coords };
+}
+
 function normalizeNoteKind(value = "") {
   return String(value || "").trim().toLowerCase() === "code" ? "code" : "text";
 }
@@ -196,6 +206,7 @@ export function mapNoteFromDb(id, value = {}) {
     rating: normalizeNoteRating(value?.rating),
     visitsCount: normalizeNoteVisitsCount(value?.visitsCount),
     lastVisitedAt: normalizeNoteVisitTimestamp(value?.lastVisitedAt),
+    location: normalizeNoteLocation(value?.location),
   };
 }
 
@@ -223,6 +234,7 @@ export function mapNoteToDb(note = {}) {
     rating: normalizeNoteRating(note?.rating),
     visitsCount: normalizeNoteVisitsCount(note?.visitsCount),
     lastVisitedAt: normalizeNoteVisitTimestamp(note?.lastVisitedAt),
+    location: normalizeNoteLocation(note?.location),
   };
 }
 

@@ -34,6 +34,10 @@
       </header>
 
       <div class="notes-reminders-toolbar" id="notes-reminders-toolbar">
+        <div class="notes-reminders-view-switch" id="notes-reminders-view-switch" role="tablist" aria-label="Vista de recordatorios">
+          <button class="notes-reminders-view-tab is-active" type="button" data-act="set-reminder-view" data-reminder-view="today" aria-pressed="true">Hoy</button>
+          <button class="notes-reminders-view-tab" type="button" data-act="set-reminder-view" data-reminder-view="all" aria-pressed="false">Todos</button>
+        </div>
         <div class="notes-reminders-toolbar-controls">
           <button class="notes-reminders-toolbar-btn" id="notes-reminders-show-btn" type="button" data-act="toggle-reminders-panel" data-panel="show">
             Mostrar

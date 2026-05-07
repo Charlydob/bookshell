@@ -199,14 +199,14 @@ function normalizeReminderMultiSelection(items = [], allowed = []) {
 }
 
 function normalizeReminderView(value = "") {
-  return String(value || "").trim() === "calendar" ? "calendar" : "list";
+  return String(value || "").trim() === "all" ? "all" : "today";
 }
 
 function loadReminderViewPreference() {
   try {
-    return normalizeReminderView(window.localStorage?.getItem(REMINDER_VIEW_STORAGE_KEY) || "list");
+    return normalizeReminderView(window.localStorage?.getItem(REMINDER_VIEW_STORAGE_KEY) || "today");
   } catch (_) {
-    return "list";
+    return "today";
   }
 }
 
@@ -3192,6 +3192,50 @@ function getFilteredReminders() {
   return filtered.sort((a, b) => getReminderTargetTimestamp(a, { annualizeBirthdays: true }) - getReminderTargetTimestamp(b, { annualizeBirthdays: true }));
 }
 
+function getReminderDate(reminder, yearOverride = null) {
+  if (!reminder) return null;
+  const occurrenceKey = getReminderOccurrenceDateKey(reminder, yearOverride);
+  const parsed = parseDateKey(occurrenceKey || "");
+  if (!parsed) return null;
+  return new Date(parsed.year, parsed.monthIndex, parsed.day);
+}
+
+function isReminderOnDate(reminder, selectedDateKey = "") {
+  const parsedSelected = parseDateKey(selectedDateKey || "");
+  if (!parsedSelected) return false;
+  const yearOverride = reminder?.repeat === "yearly" ? parsedSelected.year : null;
+  const reminderDate = getReminderDate(reminder, yearOverride);
+  if (!reminderDate) return false;
+  return getDateKeyFromDate(reminderDate) === selectedDateKey;
+}
+
+function getTodayReminders(reminders = [], selectedDateKey = "") {
+  const safeDateKey = parseDateKey(selectedDateKey) ? selectedDateKey : getTodayDateKey();
+  return (Array.isArray(reminders) ? reminders : [])
+    .filter((reminder) => isReminderOnDate(reminder, safeDateKey))
+    .sort((a, b) => getReminderTargetTimestamp(a, { annualizeBirthdays: true }) - getReminderTargetTimestamp(b, { annualizeBirthdays: true }));
+}
+
+function getAllRemindersFiltered() {
+  const reminders = getFilteredReminders();
+  return reminders.sort((a, b) => {
+    const statusA = getReminderComputedStatus(a);
+    const statusB = getReminderComputedStatus(b);
+    const rank = (status, reminder) => {
+      if (status === "completado") return 5;
+      if (status === "vencido") return 1;
+      const ts = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
+      if (!ts) return 4;
+      if (isTodayDateKey(getReminderOccurrenceDateKey(reminder, reminder?.repeat === "yearly" ? new Date().getFullYear() : null))) return 2;
+      return 3;
+    };
+    const rankA = rank(statusA, a);
+    const rankB = rank(statusB, b);
+    if (rankA !== rankB) return rankA - rankB;
+    return getReminderTargetTimestamp(a, { annualizeBirthdays: true }) - getReminderTargetTimestamp(b, { annualizeBirthdays: true });
+  });
+}
+
 function renderReminderCardsToMarkup(reminders = []) {
   return reminders.map((reminder) => {
     const computedStatus = getReminderComputedStatus(reminder);
@@ -3387,12 +3431,19 @@ function renderReminderCalendarView(reminders = []) {
 }
 
 function renderReminderViewSwitch() {
+  const isToday = normalizeReminderView(state.reminderView) === "today";
+  $id("notes-reminders-calendar-view")?.classList.toggle("hidden", !isToday);
   $id("notes-reminders-list-view")?.classList.remove("hidden");
-  $id("notes-reminders-calendar-view")?.classList.remove("hidden");
+  $id("notes-reminders-toggle-history")?.classList.toggle("hidden", isToday);
+  document.querySelectorAll("#notes-reminders-view-switch [data-reminder-view]").forEach((button) => {
+    const active = String(button.dataset.reminderView || "") === (isToday ? "today" : "all");
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
   const groupButton = $id("notes-reminders-group-btn");
   if (groupButton) {
-    groupButton.disabled = false;
-    groupButton.classList.remove("is-disabled");
+    groupButton.disabled = isToday;
+    groupButton.classList.toggle("is-disabled", isToday);
   }
 }
 
@@ -3531,11 +3582,15 @@ function renderRemindersPanel() {
   if (!list || !historyList || !empty || !toggle) return;
   renderReminderFilterControls();
   renderReminderViewSwitch();
-  const filtered = getFilteredReminders();
+  const filtered = getAllRemindersFiltered();
   ensureReminderCalendarSelection(filtered);
   renderReminderCalendarView(filtered);
-  const active = filtered.filter((item) => getReminderComputedStatus(item) === "pendiente");
-  const history = filtered.filter((item) => getReminderComputedStatus(item) !== "pendiente");
+  const selectedDateKey = parseDateKey(state.reminderCalendarSelectedDate) ? state.reminderCalendarSelectedDate : getTodayDateKey();
+  const isTodayView = normalizeReminderView(state.reminderView) === "today";
+  const dayItems = getTodayReminders(filtered, selectedDateKey);
+  const visibleItems = isTodayView ? dayItems : filtered;
+  const active = visibleItems.filter((item) => getReminderComputedStatus(item) === "pendiente");
+  const history = visibleItems.filter((item) => getReminderComputedStatus(item) !== "pendiente");
   const activeGroups = buildGroupedReminders(active);
   const historyGroups = buildGroupedReminders(history);
   list.innerHTML = activeGroups.map((group) => `
@@ -3546,11 +3601,15 @@ function renderRemindersPanel() {
     ${group.label ? `<div class="notes-section-label">${escapeHtml(group.label)}</div>` : ""}
     <div class="notes-reminder-list">${renderReminderCardsToMarkup(group.items)}</div>
   `).join("");
-  historyList.classList.toggle("hidden", state.reminderCollapsedHistory);
+  historyList.classList.toggle("hidden", isTodayView || state.reminderCollapsedHistory);
   toggle.textContent = state.reminderCollapsedHistory
     ? `Mostrar completados y vencidos (${history.length})`
     : `Ocultar completados y vencidos (${history.length})`;
-  empty.classList.toggle("hidden", active.length > 0 || history.length > 0);
+  if (isTodayView) {
+    list.innerHTML = `<div class="notes-reminder-list">${renderReminderCardsToMarkup(dayItems)}</div>`;
+    historyList.innerHTML = "";
+  }
+  empty.classList.toggle("hidden", visibleItems.length > 0);
 }
 
 function renderRootSectionSwitch() {
@@ -4787,6 +4846,21 @@ function bindUiEvents() {
     const nextGroupHidden = panel === "group" ? !groupPanel.classList.contains("hidden") : true;
     showPanel.classList.toggle("hidden", nextShowHidden);
     groupPanel.classList.toggle("hidden", nextGroupHidden);
+  });
+  document.addEventListener("click", (event) => {
+    const toolbar = $id("notes-reminders-toolbar");
+    if (!toolbar || toolbar.contains(event.target)) return;
+    $id("notes-reminders-show-panel")?.classList.add("hidden");
+    $id("notes-reminders-group-panel")?.classList.add("hidden");
+  });
+  $id("notes-reminders-view-switch")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act='set-reminder-view']");
+    if (!target) return;
+    state.reminderView = normalizeReminderView(target.dataset.reminderView || "today");
+    saveReminderViewPreference(state.reminderView);
+    $id("notes-reminders-show-panel")?.classList.add("hidden");
+    $id("notes-reminders-group-panel")?.classList.add("hidden");
+    renderRemindersPanel();
   });
   $id("notes-reminders-calendar-view")?.addEventListener("click", async (event) => {
     const target = event.target.closest("[data-act]");

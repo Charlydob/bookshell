@@ -1740,11 +1740,7 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
 .notes-reminders-toolbar {
   display: grid;
   gap: 8px;
-  position: relative;
 }
-.notes-reminders-view-switch{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px;border-radius:12px;background:rgba(9,14,22,.8);border:1px solid rgba(255,255,255,.1)}
-.notes-reminders-view-tab{border:0;border-radius:10px;padding:8px 10px;background:transparent;color:var(--txt-soft)}
-.notes-reminders-view-tab.is-active{background:rgba(99,214,255,.2);color:var(--txt);font-weight:700}
 
 .notes-reminders-toolbar-controls {
   display: flex;
@@ -1766,17 +1762,7 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(8, 12, 20, 0.76);
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  width: min(460px, 96vw);
-  z-index: 30;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 12px 24px rgba(0,0,0,.35);
-  max-height: min(65vh, 420px);
-  overflow: auto;
 }
-#notes-reminders-group-panel{left:auto;right:0;width:min(320px,92vw)}
 
 .notes-reminders-filter-title {
   font-size: 12px;
@@ -2289,7 +2275,6 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   border-radius: 999px;
   cursor: pointer;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
-  pointer-events: none;
 }
 
 .notes-reminders-calendar__more {
@@ -2300,7 +2285,6 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   padding: 0 5px;
   font-size: 10px;
   line-height: 1.35;
-  pointer-events: none;
 }
 
 .notes-reminders-calendar-panel {
@@ -2425,9 +2409,13 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
 /* #endregion boton crear reci */
 
 
-#notes-reminders-toolbar{display:grid;margin-bottom:10px}
+#notes-reminders-toolbar{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 10px;
+}
 .notes-reminder-chip{
-  display: inline-flex;
+  display: none;
 }
 /* #endregion recordatorios */
 

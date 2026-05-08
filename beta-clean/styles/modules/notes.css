@@ -2289,6 +2289,7 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   border-radius: 999px;
   cursor: pointer;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+  pointer-events: none;
 }
 
 .notes-reminders-calendar__more {
@@ -2299,6 +2300,7 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   padding: 0 5px;
   font-size: 10px;
   line-height: 1.35;
+  pointer-events: none;
 }
 
 .notes-reminders-calendar-panel {

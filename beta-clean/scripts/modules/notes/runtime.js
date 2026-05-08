@@ -100,6 +100,16 @@ const state = {
   reminderCalendarSelectedDate: getTodayDateKey(),
   reminderCalendarFocusedReminderId: "",
 };
+const notesReminderState = {
+  booted: false,
+  loading: false,
+  reminders: [],
+  selectedDateKey: null,
+  activeFilter: "today",
+  unsubscribe: null,
+  calendarEventsBound: false,
+  loadError: "",
+};
 let unbindAuth = null;
 let unbindData = null;
 let isBound = false;
@@ -254,6 +264,13 @@ function formatLocalDateKey(date = new Date()) {
 
 function getTodayDateKey() {
   return getDateKeyFromDate(new Date());
+}
+
+function normalizeReminderDate(value) {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return value.trim();
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return "";
+  return getDateKeyFromDate(parsed);
 }
 
 function getMonthKeyFromDate(date = new Date()) {
@@ -3610,51 +3627,26 @@ function renderReminderDayList(dateKey = "") {
   const empty = $id("notes-empty-reminders");
   if (!list || !empty) return;
   const safeDateKey = parseDateKey(dateKey) ? dateKey : getTodayDateKey();
-  const allReminders = Array.isArray(state.notesState?.reminders) ? state.notesState.reminders : [];
-  const visibleReminders = allReminders.filter((reminder) => getReminderDateKey(reminder) === safeDateKey);
+  const visibleReminders = getVisibleReminders();
   state.visibleReminders = visibleReminders;
-  const hasDayDots = Array.isArray(state.notesState?.remindersByDateKey?.[safeDateKey]) && state.notesState.remindersByDateKey[safeDateKey].length > 0;
-  if (hasDayDots && visibleReminders.length === 0) {
-    console.error("[reminders:day-mismatch]", {
-      selectedReminderDateKey: safeDateKey,
-      allReminders,
-      dateKeys: allReminders.map((r) => [r.id, getReminderDateKey(r)]),
-    });
-  }
-  console.debug("[notes:reminders:render-day]", {
-    selectedDate: safeDateKey,
-    total: allReminders.length,
-    visible: visibleReminders.length,
-  });
+  console.debug("[notes:reminders:render]", safeDateKey, visibleReminders.length, notesReminderState.reminders.length);
   list.innerHTML = `<div class="notes-reminder-list">${renderReminderCardsToMarkup(visibleReminders)}</div>`;
   empty.classList.toggle("hidden", visibleReminders.length > 0);
 }
 
 function renderReminderToday(dateKey = "") {
   const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : getTodayDateKey();
-  const allReminders = Array.isArray(state.notesState?.reminders) ? state.notesState.reminders : [];
-  const dayReminders = allReminders.filter((reminder) => getReminderDateKey(reminder) === safeDateKey);
-  console.debug("[notes:reminders:render-today]", {
-    dateKey: safeDateKey,
-    count: dayReminders.length,
-    ids: dayReminders.map((r) => r.id),
-    dateKeys: allReminders.map((r) => [r.id, getReminderDateKey(r)]),
-  });
-  state.visibleReminders = dayReminders;
-  renderReminderCalendarView(allReminders);
+  setSelectedReminderDate(safeDateKey);
+  state.visibleReminders = getVisibleReminders();
+  renderReminderCalendar();
   renderReminderDayList(safeDateKey);
 }
 
 function handleReminderDayClick(dateKey = "") {
   const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : getTodayDateKey();
-  console.debug("[notes:reminders:calendar-click]", { clickedDateKey: safeDateKey });
-  setReminderCalendarSelectedDate(safeDateKey, { syncMonth: true });
-  state.notesState = { ...(state.notesState || {}), selectedReminderDateKey: safeDateKey, reminderMode: "today" };
-  state.reminderViewMode = "today";
-  state.reminderView = "today";
-  saveReminderViewPreference("today");
-  renderReminderViewSwitch();
-  renderReminderToday(safeDateKey);
+  console.debug("[notes:calendar:click]", safeDateKey);
+  setSelectedReminderDate(safeDateKey);
+  renderNotesReminders();
 }
 
 function renderAllReminders() {
@@ -3698,43 +3690,39 @@ function renderAllReminders() {
 }
 
 function renderReminderCalendar() {
-  ensureReminderCalendarSelection(state.notesState?.reminders || []);
-  renderReminderCalendarView(state.notesState?.reminders || []);
+  console.debug("[notes:calendar:render]");
+  ensureReminderCalendarSelection(notesReminderState.reminders || []);
+  state.reminderCalendarSelectedDate = notesReminderState.selectedDateKey || getTodayDateKey();
+  renderReminderCalendarView(notesReminderState.reminders || []);
 }
 
-function refreshReminderView(reason = "unknown") {
-  const rawNotes = Array.isArray(state.notes) ? state.notes : [];
-  const reminders = (Array.isArray(state.reminders) ? state.reminders : []).map((reminder, index) => normalizeReminder(reminder, reminder?.id || `row_${index}`));
-  const remindersByDateMap = buildReminderCalendarMap(reminders, buildReminderCalendarCells(state.reminderCalendarMonthKey));
-  const remindersByDateKey = Object.fromEntries(Array.from(remindersByDateMap.entries()).map(([dateKey, items]) => [dateKey, [...items]]));
-  state.notesState = {
-    ...state.notesState,
-    rawNotes,
-    notes: rawNotes,
-    reminders,
-    remindersByDateKey,
-    remindersWithoutDate: reminders.filter((item) => !parseDateKey(item?.dateKey || "")),
-    selectedReminderDateKey: parseDateKey(state.notesState?.selectedReminderDateKey) ? state.notesState.selectedReminderDateKey : getTodayDateKey(),
-    reminderMode: normalizeReminderView(state.reminderViewMode),
-  };
-  state.reminderView = state.notesState.reminderMode;
-  state.remindersByDateKey = state.notesState.remindersByDateKey;
-  state.remindersWithoutDate = state.notesState.remindersWithoutDate;
-  console.debug("[notes:reminders:refresh]", {
-    reason,
-    selectedDate: state.notesState.selectedReminderDateKey,
-    view: state.notesState.reminderMode,
-    reminders: reminders.length,
-    withDate: reminders.length - state.notesState.remindersWithoutDate.length,
-    withoutDate: state.notesState.remindersWithoutDate.length,
-  });
+function setSelectedReminderDate(dateKey) {
+  const safeDate = normalizeReminderDate(dateKey) || getTodayDateKey();
+  notesReminderState.selectedDateKey = safeDate;
+  notesReminderState.activeFilter = "selectedDate";
+  state.notesState = { ...(state.notesState || {}), selectedReminderDateKey: safeDate, reminderMode: "today" };
+  state.reminderView = "today";
+}
+
+function getVisibleReminders() {
+  const all = Array.isArray(notesReminderState.reminders) ? notesReminderState.reminders : [];
+  if (notesReminderState.activeFilter === "all") return all;
+  const targetKey = normalizeReminderDate(notesReminderState.selectedDateKey) || getTodayDateKey();
+  return all.filter((row) => getReminderDateKey(row) === targetKey);
+}
+
+function renderNotesReminders() {
+  const selectedDateKey = normalizeReminderDate(notesReminderState.selectedDateKey) || getTodayDateKey();
+  notesReminderState.selectedDateKey = selectedDateKey;
+  const visible = getVisibleReminders();
+  console.debug("[notes:reminders:render]", selectedDateKey, visible.length, notesReminderState.reminders.length);
   renderReminderViewSwitch();
-  renderReminderFilterControls();
-  if (state.notesState.reminderMode === "today") {
-    renderReminderToday(state.notesState.selectedReminderDateKey);
-  } else {
-    renderAllReminders();
-  }
+  renderReminderCalendar();
+  renderReminderDayList(selectedDateKey);
+}
+
+function refreshReminderView() {
+  renderNotesReminders();
 }
 
 
@@ -4998,7 +4986,13 @@ function bindUiEvents() {
   });
   $id("notes-reminders-calendar-view")?.addEventListener("click", async (event) => {
     const target = event.target.closest("[data-act]");
-    if (!target) return;
+    if (!target) {
+      const day = event.target.closest(".notes-reminders-calendar__day[data-date-key]");
+      if (day) {
+        handleReminderDayClick(day.dataset.dateKey || "");
+      }
+      return;
+    }
     const action = String(target.dataset.act || "").trim();
     if (action === "shift-reminders-calendar") {
       shiftReminderCalendarMonth(Number(target.dataset.monthShift || 0), state.allRemindersNormalized || []);
@@ -5625,7 +5619,9 @@ function subscribeData(uid) {
       }
 
       state.selectedDateKey = parseDateKey(state.selectedDateKey) ? state.selectedDateKey : getTodayDateKey();
-      refreshReminderView("firebase-update");
+      loadNotesReminders().then(() => renderNotesReminders()).catch((error) => {
+        console.error("[notes:reminders:error]", error);
+      });
       renderShell();
       renderNoteTagImageEditor();
       runReminderChecks();
@@ -5649,12 +5645,57 @@ function bindAuth() {
   });
 }
 
+async function loadNotesReminders() {
+  console.debug("[notes:reminders:load:start]");
+  notesReminderState.loading = true;
+  notesReminderState.loadError = "";
+  const reminders = (Array.isArray(state.reminders) ? state.reminders : []).map((reminder, index) => normalizeReminder(reminder, reminder?.id || `row_${index}`));
+  notesReminderState.reminders = reminders;
+  notesReminderState.loading = false;
+  console.debug("[notes:reminders:load:ready]", reminders.length);
+  return reminders;
+}
+
+async function saveNotesReminder(reminder) {
+  if (!state.rootPath) throw new Error("rootPath missing");
+  if (reminder?.id) await updateReminder(state.rootPath, reminder.id, reminder);
+  else await createReminder(state.rootPath, reminder);
+}
+
+async function deleteNotesReminder(id) {
+  if (!state.rootPath || !id) return;
+  await deleteReminder(state.rootPath, id);
+}
+
+function bindReminderCalendarEvents() {
+  if (notesReminderState.calendarEventsBound) return;
+  notesReminderState.calendarEventsBound = true;
+}
+
+function cleanupNotesReminders() {
+  notesReminderState.unsubscribe?.();
+  notesReminderState.unsubscribe = null;
+  notesReminderState.booted = false;
+  notesReminderState.calendarEventsBound = false;
+}
+
+async function bootNotesReminders() {
+  console.debug("[notes:reminders:boot]");
+  if (notesReminderState.booted) return;
+  notesReminderState.booted = true;
+  notesReminderState.selectedDateKey = normalizeReminderDate(notesReminderState.selectedDateKey) || getTodayDateKey();
+  bindReminderCalendarEvents();
+  await loadNotesReminders();
+  renderNotesReminders();
+}
+
 export async function onShow() {
   console.debug("[notes:init] start onShow");
   bindUiEvents();
   bindAuth();
+  await bootNotesReminders();
   startReminderChecker();
-  refreshReminderView("onShow");
+  renderNotesReminders();
   renderShell();
   console.debug("[notes:init] end onShow");
   window.__bookshellNotes = {

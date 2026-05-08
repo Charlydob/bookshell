@@ -4095,6 +4095,9 @@ ${ticketBlockedDeletion ? 'disabled' : ''}
     })
     .join('');
   return `
+    <div class="productsWorkbench__ticketRegistryActions">
+      <button type="button" class="food-history-btn" data-products-open-create-modal>Nuevo producto</button>
+    </div>
     <details class="productsWorkbench__ticketRegistry" data-products-ticket-registry>
       <summary>
         <span>Registro de tickets</span>
@@ -4104,6 +4107,35 @@ ${ticketBlockedDeletion ? 'disabled' : ''}
         ${groupedRows || '<div class="productsWorkbench__empty">Todavía no hay tickets confirmados desde esta vista.</div>'}
       </div>
     </details>
+  `;
+}
+
+function renderProductsCreateModal() {
+  if (!state.foodProductsView?.createProductModalOpen) return '';
+  return `
+    <div class="productsWorkbenchCreateModal__backdrop" data-products-close-create-modal>
+      <div class="productsWorkbenchCreateModal" role="dialog" aria-modal="true" aria-label="Crear producto" onclick="event.stopPropagation()">
+        <header class="food-sheet-header">
+          <h3>Nuevo producto</h3>
+          <button type="button" class="btn-x food-sheet-close" data-products-close-create-modal aria-label="Cerrar">✕</button>
+        </header>
+        <form class="productsWorkbench__editorForm" data-products-create-form>
+          <label class="productsWorkbench__field"><span>Nombre</span><input class="food-control" name="name" required /></label>
+          <label class="productsWorkbench__field"><span>Precio</span><input class="food-control" name="estimatedPrice" type="number" min="0" step="0.01" inputmode="decimal" /></label>
+          <label class="productsWorkbench__field"><span>Tienda</span><input class="food-control" name="preferredStore" /></label>
+          <label class="productsWorkbench__field"><span>Categoría</span><input class="food-control" name="productCategory" /></label>
+          <label class="productsWorkbench__field"><span>Tipo</span><input class="food-control" name="productType" /></label>
+          <label class="productsWorkbench__field"><span>Marca</span><input class="food-control" name="brand" /></label>
+          <label class="productsWorkbench__field"><span>Código de barras</span><input class="food-control" name="barcode" /></label>
+          <label class="productsWorkbench__field"><span>Unidad</span><input class="food-control" name="unit" value="ud" /></label>
+          <label class="productsWorkbench__field"><span>Cantidad base</span><input class="food-control" name="usualQty" type="number" min="0.01" step="0.01" value="1" /></label>
+          <div class="productsWorkbench__editorActions">
+            <button type="submit" class="food-history-btn">Guardar producto</button>
+            <button type="button" class="food-history-btn" data-products-close-create-modal>Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
   `;
 }
 
@@ -4242,6 +4274,7 @@ function renderProductsCatalogSubview(model) {
       ${renderProductsSummaryCards(model)}
       ${renderProductsFilters(model)}
       ${renderProductsCatalogWorkspace(model)}
+      ${renderProductsCreateModal()}
     </div>
   `;
 }
@@ -5436,11 +5469,48 @@ async function createProductFromReceiptRow() {
     defaultPrice: unitPrice,
     unit: 'ud',
     usualQty: 1,
-    ...(safePrice ? { estimatedPrice: safePrice, usualPrice: safePrice, defaultPrice: safePrice } : {}),
+    lastPrice: unitPrice,
+    lastPurchaseAt: dayKeyFromTs(nowTs()),
     active: true,
   }, false);
   if (!savedId) return;
   await addProductToActiveProductsListFromReceipt(savedId);
+}
+
+async function createProductFromModalForm(formEl) {
+  const form = new FormData(formEl);
+  const name = normalizeFoodName(String(form.get('name') || ''));
+  if (!name) { toast('Nombre obligatorio'); return false; }
+  const preferredStore = normalizeFoodName(String(form.get('preferredStore') || ''));
+  const productType = normalizeFoodName(String(form.get('productType') || ''));
+  const productCategory = normalizeFoodName(String(form.get('productCategory') || ''));
+  const estimatedPrice = Math.max(0, Number(form.get('estimatedPrice') || 0));
+  const usualQty = Math.max(0.01, Number(form.get('usualQty') || 1));
+  const unit = normalizeProductUnit(String(form.get('unit') || 'ud'));
+  await upsertFoodItem({
+    name,
+    displayName: name,
+    preferredStore,
+    place: preferredStore,
+    productType,
+    productCategory,
+    mealType: productType,
+    brand: String(form.get('brand') || '').trim(),
+    barcode: String(form.get('barcode') || '').trim(),
+    estimatedPrice,
+    usualPrice: estimatedPrice,
+    defaultPrice: estimatedPrice,
+    lastPrice: estimatedPrice,
+    usualQty,
+    unit,
+    active: true,
+  }, false);
+  if (preferredStore) await upsertFoodOption('place', preferredStore, false);
+  if (productType) await upsertFoodOption('typeOfMeal', productType, false);
+  state.foodProductsView = { ...(state.foodProductsView || {}), createProductModalOpen: false };
+  toast('Producto guardado');
+  patchProductsCatalogSubview(buildCurrentProductsModel());
+  return true;
 }
 
 async function createProductFromQuickSearch(query = '') {
@@ -14434,6 +14504,16 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       await createProductFromReceiptRow();
       return;
     }
+    if (target.closest('[data-products-open-create-modal]')) {
+      state.foodProductsView = { ...(state.foodProductsView || {}), createProductModalOpen: true };
+      patchProductsCatalogSubview(buildCurrentProductsModel());
+      return;
+    }
+    if (target.closest('[data-products-close-create-modal]')) {
+      state.foodProductsView = { ...(state.foodProductsView || {}), createProductModalOpen: false };
+      patchProductsCatalogSubview(buildCurrentProductsModel());
+      return;
+    }
     if (target.closest('[data-products-save-list]')) {
       await saveActiveProductsListFromDom();
       return;
@@ -15633,6 +15713,11 @@ if (event.target.closest('[data-fixed-expense-form]')) {
 if (event.target.matches('[data-products-editor-form]')) {
   event.preventDefault();
   await persistProductsEditorForm(event.target);
+  return;
+}
+if (event.target.matches('[data-products-create-form]')) {
+  event.preventDefault();
+  await createProductFromModalForm(event.target);
   return;
 }
 if (event.target.matches('[data-products-batch-form]')) {

@@ -3589,6 +3589,14 @@ function renderRemindersPanel() {
   const isTodayView = normalizeReminderView(state.reminderView) === "today";
   const dayItems = getTodayReminders(filtered, selectedDateKey);
   const visibleItems = isTodayView ? dayItems : filtered;
+  console.log("[reminders] active view", state.reminderView);
+  console.log("[reminders] filters", {
+    ...state.reminderFilters,
+    groupBy: state.reminderGroupBy,
+    selectedDateKey,
+  });
+  console.log("[reminders] normalized", state.reminders);
+  console.log("[reminders] visible", visibleItems);
   const active = visibleItems.filter((item) => getReminderComputedStatus(item) === "pendiente");
   const history = visibleItems.filter((item) => getReminderComputedStatus(item) !== "pendiente");
   const activeGroups = buildGroupedReminders(active);
@@ -5496,6 +5504,12 @@ function subscribeData(uid) {
         state._reminderPrefsApplied = true;
       }
       state.tagDefinitions = payload.tagDefinitions || {};
+      console.log("[reminders] raw sources", {
+        reminders: payload.reminders,
+        notes: payload.notes,
+        reminderCategories: payload.reminderCategories,
+        reminderPreferences: payload.reminderPreferences,
+      });
       state.unlockedFolderIds = new Set(
         Array.from(state.unlockedFolderIds).filter((folderId) => state.folders.some((folder) => folder.id === folderId)),
       );

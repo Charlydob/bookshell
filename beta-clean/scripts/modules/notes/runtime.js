@@ -3623,6 +3623,33 @@ function renderReminderDayList(dateKey = "") {
   empty.classList.toggle("hidden", visibleReminders.length > 0);
 }
 
+function renderReminderToday(dateKey = "") {
+  const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : getTodayDateKey();
+  const allReminders = Array.isArray(state.notesState?.reminders) ? state.notesState.reminders : [];
+  const dayReminders = allReminders.filter((reminder) => getReminderDateKey(reminder) === safeDateKey);
+  console.log("[reminders:today-render]", {
+    dateKey: safeDateKey,
+    count: dayReminders.length,
+    ids: dayReminders.map((r) => r.id),
+    dateKeys: allReminders.map((r) => [r.id, getReminderDateKey(r)]),
+  });
+  state.visibleReminders = dayReminders;
+  renderReminderCalendarView(allReminders);
+  renderReminderDayList(safeDateKey);
+}
+
+function handleReminderDayClick(dateKey = "") {
+  const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : getTodayDateKey();
+  console.log("[reminders:calendar-click]", { clickedDateKey: safeDateKey });
+  setReminderCalendarSelectedDate(safeDateKey, { syncMonth: true });
+  state.notesState = { ...(state.notesState || {}), selectedReminderDateKey: safeDateKey, reminderMode: "today" };
+  state.reminderViewMode = "today";
+  state.reminderView = "today";
+  saveReminderViewPreference("today");
+  renderReminderViewSwitch();
+  renderReminderToday(safeDateKey);
+}
+
 function renderAllReminders() {
   const list = $id("notes-reminders-list");
   const historyList = $id("notes-reminders-history-list");
@@ -3677,6 +3704,7 @@ function refreshReminderView(reason = "unknown") {
     selectedReminderDateKey: parseDateKey(state.notesState?.selectedReminderDateKey) ? state.notesState.selectedReminderDateKey : getTodayDateKey(),
     reminderMode: normalizeReminderView(state.reminderViewMode),
   };
+  state.reminderView = state.notesState.reminderMode;
   state.remindersByDateKey = state.notesState.remindersByDateKey;
   state.remindersWithoutDate = state.notesState.remindersWithoutDate;
   console.log("[notes:raw]", rawNotes);
@@ -3685,8 +3713,7 @@ function refreshReminderView(reason = "unknown") {
   renderReminderViewSwitch();
   renderReminderFilterControls();
   if (state.notesState.reminderMode === "today") {
-    renderReminderCalendar();
-    renderReminderDayList(state.notesState.selectedReminderDateKey);
+    renderReminderToday(state.notesState.selectedReminderDateKey);
   } else {
     renderAllReminders();
   }
@@ -4960,10 +4987,7 @@ function bindUiEvents() {
       return;
     }
     if (action === "select-reminder-calendar-day") {
-      setReminderCalendarSelectedDate(target.dataset.dateKey || "", { syncMonth: true });
-      state.notesState.selectedReminderDateKey = state.reminderCalendarSelectedDate;
-      state.reminderViewMode = "today";
-      refreshReminderView("select-day");
+      handleReminderDayClick(target.dataset.dateKey || "");
       return;
     }
     if (action === "focus-reminder-calendar-item") {
@@ -4971,9 +4995,7 @@ function bindUiEvents() {
         syncMonth: true,
         focusedReminderId: target.dataset.reminderId || "",
       });
-      state.notesState.selectedReminderDateKey = state.reminderCalendarSelectedDate;
-      state.reminderViewMode = "today";
-      refreshReminderView("select-day");
+      handleReminderDayClick(target.dataset.dateKey || "");
       return;
     }
     const reminder = state.reminders.find((row) => row.id === String(target.dataset.reminderId || "").trim());

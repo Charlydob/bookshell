@@ -321,6 +321,70 @@ export function mapReminderFromDb(id, value = {}) {
   };
 }
 
+function toDateKey(value = "") {
+  const safe = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(safe)) return safe;
+  const timestamp = Number(value);
+  if (Number.isFinite(timestamp) && timestamp > 0) {
+    const date = new Date(timestamp);
+    if (Number.isFinite(date.getTime())) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+  }
+  return "";
+}
+
+function looksLikeReminder(raw = {}) {
+  const type = normalizeReminderType(raw?.type || raw?.kind || raw?.reminderType);
+  return Boolean(
+    raw?.isReminder
+      || raw?.reminder
+      || raw?.remindBefore
+      || raw?.targetDate
+      || raw?.dueDate
+      || raw?.date
+      || raw?.birthday
+      || ["cumpleaños", "tarea", "checklist", "trámite", "evento", "personalizado", "normal"].includes(type),
+  );
+}
+
+export function normalizeReminder(raw = {}, fallbackId = "") {
+  const safeRaw = raw && typeof raw === "object" ? raw : {};
+  const inferredType = normalizeReminderType(safeRaw?.type || safeRaw?.kind || safeRaw?.reminderType);
+  const isBirthday = inferredType === "cumpleaños" || Boolean(safeRaw?.isBirthday);
+  const targetDate = normalizeReminderDate(safeRaw?.targetDate)
+    || normalizeReminderDate(safeRaw?.dueDate)
+    || normalizeReminderDate(safeRaw?.date)
+    || normalizeReminderDate(safeRaw?.dateKey)
+    || toDateKey(safeRaw?.timestamp)
+    || normalizeReminderDate(safeRaw?.person?.birthday)
+    || normalizeReminderDate(safeRaw?.birthday);
+  const normalized = mapReminderFromDb(String(safeRaw?.id || safeRaw?.key || fallbackId || ""), {
+    ...safeRaw,
+    type: isBirthday ? "cumpleaños" : inferredType,
+    title: safeRaw?.title || safeRaw?.name || safeRaw?.text || safeRaw?.description || "Recordatorio",
+    description: safeRaw?.description || safeRaw?.text || "",
+    status: safeRaw?.status || (safeRaw?.completed ? "completado" : "pendiente"),
+    targetDate,
+    targetTime: safeRaw?.targetTime || safeRaw?.time || "",
+    createdAt: Number(safeRaw?.createdAt || safeRaw?.timestamp || Date.now()),
+  });
+  return {
+    ...normalized,
+    dueDate: normalized.targetDate,
+    date: normalized.targetDate,
+    dateKey: normalized.targetDate,
+    timestamp: Number(safeRaw?.timestamp || Date.parse(`${normalized.targetDate || ""}T${normalized.targetTime || "00:00"}:00`) || 0),
+    category: normalized.categories?.[0] || "",
+    completed: normalized.status === "completado",
+    text: normalized.description,
+    originalRaw: safeRaw,
+  };
+}
+
 export function mapReminderToDb(reminder = {}) {
   const type = normalizeReminderType(reminder?.type);
   const isBirthday = type === "cumpleaños" || Boolean(reminder?.isBirthday);
@@ -353,6 +417,15 @@ export function mapSnapshotToDomain(value = {}) {
   const noteEntries = Object.entries(value?.notes || {});
   const tagDefinitionEntries = Object.entries(value?.tagDefinitions || {});
   const reminderEntries = Object.entries(value?.reminders || {});
+  const legacyReminderEntries = [
+    ...Object.entries(value?.notes?.reminders || {}),
+    ...Object.entries(value?.notesItems || {}).filter(([, row]) => looksLikeReminder(row)),
+    ...Object.entries(value?.notes || {}).filter(([, row]) => looksLikeReminder(row)),
+  ];
+  const reminderArrayEntries = Array.isArray(value?.reminders)
+    ? value.reminders.map((row, index) => [String(row?.id || `arr-${index}`), row])
+    : [];
+  const mergedReminderEntries = [...reminderEntries, ...legacyReminderEntries, ...reminderArrayEntries];
   const reminderCategoryEntries = Object.entries(value?.reminderCategories || {});
 
   const tagDefinitions = tagDefinitionEntries
@@ -367,7 +440,13 @@ export function mapSnapshotToDomain(value = {}) {
   return {
     folders: folderEntries.map(([id, row]) => mapFolderFromDb(id, row)).sort((a, b) => a.createdAt - b.createdAt),
     notes: noteEntries.map(([id, row]) => mapNoteFromDb(id, row)).sort((a, b) => b.updatedAt - a.updatedAt),
-    reminders: reminderEntries.map(([id, row]) => mapReminderFromDb(id, row)).sort((a, b) => {
+    reminders: mergedReminderEntries.map(([id, row]) => normalizeReminder(row, id)).filter((row) => {
+      if (!row?.id) {
+        console.warn("[reminders] normalize failed: missing id", row);
+        return false;
+      }
+      return true;
+    }).sort((a, b) => {
       const aAt = Date.parse(`${a.targetDate || ""}T${a.targetTime || "23:59"}:00`);
       const bAt = Date.parse(`${b.targetDate || ""}T${b.targetTime || "23:59"}:00`);
       return aAt - bAt;

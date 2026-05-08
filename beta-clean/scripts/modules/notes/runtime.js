@@ -3422,7 +3422,8 @@ function renderReminderCalendarView(reminders = []) {
   const selectedDateKey = parseDateKey(state.reminderCalendarSelectedDate)
     ? state.reminderCalendarSelectedDate
     : cells[0]?.dateKey || getTodayDateKey();
-  const selectedItems = remindersByDateKey[selectedDateKey] || [];
+  const allReminders = Array.isArray(reminders) ? reminders : [];
+  const selectedItems = allReminders.filter((reminder) => getReminderDateKey(reminder) === selectedDateKey);
 
   title.textContent = formatReminderCalendarTitle(state.reminderCalendarMonthKey);
   grid.innerHTML = `
@@ -3576,7 +3577,17 @@ function normalizeReminder(raw, id) {
   };
 }
 
-function renderReminderFilterControls() {}
+function renderReminderFilterControls() {
+  const typesWrap = $id("notes-reminders-filter-types");
+  if (!typesWrap) return;
+  const selectedTypes = normalizeReminderMultiSelection(state.reminderFilters?.types, REMINDER_TYPES);
+  typesWrap.innerHTML = REMINDER_TYPES.map((type) => buildReminderFilterCheckMarkup({
+    name: "reminder-visible-types",
+    value: type,
+    label: type,
+    checked: selectedTypes.includes(type),
+  })).join("");
+}
 
 async function persistReminderPreferences() {
   if (!state.rootPath) return;
@@ -3596,10 +3607,20 @@ function renderReminderDayList(dateKey = "") {
   const empty = $id("notes-empty-reminders");
   if (!list || !empty) return;
   const safeDateKey = parseDateKey(dateKey) ? dateKey : getTodayDateKey();
-  const selected = state.notesState?.remindersByDateKey?.[safeDateKey] || [];
-  console.log("[reminders:select-day]", safeDateKey, selected);
-  list.innerHTML = `<div class="notes-reminder-list">${renderReminderCardsToMarkup(selected)}</div>`;
-  empty.classList.toggle("hidden", selected.length > 0);
+  const allReminders = Array.isArray(state.notesState?.reminders) ? state.notesState.reminders : [];
+  const visibleReminders = allReminders.filter((reminder) => getReminderDateKey(reminder) === safeDateKey);
+  state.visibleReminders = visibleReminders;
+  const hasDayDots = Array.isArray(state.notesState?.remindersByDateKey?.[safeDateKey]) && state.notesState.remindersByDateKey[safeDateKey].length > 0;
+  if (hasDayDots && visibleReminders.length === 0) {
+    console.error("[reminders:day-mismatch]", {
+      selectedReminderDateKey: safeDateKey,
+      allReminders,
+      dateKeys: allReminders.map((r) => [r.id, getReminderDateKey(r)]),
+    });
+  }
+  console.log("[reminders:select-day]", safeDateKey, visibleReminders);
+  list.innerHTML = `<div class="notes-reminder-list">${renderReminderCardsToMarkup(visibleReminders)}</div>`;
+  empty.classList.toggle("hidden", visibleReminders.length > 0);
 }
 
 function renderAllReminders() {
@@ -3612,9 +3633,12 @@ function renderAllReminders() {
   const active = [];
   const overdue = [];
   const completed = [];
-  const reminders = state.notesState?.reminders || [];
-  console.log("[reminders:all]", reminders);
-  reminders.forEach((item) => {
+  const reminders = Array.isArray(state.notesState?.reminders) ? state.notesState.reminders : [];
+  const visibleTypes = normalizeReminderMultiSelection(state.reminderFilters?.types, REMINDER_TYPES);
+  const filteredReminders = reminders.filter((item) => visibleTypes.includes(item?.type || "normal"));
+  state.visibleReminders = filteredReminders;
+  console.log("[reminders:all]", filteredReminders);
+  filteredReminders.forEach((item) => {
     const status = getReminderComputedStatus(item);
     if (status === "completado" || item.completed) completed.push(item);
     else if (item.dateKey && item.dateKey < nowKey) overdue.push(item);
@@ -3630,7 +3654,7 @@ function renderAllReminders() {
   toggle.textContent = state.reminderCollapsedHistory
     ? `Mostrar completados y vencidos (${overdue.length + completed.length})`
     : `Ocultar completados y vencidos (${overdue.length + completed.length})`;
-  empty.classList.toggle("hidden", reminders.length > 0);
+  empty.classList.toggle("hidden", filteredReminders.length > 0);
 }
 
 function renderReminderCalendar() {
@@ -3659,6 +3683,7 @@ function refreshReminderView(reason = "unknown") {
   console.log("[notes:derived]", state.notesState);
   console.log("[reminders:byDate]", state.notesState.remindersByDateKey);
   renderReminderViewSwitch();
+  renderReminderFilterControls();
   if (state.notesState.reminderMode === "today") {
     renderReminderCalendar();
     renderReminderDayList(state.notesState.selectedReminderDateKey);

@@ -3700,7 +3700,7 @@ function renderProductsCatalogPanel(model) {
           <p>${model.filteredCount} visibles · ${model.dueCount} por reponer</p>
         </div>
         <div class="productsWorkbench__panelActions">
-          <button type="button" class="food-history-btn" data-products-new-product>Nuevo producto</button>
+          <button type="button" class="food-history-btn" data-products-open-create-modal>Nuevo producto</button>
         </div>
       </header>
       ${renderProductsBulkBar(model)}
@@ -3843,7 +3843,7 @@ function renderProductsEditorPanel(model) {
         </label>
         <div class="productsWorkbench__editorActions">
           <button class="food-history-btn" type="submit">Guardar producto</button>
-          <button type="button" class="food-history-btn" data-products-new-product>Limpiar editor</button>
+          <button type="button" class="food-history-btn" data-products-editor-reset>Limpiar editor</button>
         </div>
       </form>
       <div class="productsWorkbench__editorInsights">
@@ -4095,9 +4095,6 @@ ${ticketBlockedDeletion ? 'disabled' : ''}
     })
     .join('');
   return `
-    <div class="productsWorkbench__ticketRegistryActions">
-      <button type="button" class="food-history-btn" data-products-open-create-modal>Nuevo producto</button>
-    </div>
     <details class="productsWorkbench__ticketRegistry" data-products-ticket-registry>
       <summary>
         <span>Registro de tickets</span>
@@ -5455,26 +5452,41 @@ function closeProductsReceiptSuggestionsSoon(root = document, relatedTarget = nu
 async function createProductFromReceiptRow() {
   const nameInput = document.querySelector('[data-products-receipt-add-name]');
   const name = normalizeFoodName(nameInput?.value || '');
-  if (!name) return;
+  if (!name) {
+    state.productsReceiptError = 'Escribe un nombre antes de añadir.';
+    toast('Falta el nombre del producto');
+    return;
+  }
   const storeSelect = document.querySelector('[data-products-store-select]');
   const defaultStore = normalizeFoodName((storeSelect?.value === '__new__' ? document.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || state.productsHub?.settings?.defaultStore || '');
   const unitPrice = Math.max(0, Number(document.querySelector('[data-products-receipt-add-unit]')?.value || 0));
-  const savedId = await upsertFoodItem({
-    name,
-    displayName: name,
-    place: defaultStore,
-    preferredStore: defaultStore,
-    estimatedPrice: unitPrice,
-    usualPrice: unitPrice,
-    defaultPrice: unitPrice,
-    unit: 'ud',
-    usualQty: 1,
-    lastPrice: unitPrice,
-    lastPurchaseAt: dayKeyFromTs(nowTs()),
-    active: true,
-  }, false);
-  if (!savedId) return;
-  await addProductToActiveProductsListFromReceipt(savedId);
+  const normalizedName = normalizeProductItemKey(name);
+  const existing = Object.values(state.food.itemsById || {}).find((item) => normalizeProductItemKey(item?.name || item?.displayName || '') === normalizedName);
+  if (existing?.id) {
+    await addProductToActiveProductsListFromReceipt(existing.id);
+    return;
+  }
+  try {
+    const savedId = await upsertFoodItem({
+      name,
+      displayName: name,
+      place: defaultStore,
+      preferredStore: defaultStore,
+      estimatedPrice: unitPrice,
+      usualPrice: unitPrice,
+      defaultPrice: unitPrice,
+      unit: 'ud',
+      usualQty: 1,
+      lastPrice: unitPrice,
+      lastPurchaseAt: dayKeyFromTs(nowTs()),
+      active: true,
+    }, false);
+    if (!savedId) return;
+    await addProductToActiveProductsListFromReceipt(savedId);
+  } catch (error) {
+    console.error('[products][receipt-add] no se pudo crear el producto desde ticket', { name, unitPrice, error });
+    state.productsReceiptError = 'No se pudo crear el producto. Revisa la consola.';
+  }
 }
 
 async function createProductFromModalForm(formEl) {
@@ -5487,30 +5499,37 @@ async function createProductFromModalForm(formEl) {
   const estimatedPrice = Math.max(0, Number(form.get('estimatedPrice') || 0));
   const usualQty = Math.max(0.01, Number(form.get('usualQty') || 1));
   const unit = normalizeProductUnit(String(form.get('unit') || 'ud'));
-  await upsertFoodItem({
-    name,
-    displayName: name,
-    preferredStore,
-    place: preferredStore,
-    productType,
-    productCategory,
-    mealType: productType,
-    brand: String(form.get('brand') || '').trim(),
-    barcode: String(form.get('barcode') || '').trim(),
-    estimatedPrice,
-    usualPrice: estimatedPrice,
-    defaultPrice: estimatedPrice,
-    lastPrice: estimatedPrice,
-    usualQty,
-    unit,
-    active: true,
-  }, false);
-  if (preferredStore) await upsertFoodOption('place', preferredStore, false);
-  if (productType) await upsertFoodOption('typeOfMeal', productType, false);
-  state.foodProductsView = { ...(state.foodProductsView || {}), createProductModalOpen: false };
-  toast('Producto guardado');
-  patchProductsCatalogSubview(buildCurrentProductsModel());
-  return true;
+  try {
+    await upsertFoodItem({
+      name,
+      displayName: name,
+      preferredStore,
+      place: preferredStore,
+      productType,
+      productCategory,
+      mealType: productType,
+      brand: String(form.get('brand') || '').trim(),
+      barcode: String(form.get('barcode') || '').trim(),
+      estimatedPrice,
+      usualPrice: estimatedPrice,
+      defaultPrice: estimatedPrice,
+      lastPrice: estimatedPrice,
+      usualQty,
+      unit,
+      active: true,
+    }, false);
+    if (preferredStore) await upsertFoodOption('place', preferredStore, false);
+    if (productType) await upsertFoodOption('typeOfMeal', productType, false);
+    state.foodProductsView = { ...(state.foodProductsView || {}), createProductModalOpen: false };
+    formEl.reset();
+    toast('Producto guardado');
+    patchProductsCatalogSubview(buildCurrentProductsModel());
+    return true;
+  } catch (error) {
+    console.error('[products][create-modal] no se pudo guardar el producto', { name, error });
+    toast('No se pudo guardar el producto');
+    return false;
+  }
 }
 
 async function createProductFromQuickSearch(query = '') {
@@ -14507,6 +14526,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     if (target.closest('[data-products-open-create-modal]')) {
       state.foodProductsView = { ...(state.foodProductsView || {}), createProductModalOpen: true };
       patchProductsCatalogSubview(buildCurrentProductsModel());
+      requestAnimationFrame(() => document.querySelector('[data-products-create-form]')?.reset());
       return;
     }
     if (target.closest('[data-products-close-create-modal]')) {
@@ -14556,7 +14576,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       await reuseProductsListAsActiveList(reuseListId);
       return;
     }
-    if (target.closest('[data-products-new-product]')) {
+    if (target.closest('[data-products-editor-reset]')) {
       state.foodProductsView = {
         ...(state.foodProductsView || {}),
         selectedProductId: '__new__',

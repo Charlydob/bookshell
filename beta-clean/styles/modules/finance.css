@@ -6610,8 +6610,25 @@ margin-bottom: 50px;
   max-height: 85vh;
   overflow: auto;
   border-radius: 14px;
-  background: var(--card-bg, #fff);
+  border: 1px solid rgba(148, 183, 255, .3);
+  background: linear-gradient(180deg, rgba(8, 18, 36, .95), rgba(5, 13, 28, .95));
+  color: rgba(237, 244, 255, .96);
+  box-shadow: 0 24px 50px rgba(0, 0, 0, .45);
   padding: 10px;
+}
+
+.financeTab .productsWorkbenchCreateModal .productsWorkbench__field > span{
+  color: rgba(220, 234, 255, .88);
+}
+
+.financeTab .productsWorkbenchCreateModal .food-control{
+  color: rgba(240, 247, 255, .96);
+  background: rgba(11, 22, 44, .72);
+  border: 1px solid rgba(143, 184, 255, .28);
+}
+
+.financeTab .productsWorkbenchCreateModal .food-control::placeholder{
+  color: rgba(184, 205, 236, .62);
 }
 
 .financeTab .productsWorkbench__ticketRegistry > summary{
@@ -8207,14 +8224,8 @@ label {
   color: white;
 }
 
-.financeTab .productsWorkbench .food-control {
-  display: grid;
-  justify-items: center;
-  justify-content: center;
-  justify-self: center;
-  align-items: center;
-  align-self: center;
-  background: none;
+.financeTab .productsWorkbench__receiptRow .food-control {
+  background: transparent;
 }
 /* #endregion */
 

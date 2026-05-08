@@ -3520,6 +3520,48 @@ function buildReminderSingleChoiceMarkup({ name, value, label, checked = false }
   `;
 }
 
+function normalizeReminder(raw, id) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const reminderId = String(id || source.id || "").trim() || `legacy_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const title = String(
+    source.title
+    || source.name
+    || source.text
+    || source.description
+    || "Recordatorio sin título",
+  ).trim() || "Recordatorio sin título";
+  const text = String(source.text || source.description || source.notes || "").trim();
+  const type = String(source.type || source.kind || source.reminderType || "normal").trim() || "normal";
+  const completed = Boolean(source.completed || source.done || source.status === "completed" || source.status === "completado");
+  const rawDate = source.dateKey
+    || source.date
+    || source.dueDate
+    || source.scheduledDate
+    || source.scheduledAt
+    || source.reminderDate
+    || source.birthdayDate
+    || source.createdForDate
+    || source.targetDate
+    || "";
+  let dateKey = "";
+  if (typeof rawDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawDate.trim())) {
+    dateKey = rawDate.trim();
+  } else if (rawDate) {
+    const dt = new Date(rawDate);
+    if (!Number.isNaN(dt.getTime())) dateKey = formatLocalDateKey(dt);
+  }
+  return {
+    ...source,
+    id: reminderId,
+    title,
+    text,
+    type,
+    completed,
+    dateKey,
+    raw: source,
+  };
+}
+
 function renderReminderFilterControls() {
   const typesWrap = $id("notes-reminders-filter-types");
   const categoriesWrap = $id("notes-reminders-filter-categories");
@@ -3538,26 +3580,7 @@ function renderReminderFilterControls() {
     checklist: "checklist",
     personalizado: "personalizado",
   };
-  const labelsByStatus = { pendiente: "pendiente", completado: "completado", vencido: "vencido" };
-  const labelsByRange = {
-    all: "todos",
-    today: "hoy",
-    "7d": "próximos 7 días",
-    "30d": "próximos 30 días",
-    overdue: "vencidos",
-  };
-  const labelsByGroup = {
-    none: "sin agrupar",
-    category: "por categoría",
-    type: "por tipo",
-    date: "por fecha",
-    status: "por estado",
-  };
   const selectedTypes = new Set(normalizeReminderMultiSelection(state.reminderFilters?.types, REMINDER_TYPES));
-  const selectedStatuses = new Set(normalizeReminderMultiSelection(state.reminderFilters?.statuses, REMINDER_STATUSES));
-  const selectedCategories = new Set(normalizeReminderMultiSelection(state.reminderFilters?.categories));
-  const selectedRange = normalizeReminderRange(state.reminderFilters?.range || "all");
-  const selectedGroup = normalizeReminderGroupBy(state.reminderGroupBy);
 
   typesWrap.innerHTML = REMINDER_TYPES.map((type) => buildReminderFilterCheckMarkup({
     name: "reminder-visible-types",
@@ -3565,39 +3588,13 @@ function renderReminderFilterControls() {
     label: labelsByType[type] || type,
     checked: selectedTypes.has(type),
   })).join("");
-  statusesWrap.innerHTML = REMINDER_STATUSES.map((status) => buildReminderFilterCheckMarkup({
-    name: "reminder-visible-statuses",
-    value: status,
-    label: labelsByStatus[status] || status,
-    checked: selectedStatuses.has(status),
-  })).join("");
-  categoriesWrap.innerHTML = (state.reminderCategories || []).length
-    ? (state.reminderCategories || []).map((category) => buildReminderFilterCheckMarkup({
-      name: "reminder-visible-categories",
-      value: category.name,
-      label: category.name,
-      checked: selectedCategories.has(category.name),
-    })).join("")
-    : '<div class="notes-reminder-alert-empty">Sin categorías creadas.</div>';
-  rangesWrap.innerHTML = REMINDER_RANGES.map((range) => buildReminderSingleChoiceMarkup({
-    name: "reminder-visible-range",
-    value: range,
-    label: labelsByRange[range] || range,
-    checked: selectedRange === range,
-  })).join("");
-  groupWrap.innerHTML = REMINDER_GROUP_BY.map((group) => buildReminderSingleChoiceMarkup({
-    name: "reminder-group-by",
-    value: group,
-    label: labelsByGroup[group] || group,
-    checked: selectedGroup === group,
-  })).join("");
+  statusesWrap.innerHTML = '<div class="notes-reminder-alert-empty">Filtro de estado desactivado temporalmente.</div>';
+  categoriesWrap.innerHTML = '<div class="notes-reminder-alert-empty">Filtro de categorías desactivado temporalmente.</div>';
+  rangesWrap.innerHTML = '<div class="notes-reminder-alert-empty">Filtro de rango desactivado temporalmente.</div>';
+  groupWrap.innerHTML = '<div class="notes-reminder-alert-empty">Agrupación desactivada temporalmente.</div>';
 
   const chips = [];
   if (selectedTypes.size) chips.push(`${selectedTypes.size} tipo(s)`);
-  if (selectedCategories.size) chips.push(`${selectedCategories.size} categoría(s)`);
-  if (selectedStatuses.size) chips.push(`${selectedStatuses.size} estado(s)`);
-  if (selectedRange !== "all") chips.push(labelsByRange[selectedRange]);
-  if (selectedGroup !== "none") chips.push(labelsByGroup[selectedGroup]);
   summaryWrap.innerHTML = chips.map((chip) => `<span class="notes-reminder-chip">${escapeHtml(chip)}</span>`).join("");
 }
 
@@ -3605,96 +3602,80 @@ async function persistReminderPreferences() {
   if (!state.rootPath) return;
   const preferences = {
     visibleTypes: normalizeReminderMultiSelection(state.reminderFilters?.types, REMINDER_TYPES),
-    visibleCategories: normalizeReminderMultiSelection(state.reminderFilters?.categories),
-    visibleStatuses: normalizeReminderMultiSelection(state.reminderFilters?.statuses, REMINDER_STATUSES),
-    range: normalizeReminderRange(state.reminderFilters?.range || "all"),
-    groupBy: normalizeReminderGroupBy(state.reminderGroupBy),
+    visibleCategories: [],
+    visibleStatuses: [],
+    range: "all",
+    groupBy: "none",
   };
   state.reminderPreferences = preferences;
   await updateReminderPreferences(state.rootPath, preferences);
 }
 
-function renderRemindersPanel() {
+function renderVisibleReminders(visibleReminders = []) {
   const list = $id("notes-reminders-list");
   const historyList = $id("notes-reminders-history-list");
   const empty = $id("notes-empty-reminders");
   const toggle = $id("notes-reminders-toggle-history");
   if (!list || !historyList || !empty || !toggle) return;
+
+  const nowKey = getTodayDateKey();
+  const active = [];
+  const overdue = [];
+  const completed = [];
+  (Array.isArray(visibleReminders) ? visibleReminders : []).forEach((item) => {
+    const status = getReminderComputedStatus(item);
+    if (status === "completado" || item.completed) completed.push(item);
+    else if (item.dateKey && item.dateKey < nowKey) overdue.push(item);
+    else active.push(item);
+  });
+
+  list.innerHTML = `<div class="notes-reminder-list">${renderReminderCardsToMarkup(active)}</div>`;
+  historyList.innerHTML = [
+    overdue.length ? `<div class="notes-section-label">Vencidos</div><div class="notes-reminder-list">${renderReminderCardsToMarkup(overdue)}</div>` : "",
+    completed.length ? `<div class="notes-section-label">Completados</div><div class="notes-reminder-list">${renderReminderCardsToMarkup(completed)}</div>` : "",
+  ].join("");
+  historyList.classList.toggle("hidden", state.reminderCollapsedHistory || (!overdue.length && !completed.length));
+  toggle.textContent = state.reminderCollapsedHistory
+    ? `Mostrar completados y vencidos (${overdue.length + completed.length})`
+    : `Ocultar completados y vencidos (${overdue.length + completed.length})`;
+  empty.classList.toggle("hidden", visibleReminders.length > 0);
+
+  console.log("[reminders:view]", state.reminderViewMode);
+  console.log("[reminders:visible]", visibleReminders);
+}
+
+function renderRemindersPanel() {
   renderReminderFilterControls();
   renderReminderViewSwitch();
-  const filtered = Array.isArray(state.visibleReminders) ? state.visibleReminders : getAllRemindersFiltered();
-  ensureReminderCalendarSelection(filtered);
-  renderReminderCalendarView(filtered);
-  const selectedDateKey = parseDateKey(state.selectedDateKey) ? state.selectedDateKey : getTodayDateKey();
-  const isTodayView = normalizeReminderView(state.reminderViewMode) === "today";
-  const dayItems = getTodayReminders(filtered, selectedDateKey);
-  const visibleItems = isTodayView ? dayItems : filtered;
-  console.log("[reminders] active view", state.reminderViewMode);
-  console.log("[reminders] filters", {
-    ...state.reminderFilters,
-    groupBy: state.reminderGroupBy,
-    selectedDateKey,
-  });
-  console.log("[reminders] normalized", state.reminders);
-  console.log("[reminders] visible", visibleItems);
-  const active = visibleItems.filter((item) => getReminderComputedStatus(item) === "pendiente");
-  const history = visibleItems.filter((item) => getReminderComputedStatus(item) !== "pendiente");
-  const activeGroups = buildGroupedReminders(active);
-  const historyGroups = buildGroupedReminders(history);
-  list.innerHTML = activeGroups.map((group) => `
-    ${group.label ? `<div class="notes-section-label">${escapeHtml(group.label)}</div>` : ""}
-    <div class="notes-reminder-list">${renderReminderCardsToMarkup(group.items)}</div>
-  `).join("");
-  historyList.innerHTML = historyGroups.map((group) => `
-    ${group.label ? `<div class="notes-section-label">${escapeHtml(group.label)}</div>` : ""}
-    <div class="notes-reminder-list">${renderReminderCardsToMarkup(group.items)}</div>
-  `).join("");
-  historyList.classList.toggle("hidden", isTodayView || state.reminderCollapsedHistory);
-  toggle.textContent = state.reminderCollapsedHistory
-    ? `Mostrar completados y vencidos (${history.length})`
-    : `Ocultar completados y vencidos (${history.length})`;
-  if (isTodayView) {
-    list.innerHTML = `<div class="notes-reminder-list">${renderReminderCardsToMarkup(dayItems)}</div>`;
-    historyList.innerHTML = "";
-  }
-  empty.classList.toggle("hidden", visibleItems.length > 0);
+  ensureReminderCalendarSelection(state.allRemindersNormalized || []);
+  renderReminderCalendarView(state.allRemindersNormalized || []);
+  renderVisibleReminders(state.visibleReminders || []);
 }
 
 function refreshReminderView(reason = "unknown") {
-  const normalized = (Array.isArray(state.reminders) ? state.reminders : []).map((reminder) => ({
-    ...reminder,
-    id: String(reminder?.id || ""),
-    dateKey: getReminderDateKey(reminder),
-  }));
+  const normalized = (Array.isArray(state.reminders) ? state.reminders : []).map((reminder, index) => normalizeReminder(reminder, reminder?.id || `row_${index}`));
   state.allRemindersNormalized = normalized;
-  const filtered = getAllRemindersFiltered();
   const selectedDateKey = parseDateKey(state.selectedDateKey) ? state.selectedDateKey : getTodayDateKey();
+  const selectedTypes = new Set(normalizeReminderMultiSelection(state.reminderFilters?.types, REMINDER_TYPES));
+  const byType = selectedTypes.size ? normalized.filter((item) => selectedTypes.has(item.type || "normal")) : normalized;
   state.visibleReminders = normalizeReminderView(state.reminderViewMode) === "today"
-    ? getTodayReminders(filtered, selectedDateKey)
-    : filtered;
-  if (filtered.length && state.visibleReminders.length === 0) {
-    filtered.forEach((reminder) => {
-      const drops = [];
-      const computedStatus = getReminderComputedStatus(reminder);
-      if (state.reminderFilters?.types?.length && !state.reminderFilters.types.includes(reminder?.type || "normal")) drops.push("type");
-      if (state.reminderFilters?.statuses?.length && !state.reminderFilters.statuses.includes(computedStatus)) drops.push("status");
-      if (state.reminderFilters?.categories?.length && !state.reminderFilters.categories.some((c) => (reminder?.categories || []).includes(c))) drops.push("category");
-      if (drops.length) console.log("[reminders:filter-drop]", reminder.id, drops.join(","));
+    ? byType.filter((r) => r.dateKey === selectedDateKey)
+    : byType;
+  if (normalized.length && state.visibleReminders.length === 0) {
+    console.log("[reminders:why-empty]", {
+      selectedDateKey,
+      reminderViewMode: state.reminderViewMode,
+      selectedTypes: Array.from(selectedTypes),
+      withDateMatch: byType.filter((r) => r.dateKey === selectedDateKey).map((r) => ({ id: r.id, dateKey: r.dateKey, type: r.type })),
     });
   }
-  console.log("[reminders:refresh]", reason, {
-    totalRaw: Array.isArray(state.reminders) ? state.reminders.length : 0,
-    totalNormalized: normalized.length,
-    selectedDateKey,
-    viewMode: state.reminderViewMode,
-    filters: state.reminderFilters,
-    visibleCount: state.visibleReminders.length,
-    visibleIds: state.visibleReminders.map((item) => item.id),
-  });
+  console.log("[reminders:normalized]", normalized);
+  console.log("[reminders:selected-date]", selectedDateKey);
   state.reminderView = state.reminderViewMode;
   state.reminderCalendarSelectedDate = selectedDateKey;
   renderRemindersPanel();
 }
+
 
 function renderRootSectionSwitch() {
   const isReminders = normalizeRootSection(state.rootSection) === "reminders";
@@ -4956,7 +4937,7 @@ function bindUiEvents() {
     if (!target) return;
     const action = String(target.dataset.act || "").trim();
     if (action === "shift-reminders-calendar") {
-      shiftReminderCalendarMonth(Number(target.dataset.monthShift || 0), getFilteredReminders());
+      shiftReminderCalendarMonth(Number(target.dataset.monthShift || 0), state.allRemindersNormalized || []);
       refreshReminderView("ui-refresh");
       return;
     }
@@ -4983,34 +4964,14 @@ function bindUiEvents() {
   $id("notes-reminders-show-panel")?.addEventListener("change", async (event) => {
     const input = event.target;
     if (!(input instanceof HTMLInputElement)) return;
-    if (input.name === "reminder-visible-types") {
-      const selected = Array.from(document.querySelectorAll("input[name='reminder-visible-types']:checked"))
-        .map((item) => item.value);
-      state.reminderFilters.types = normalizeReminderMultiSelection(selected, REMINDER_TYPES);
-    }
-    if (input.name === "reminder-visible-categories") {
-      const selected = Array.from(document.querySelectorAll("input[name='reminder-visible-categories']:checked"))
-        .map((item) => item.value);
-      state.reminderFilters.categories = normalizeReminderMultiSelection(selected);
-    }
-    if (input.name === "reminder-visible-statuses") {
-      const selected = Array.from(document.querySelectorAll("input[name='reminder-visible-statuses']:checked"))
-        .map((item) => item.value);
-      state.reminderFilters.statuses = normalizeReminderMultiSelection(selected, REMINDER_STATUSES);
-    }
-    if (input.name === "reminder-visible-range") {
-      state.reminderFilters.range = normalizeReminderRange(input.value || "all");
-    }
+    if (input.name !== "reminder-visible-types") return;
+    const selected = Array.from(document.querySelectorAll("input[name='reminder-visible-types']:checked"))
+      .map((item) => item.value);
+    state.reminderFilters.types = normalizeReminderMultiSelection(selected, REMINDER_TYPES);
     refreshReminderView("ui-refresh");
     try { await persistReminderPreferences(); } catch (_) {}
   });
-  $id("notes-reminders-group-panel")?.addEventListener("change", async (event) => {
-    const input = event.target;
-    if (!(input instanceof HTMLInputElement) || input.name !== "reminder-group-by") return;
-    state.reminderGroupBy = normalizeReminderGroupBy(input.value || "none");
-    refreshReminderView("ui-refresh");
-    try { await persistReminderPreferences(); } catch (_) {}
-  });
+  $id("notes-reminders-group-panel")?.addEventListener("change", () => {});
   $id("notes-reminders-toggle-history")?.addEventListener("click", () => {
     state.reminderCollapsedHistory = !state.reminderCollapsedHistory;
     refreshReminderView("ui-refresh");
@@ -5591,7 +5552,9 @@ function subscribeData(uid) {
         state._reminderPrefsApplied = true;
       }
       state.tagDefinitions = payload.tagDefinitions || {};
-      console.log("[reminders] raw sources", {
+      const rawData = payload.reminders;
+      console.log("[reminders:data-source]", rawData);
+      console.log("[reminders:data-source:full]", {
         reminders: payload.reminders,
         notes: payload.notes,
         reminderCategories: payload.reminderCategories,

@@ -81,6 +81,8 @@ const REMINDER_CALENDAR_MAX_DOTS = 3;
 const state = {
   ...createInitialNotesState(),
   allRemindersNormalized: [],
+  remindersByDateKey: {},
+  remindersWithoutDate: [],
   selectedDateKey: getTodayDateKey(),
   reminderViewMode: loadReminderViewPreference(),
   visibleReminders: [],
@@ -3405,16 +3407,19 @@ function renderReminderCalendarView(reminders = []) {
   ensureReminderCalendarSelection(reminders);
   const cells = buildReminderCalendarCells(state.reminderCalendarMonthKey);
   const remindersByDate = buildReminderCalendarMap(reminders, cells);
+  const remindersByDateKey = Object.fromEntries(Array.from(remindersByDate.entries()).map(([dateKey, items]) => [dateKey, [...items]]));
+  state.remindersByDateKey = remindersByDateKey;
+  console.log("[reminders:dots-source]", remindersByDateKey);
   const selectedDateKey = parseDateKey(state.reminderCalendarSelectedDate)
     ? state.reminderCalendarSelectedDate
     : cells[0]?.dateKey || getTodayDateKey();
-  const selectedItems = remindersByDate.get(selectedDateKey) || [];
+  const selectedItems = remindersByDateKey[selectedDateKey] || [];
 
   title.textContent = formatReminderCalendarTitle(state.reminderCalendarMonthKey);
   grid.innerHTML = `
     ${REMINDER_WEEKDAY_LABELS.map((label) => `<div class="notes-reminders-calendar__weekday">${escapeHtml(label)}</div>`).join("")}
     ${cells.map((cell) => {
-      const dayItems = remindersByDate.get(cell.dateKey) || [];
+      const dayItems = remindersByDateKey[cell.dateKey] || [];
       const visibleDots = dayItems.slice(0, REMINDER_CALENDAR_MAX_DOTS);
       const extraCount = Math.max(0, dayItems.length - REMINDER_CALENDAR_MAX_DOTS);
       const classes = [
@@ -3655,20 +3660,35 @@ function renderRemindersPanel() {
 function refreshReminderView(reason = "unknown") {
   const normalized = (Array.isArray(state.reminders) ? state.reminders : []).map((reminder, index) => normalizeReminder(reminder, reminder?.id || `row_${index}`));
   state.allRemindersNormalized = normalized;
+  state.remindersWithoutDate = normalized.filter((item) => !parseDateKey(item?.dateKey || ""));
+  const cells = buildReminderCalendarCells(state.reminderCalendarMonthKey);
+  const remindersByDateMap = buildReminderCalendarMap(normalized, cells);
+  state.remindersByDateKey = Object.fromEntries(Array.from(remindersByDateMap.entries()).map(([dateKey, items]) => [dateKey, [...items]]));
+  console.log("[reminders:dots-source]", state.remindersByDateKey);
   const selectedDateKey = parseDateKey(state.selectedDateKey) ? state.selectedDateKey : getTodayDateKey();
   const selectedTypes = new Set(normalizeReminderMultiSelection(state.reminderFilters?.types, REMINDER_TYPES));
-  const byType = selectedTypes.size ? normalized.filter((item) => selectedTypes.has(item.type || "normal")) : normalized;
-  state.visibleReminders = normalizeReminderView(state.reminderViewMode) === "today"
-    ? byType.filter((r) => r.dateKey === selectedDateKey)
-    : byType;
-  if (normalized.length && state.visibleReminders.length === 0) {
-    console.log("[reminders:why-empty]", {
-      selectedDateKey,
-      reminderViewMode: state.reminderViewMode,
-      selectedTypes: Array.from(selectedTypes),
-      withDateMatch: byType.filter((r) => r.dateKey === selectedDateKey).map((r) => ({ id: r.id, dateKey: r.dateKey, type: r.type })),
-    });
+  const remindersByDateKey = state.remindersByDateKey && typeof state.remindersByDateKey === "object"
+    ? state.remindersByDateKey
+    : {};
+  const dotsCount = Array.isArray(remindersByDateKey[selectedDateKey]) ? remindersByDateKey[selectedDateKey].length : 0;
+  let baseReminders = normalizeReminderView(state.reminderViewMode) === "today"
+    ? (remindersByDateKey[selectedDateKey] || [])
+    : [...Object.values(remindersByDateKey).flat(), ...(state.remindersWithoutDate || [])];
+  if (normalizeReminderView(state.reminderViewMode) === "today") {
+    console.log("[reminders:select-day]", selectedDateKey, remindersByDateKey[selectedDateKey] || []);
+    if (dotsCount > 0 && baseReminders.length === 0) {
+      console.error("[reminders BUG] dots exist but list empty", {
+        selectedDateKey,
+        dotsCount,
+        dayReminders: baseReminders,
+        remindersByDateKey,
+      });
+    }
+  } else {
+    console.log("[reminders:all]", baseReminders);
   }
+  state.visibleReminders = selectedTypes.size ? baseReminders.filter((item) => selectedTypes.has(item.type || "normal")) : baseReminders;
+  console.log("[reminders:render]", state.visibleReminders);
   console.log("[reminders:normalized]", normalized);
   console.log("[reminders:selected-date]", selectedDateKey);
   state.reminderView = state.reminderViewMode;

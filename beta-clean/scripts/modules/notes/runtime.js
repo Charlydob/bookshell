@@ -248,6 +248,9 @@ function getDateKeyFromDate(date = new Date()) {
   if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return "";
   return getDateKeyFromParts(date.getFullYear(), date.getMonth(), date.getDate());
 }
+function formatLocalDateKey(date = new Date()) {
+  return getDateKeyFromDate(date);
+}
 
 function getTodayDateKey() {
   return getDateKeyFromDate(new Date());
@@ -3618,7 +3621,11 @@ function renderReminderDayList(dateKey = "") {
       dateKeys: allReminders.map((r) => [r.id, getReminderDateKey(r)]),
     });
   }
-  console.log("[reminders:select-day]", safeDateKey, visibleReminders);
+  console.debug("[notes:reminders:render-day]", {
+    selectedDate: safeDateKey,
+    total: allReminders.length,
+    visible: visibleReminders.length,
+  });
   list.innerHTML = `<div class="notes-reminder-list">${renderReminderCardsToMarkup(visibleReminders)}</div>`;
   empty.classList.toggle("hidden", visibleReminders.length > 0);
 }
@@ -3627,7 +3634,7 @@ function renderReminderToday(dateKey = "") {
   const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : getTodayDateKey();
   const allReminders = Array.isArray(state.notesState?.reminders) ? state.notesState.reminders : [];
   const dayReminders = allReminders.filter((reminder) => getReminderDateKey(reminder) === safeDateKey);
-  console.log("[reminders:today-render]", {
+  console.debug("[notes:reminders:render-today]", {
     dateKey: safeDateKey,
     count: dayReminders.length,
     ids: dayReminders.map((r) => r.id),
@@ -3640,7 +3647,7 @@ function renderReminderToday(dateKey = "") {
 
 function handleReminderDayClick(dateKey = "") {
   const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : getTodayDateKey();
-  console.log("[reminders:calendar-click]", { clickedDateKey: safeDateKey });
+  console.debug("[notes:reminders:calendar-click]", { clickedDateKey: safeDateKey });
   setReminderCalendarSelectedDate(safeDateKey, { syncMonth: true });
   state.notesState = { ...(state.notesState || {}), selectedReminderDateKey: safeDateKey, reminderMode: "today" };
   state.reminderViewMode = "today";
@@ -3664,7 +3671,13 @@ function renderAllReminders() {
   const visibleTypes = normalizeReminderMultiSelection(state.reminderFilters?.types, REMINDER_TYPES);
   const filteredReminders = reminders.filter((item) => visibleTypes.includes(item?.type || "normal"));
   state.visibleReminders = filteredReminders;
-  console.log("[reminders:all]", filteredReminders);
+  console.debug("[notes:reminders:render-all]", {
+    total: reminders.length,
+    filtered: filteredReminders.length,
+    active: active.length,
+    overdue: overdue.length,
+    completed: completed.length,
+  });
   filteredReminders.forEach((item) => {
     const status = getReminderComputedStatus(item);
     if (status === "completado" || item.completed) completed.push(item);
@@ -3707,9 +3720,14 @@ function refreshReminderView(reason = "unknown") {
   state.reminderView = state.notesState.reminderMode;
   state.remindersByDateKey = state.notesState.remindersByDateKey;
   state.remindersWithoutDate = state.notesState.remindersWithoutDate;
-  console.log("[notes:raw]", rawNotes);
-  console.log("[notes:derived]", state.notesState);
-  console.log("[reminders:byDate]", state.notesState.remindersByDateKey);
+  console.debug("[notes:reminders:refresh]", {
+    reason,
+    selectedDate: state.notesState.selectedReminderDateKey,
+    view: state.notesState.reminderMode,
+    reminders: reminders.length,
+    withDate: reminders.length - state.notesState.remindersWithoutDate.length,
+    withoutDate: state.notesState.remindersWithoutDate.length,
+  });
   renderReminderViewSwitch();
   renderReminderFilterControls();
   if (state.notesState.reminderMode === "today") {
@@ -4930,6 +4948,7 @@ function bindPinModalEvents() {
 function bindUiEvents() {
   if (isBound) return;
   isBound = true;
+  console.debug("[notes:events] binding listeners");
 
   $id("notes-btn-new-folder")?.addEventListener("click", () => openFolderModal());
   $id("notes-btn-new-subfolder")?.addEventListener("click", () => openFolderModal(null, {
@@ -5592,13 +5611,10 @@ function subscribeData(uid) {
         state._reminderPrefsApplied = true;
       }
       state.tagDefinitions = payload.tagDefinitions || {};
-      const rawData = payload.reminders;
-      console.log("[reminders:data-source]", rawData);
-      console.log("[reminders:data-source:full]", {
-        reminders: payload.reminders,
-        notes: payload.notes,
-        reminderCategories: payload.reminderCategories,
-        reminderPreferences: payload.reminderPreferences,
+      console.debug("[notes:data] notes root loaded", {
+        reminders: (payload.reminders || []).length,
+        notes: (payload.notes || []).length,
+        rootPath: safeRootPath,
       });
       state.unlockedFolderIds = new Set(
         Array.from(state.unlockedFolderIds).filter((folderId) => state.folders.some((folder) => folder.id === folderId)),
@@ -5634,12 +5650,13 @@ function bindAuth() {
 }
 
 export async function onShow() {
-  console.log("[notes:init/onShow]");
+  console.debug("[notes:init] start onShow");
   bindUiEvents();
   bindAuth();
   startReminderChecker();
   refreshReminderView("onShow");
   renderShell();
+  console.debug("[notes:init] end onShow");
   window.__bookshellNotes = {
     openGlobalNoteModal,
     openNoteModal: (note = null, options = {}) => openNoteModal(note, options),
@@ -5666,19 +5683,22 @@ export async function onShow() {
       const items = getReminderNotificationItems();
       panel.classList.remove("hidden");
       panel.innerHTML = `<section class="modal"><header class="modal-header"><div class="modal-title">Notificaciones</div><button class="icon-btn" data-close-notifications>✕</button></header><div class="modal-body" id="lista-de-notificaciones" >${items.map((item) => `<button class="btn ghost" id="notificaciones"  data-open-reminder-notification="${escapeHtml(item.id)}">${escapeHtml(item.title)} ${item.targetTime ? `· ${escapeHtml(item.targetTime)}` : ""} · ${escapeHtml(item.status)}</button>`).join("") || "<p>Sin notificaciones para hoy.</p>"}</div></section>`;
-      panel.addEventListener("click", async (event) => {
-        if (event.target === panel || event.target.closest("[data-close-notifications]")) {
-          reminderNotificationsOpen = false;
-          panel.classList.add("hidden");
-          return;
-        }
-        const button = event.target.closest("[data-open-reminder-notification]");
-        if (button) {
-          await navigateToReminder(button.dataset.openReminderNotification || "");
-          reminderNotificationsOpen = false;
-          panel.classList.add("hidden");
-        }
-      });
+      if (!panel.dataset.boundNotesReminderNotifications) {
+        panel.dataset.boundNotesReminderNotifications = "1";
+        panel.addEventListener("click", async (event) => {
+          if (event.target === panel || event.target.closest("[data-close-notifications]")) {
+            reminderNotificationsOpen = false;
+            panel.classList.add("hidden");
+            return;
+          }
+          const button = event.target.closest("[data-open-reminder-notification]");
+          if (button) {
+            await navigateToReminder(button.dataset.openReminderNotification || "");
+            reminderNotificationsOpen = false;
+            panel.classList.add("hidden");
+          }
+        });
+      }
     },
   };
 }
@@ -5709,6 +5729,7 @@ export function destroy() {
   reminderDraftCategories = [];
   reminderDraftChecklistItems = {};
   stopReminderChecker();
+  console.debug("[notes:events] listeners cleaned");
   if (window.__bookshellNotes) {
     delete window.__bookshellNotes;
   }

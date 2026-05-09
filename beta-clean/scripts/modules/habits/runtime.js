@@ -4907,7 +4907,6 @@ function scoreToHeatLevel(score) {
 const $tabs = document.querySelectorAll(".habit-subtab");
 const $panels = document.querySelectorAll(".habits-panel");
 const $btnAddTime = document.getElementById("habit-add-time");
-const $habitTodayMonthCalendar = document.getElementById("habit-today-month-calendar");
 const $habitFabAdd = document.getElementById("habit-fab-add");
 const $habitCustomGroups = document.getElementById("habit-custom-groups");
 
@@ -6896,15 +6895,42 @@ function renderTodayInsightsPanel() {
     return;
   }
   if (habitHistoryPanelView === "schedule" && shouldRenderWorkScheduleBand) {
+    const scheduleRangeControls = document.createElement("div");
+    scheduleRangeControls.className = "habits-history-controls habit-work-schedule-range-controls";
+    [
+      { key: "week", label: "Semana" },
+      { key: "month", label: "Mes" },
+      { key: "year", label: "Año" },
+      { key: "total", label: "Total" }
+    ].forEach((range) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "habits-history-range-btn";
+      if (habitHistoryRange === range.key) btn.classList.add("is-active");
+      btn.textContent = range.label;
+      btn.addEventListener("click", () => {
+        if (habitHistoryRange === range.key) return;
+        habitHistoryRange = range.key;
+        saveHistoryRange();
+        renderToday();
+      });
+      scheduleRangeControls.appendChild(btn);
+    });
     const { start } = getHistoryRangeBounds(habitHistoryRange);
     if (habitHistoryRange === "week") {
       const weekStartKey = dateKeyLocal(startOfWeek(parseDateKey(selectedDateKey) || new Date()));
-      $habitTodayInsights.appendChild(buildWorkScheduleWeekBand(weekStartKey));
+      const section = buildWorkScheduleWeekBand(weekStartKey);
+      section.querySelector(".habits-history-section-header")?.appendChild(scheduleRangeControls);
+      $habitTodayInsights.appendChild(section);
     } else if (habitHistoryRange === "month") {
       const anchor = parseDateKey(selectedDateKey) || new Date();
-      $habitTodayInsights.appendChild(buildWorkScheduleMonthBand(anchor.getFullYear(), anchor.getMonth()));
+      const section = buildWorkScheduleMonthBand(anchor.getFullYear(), anchor.getMonth());
+      section.querySelector(".habits-history-section-header")?.appendChild(scheduleRangeControls);
+      $habitTodayInsights.appendChild(section);
     } else {
-      $habitTodayInsights.appendChild(buildWorkScheduleSummaryBand(habitHistoryRange));
+      const section = buildWorkScheduleSummaryBand(habitHistoryRange);
+      section.querySelector(".habits-history-section-header")?.appendChild(scheduleRangeControls);
+      $habitTodayInsights.appendChild(section);
     }
     return;
   }
@@ -6922,7 +6948,6 @@ function renderToday() {
     selectedDateKey = todayKey();
   }
   const selectedDate = parseDateKey(selectedDateKey) || new Date();
-  renderTodayMonthCalendar(selectedDate);
   const dateKey = selectedDateKey || todayKey();
   renderTodayInsightsPanel();
 
@@ -10221,14 +10246,6 @@ function buildHistoryMonthCalendar(anchorDate = new Date(), { onDateChange = nul
   wrap.appendChild(header);
   wrap.appendChild(body);
   return wrap;
-}
-
-function renderTodayMonthCalendar(anchorDate = new Date()) {
-  if (!$habitTodayMonthCalendar) return;
-  $habitTodayMonthCalendar.innerHTML = "";
-  $habitTodayMonthCalendar.appendChild(buildHistoryMonthCalendar(anchorDate, {
-    onDateChange: () => renderToday()
-  }));
 }
 
 function getWorkScheduleSummaryContext(rangeKey) {

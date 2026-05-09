@@ -5,7 +5,6 @@
 
 <div aria-label="Vistas de hábitos" class="habits-subtabs app-tabs"  role="tablist">
 <button aria-selected="true" class="habit-subtab app-tab is-active" data-tab="today" role="tab">Hoy</button>
-<button aria-selected="false" class="habit-subtab app-tab" data-tab="history" role="tab">Historial</button>
 <button aria-selected="false" class="habit-subtab app-tab" data-tab="schedule" role="tab">Horario</button>
 <button aria-selected="false" class="habit-subtab app-tab" data-tab="reports" role="tab">Reportes</button>
 </div>
@@ -16,8 +15,6 @@
 </div>
 <div class="habit-today-insights" id="habit-today-insights" data-search-ignore="true"></div>
   
-<div class="habit-today-month-calendar" id="habit-today-month-calendar" data-search-ignore="true"></div>
-
 <div class="habit-quick-toggle" data-search-ignore="true">
   <div class="habit-quick-tabs app-segmented" role="tablist" aria-label="Accesos rápidos de hábitos">
     <button class="habit-quick-tab-btn app-segmented__item app-chip is-active" id="habit-quick-tab-sessions" data-habit-quick-tab="sessions" role="tab" aria-selected="true" type="button">Sesiones</button>
@@ -211,8 +208,7 @@
 </div>
 </div>
 <div class="habits-panel" data-panel="history">
-<div class="habit-heatmap-list" id="habits-history-list"></div>
-<div class="empty-state small" id="habits-history-empty">Sin historial aún.</div>
+<div class="empty-state small">Historial integrado en Hoy.</div>
 </div>
 <div class="habits-panel" data-panel="schedule">
 <div class="habit-schedule" id="habit-schedule-view"></div>

@@ -389,7 +389,7 @@
 }
 .notes-item-card.is-compact-note {
   grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 64px;
+  min-height: 44px;
   padding: 10px 12px;
   border-radius: 14px;
 }

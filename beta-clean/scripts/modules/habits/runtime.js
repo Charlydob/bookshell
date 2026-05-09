@@ -128,6 +128,8 @@ const HABITS_SCHEDULE_VIEW_MODE_STORAGE = "scheduleViewMode";
 const HABITS_SCHEDULE_SCORE_MODE_STORAGE = "scheduleScoreMode";
 const HABIT_QUICK_PANEL_STORAGE = "bookshell-habits-quick-panel:v1";
 const HISTORY_STATS_COLLAPSED_STORAGE = "bookshell-habits-history-stats-collapsed:v1";
+const SCHEDULE_TIMELINE_HIDDEN_STORAGE = "hiddenTimelineHabitIds";
+const SCHEDULE_TIMELINE_POINT_EVENTS_STORAGE = "bookshell-habits-timeline-point-events:v1";
 const DEFAULT_COLOR = "#7f5dff";
 const PARAM_EMPTY_LABEL = "Sin parámetro";
 const PARAM_COLOR_PALETTE = [
@@ -149,6 +151,12 @@ const UNKNOWN_HABIT_ID = "h-unknown";
 const UNKNOWN_HABIT_NAME = "Desconocido";
 const UNKNOWN_HABIT_EMOJI = "❓";
 const UNKNOWN_HABIT_COLOR = "#8b93a6"; // neutro
+const SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX = 72;
+const SCHEDULE_HORIZONTAL_AXIS_HEIGHT_PX = 40;
+const SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX = 28;
+const SCHEDULE_HORIZONTAL_HISTORY_DAYS = 90;
+const SCHEDULE_HORIZONTAL_MIN_AVG_OCCURRENCES = 2;
+const SCHEDULE_HORIZONTAL_MIN_AVG_RATIO = 0.25;
 let _pendingShortcutCmd = null;
 
 // Estado
@@ -247,11 +255,17 @@ let scheduleViewMode = loadScheduleViewMode();
 let scheduleScoreMode = loadScheduleScoreMode();
 let scheduleCoinSpenderState = null;
 let scheduleTimelineDateKey = todayKey();
+let scheduleTimelineHiddenHabitIds = loadScheduleTimelineHiddenHabitIds();
+let scheduleTimelineAverageDow = "";
+let scheduleTimelineAverageDowTouched = false;
+let scheduleTimelineShowAverage = false;
 let activeScheduleSessionId = null;
 let habitDetailScheduleSelection = { types: ["Libre"], dows: [] };
 const habitDetailRecordsPageSize = 10;
 let hasRenderedTodayOnce = false;
 let habitTodayCustomGroupsOpen = {};
+const scheduleTimelineAverageCache = new Map();
+let scheduleTimelinePointEvents = loadScheduleTimelinePointEvents();
 
 const DEBUG_HABITS_SYNC = (() => {
   try {
@@ -274,6 +288,14 @@ const DEBUG_COMPARE = (() => {
     return !!(window.__bookshellDebugCompare || localStorage.getItem("bookshell.debug.compare") === "1");
   } catch (_) {
     return !!window.__bookshellDebugCompare;
+  }
+})();
+
+const DEBUG_SCHEDULE_TIMELINE = (() => {
+  try {
+    return !!(isDevEnv() && (window.__bookshellDebugTimeline || localStorage.getItem("bookshell.debug.timeline") === "1"));
+  } catch (_) {
+    return !!(isDevEnv() && window.__bookshellDebugTimeline);
   }
 })();
 
@@ -308,6 +330,7 @@ function debugReport(...args) {
 function markHistoryDataChanged(reason = "unknown", details = null) {
   habitHistoryDataVersion += 1;
   habitHistoryUpdatedAt = Date.now();
+  scheduleTimelineAverageCache.clear();
   invalidateCompareCache();
   scheduleCompareRefresh(reason, details);
   debugCompare("history version bump", {
@@ -402,6 +425,11 @@ function debugWorkShift(...args) {
   if (!DEBUG_WORK_SHIFT) return;
   console.log(...args);
 }
+
+function debugScheduleTimeline(...args) {
+  if (!DEBUG_SCHEDULE_TIMELINE) return;
+  console.log("[habits:timeline]", ...args);
+}
 function loadScheduleViewMode() {
   try {
     const saved = (localStorage.getItem(HABITS_SCHEDULE_VIEW_MODE_STORAGE) || "percent").trim();
@@ -418,6 +446,121 @@ function loadScheduleScoreMode() {
   } catch (_) {
     return "plan";
   }
+}
+
+function loadScheduleTimelineHiddenHabitIds() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SCHEDULE_TIMELINE_HIDDEN_STORAGE) || "[]");
+    return Array.isArray(raw)
+      ? Array.from(new Set(raw.map((value) => String(value || "").trim()).filter(Boolean)))
+      : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function persistScheduleTimelineHiddenHabitIds() {
+  try {
+    localStorage.setItem(SCHEDULE_TIMELINE_HIDDEN_STORAGE, JSON.stringify(scheduleTimelineHiddenHabitIds));
+  } catch (_) {
+    // noop
+  }
+}
+
+function normalizeScheduleTimelineDow(value) {
+  const safe = String(value || "").trim().toLowerCase();
+  return ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(safe) ? safe : "mon";
+}
+
+function loadScheduleTimelineAverageDow() {
+  return "";
+}
+
+function persistScheduleTimelineAverageDow() {
+  scheduleTimelineAverageDowTouched = true;
+}
+
+function normalizeScheduleTimelinePointEvent(raw = null) {
+  if (!raw || typeof raw !== "object") return null;
+  const habitId = String(raw.habitId || "").trim();
+  const dateKey = String(raw.dateKey || "").trim();
+  const ts = Number(raw.ts);
+  const kind = raw.kind === "check" ? "check" : "count";
+  const quantity = Number(raw.quantity);
+  if (!habitId || !dateKey || !Number.isFinite(ts) || ts <= 0) return null;
+  return {
+    habitId,
+    dateKey,
+    ts: Math.round(ts),
+    kind,
+    quantity: Number.isFinite(quantity) ? Math.round(quantity) : (kind === "check" ? 1 : 0)
+  };
+}
+
+function loadScheduleTimelinePointEvents() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SCHEDULE_TIMELINE_POINT_EVENTS_STORAGE) || "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.map((entry) => normalizeScheduleTimelinePointEvent(entry)).filter(Boolean);
+  } catch (_) {
+    return [];
+  }
+}
+
+function persistScheduleTimelinePointEvents() {
+  try {
+    localStorage.setItem(SCHEDULE_TIMELINE_POINT_EVENTS_STORAGE, JSON.stringify(scheduleTimelinePointEvents));
+  } catch (_) {
+    // noop
+  }
+}
+
+function pruneScheduleTimelinePointEvents(limitDays = 120) {
+  const earliest = addDays(new Date(), -Math.max(1, Math.round(Number(limitDays) || 120)));
+  const earliestTs = new Date(earliest.getFullYear(), earliest.getMonth(), earliest.getDate(), 0, 0, 0, 0).getTime();
+  scheduleTimelinePointEvents = scheduleTimelinePointEvents
+    .filter((entry) => Number(entry?.ts) >= earliestTs)
+    .slice(-600);
+}
+
+function recordScheduleTimelinePointEvent({ habitId, dateKey, kind = "count", quantity = 1, ts = Date.now() } = {}) {
+  const normalized = normalizeScheduleTimelinePointEvent({ habitId, dateKey, kind, quantity, ts });
+  if (!normalized) return;
+  if (normalized.dateKey !== todayKey()) return;
+  scheduleTimelinePointEvents = [...scheduleTimelinePointEvents, normalized];
+  pruneScheduleTimelinePointEvents();
+  persistScheduleTimelinePointEvents();
+}
+
+function buildScheduleTimelinePointSegments(dateKey = todayKey()) {
+  return scheduleTimelinePointEvents
+    .filter((event) => event.dateKey === dateKey && isScheduleTimelineHabitVisible(event.habitId))
+    .map((event, index) => {
+      const habit = habits?.[event.habitId] || null;
+      if (!habit || habit.archived) return null;
+      const date = new Date(event.ts);
+      const startMin = (date.getHours() * 60) + date.getMinutes() + (date.getSeconds() / 60);
+      const quantity = event.kind === "count" ? Math.max(1, Number(event.quantity) || 1) : 1;
+      return {
+        key: `point-${dateKey}-${event.habitId}-${event.ts}-${index}`,
+        habitId: event.habitId,
+        habit,
+        title: habit?.name || "Hábito",
+        color: resolveHabitColor(habit) || DEFAULT_COLOR,
+        startMin,
+        endMin: startMin + (1 / 60),
+        renderWidthMin: 0,
+        durationMin: 0,
+        detailTimeLabel: formatHHMM(startMin),
+        detailSource: event.kind === "check" ? "Check" : "Conteo",
+        detailMeta: event.kind === "count" ? `Cantidad: ${quantity}` : "",
+        sourceKind: "point",
+        isPoint: true,
+        quantity
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.startMin - b.startMin || a.title.localeCompare(b.title));
 }
 
 function persistScheduleScoreMode() {
@@ -1565,13 +1708,7 @@ function maybeAutoCloseScheduleDay() {
 }
 
 function updateScheduleLiveInterval() {
-  const shouldRun = !!runningSession && activeTab === "schedule";
-  if (shouldRun && !scheduleTickInterval) {
-    scheduleTickInterval = window.setInterval(() => {
-      renderSchedule("tick:session");
-    }, 15000);
-  }
-  if (!shouldRun && scheduleTickInterval) {
+  if (scheduleTickInterval) {
     window.clearInterval(scheduleTickInterval);
     scheduleTickInterval = null;
   }
@@ -1797,6 +1934,8 @@ function renderSchedule(reason = "manual") {
   const data = buildScheduleDayData(currentDateKey);
   if (!scheduleTimelineDateKey) scheduleTimelineDateKey = currentDateKey;
   const dayTimelineHtml = renderScheduleDayTimelineHtml(scheduleTimelineDateKey);
+  const dayTimelineHorizontalHtml = renderScheduleTimelineOverviewHtmlV2(scheduleTimelineDateKey);
+  const weeklyAverageTimelineHtml = renderScheduleTimelineWeeklyAverageHtmlV2(scheduleTimelineDateKey);
   const stats = data.headerStats || computeScheduleHeaderStats(currentDateKey, scheduleTemplateForDate(currentDateKey).template || {}, {}, {}, {});
   scheduleCoinSpenderState = null;
   const threshold = scheduleState?.settings?.successThreshold || 70;
@@ -1875,6 +2014,10 @@ function renderSchedule(reason = "manual") {
       </div>
       ${dayTimelineHtml}
     </section>
+
+    ${dayTimelineHorizontalHtml}
+
+    ${weeklyAverageTimelineHtml}
 
     <section class="habits-history-section habit-schedule-controls">
 
@@ -2097,6 +2240,7 @@ function renderSchedule(reason = "manual") {
     item.addEventListener("click", activate);
   });
   syncActiveScheduleSessionVisualState();
+  bindScheduleHorizontalTimelineEvents($habitScheduleView);
   $habitScheduleView.querySelector('[data-role="schedule-close-day"]')?.addEventListener("click", () => {
     closeScheduleDay(currentDateKey, "manual");
   });
@@ -5140,13 +5284,17 @@ function toggleDay(habitId, dateKey) {
   const habit = habits[habitId];
   if (!habit || habit.archived) return;
   if (!habitChecks[habitId]) habitChecks[habitId] = {};
-  if (habitChecks[habitId][dateKey]) {
+  const wasChecked = !!habitChecks[habitId][dateKey];
+  if (wasChecked) {
     delete habitChecks[habitId][dateKey];
   } else {
     habitChecks[habitId][dateKey] = true;
   }
   saveCache();
   persistHabitCheck(habitId, dateKey, !!habitChecks[habitId][dateKey]);
+  if (!wasChecked && habitChecks[habitId][dateKey]) {
+    recordScheduleTimelinePointEvent({ habitId, dateKey, kind: "check", quantity: 1 });
+  }
   invalidateDominantCache(dateKey);
   renderHabitsPreservingTodayUI();
 }
@@ -5196,6 +5344,9 @@ function setHabitCount(habitId, dateKey, value) {
   }
 
   persistHabitCount(habitId, dateKey, safe > 0 ? safe : null);
+  if (safe > prev) {
+    recordScheduleTimelinePointEvent({ habitId, dateKey, kind: "count", quantity: safe - prev });
+  }
   invalidateDominantCache(dateKey);
   if (dateKey === todayKey()) {
     updateQuickCounterTileState(habitId, safe);
@@ -8807,6 +8958,7 @@ function buildPlannedWorkTimelineSessions(dateKey = todayKey()) {
 function buildScheduleTimelineRows(dateKey = todayKey()) {
   const plannedRanges = buildPlannedWorkRangesForDate(dateKey);
   const plannedSessions = buildPlannedWorkTimelineSessions(dateKey);
+  const activeSessionsRows = buildActiveScheduleTimelineSessions(dateKey);
   const rows = [];
 
   activeHabits().forEach((habit) => {
@@ -8824,8 +8976,840 @@ function buildScheduleTimelineRows(dateKey = todayKey()) {
     });
   });
 
+  activeSessionsRows.forEach((session) => rows.push(session));
   plannedSessions.forEach((session) => rows.push(session));
   return rows;
+}
+
+function resolveScheduleTimelineHabitId(item = null) {
+  if (!item || typeof item !== "object") return "";
+  return String(item.habitId || item.habit?.id || "").trim();
+}
+
+function isScheduleTimelineHabitVisible(habitId = "") {
+  const safeId = String(habitId || "").trim();
+  if (!safeId) return true;
+  return !scheduleTimelineHiddenHabitIds.includes(safeId);
+}
+
+function buildActiveScheduleTimelineSessions(dateKey = todayKey()) {
+  const day = parseDateKey(dateKey);
+  if (!day) return [];
+  const dayStartTs = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0).getTime();
+  const dayEndTs = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1, 0, 0, 0, 0).getTime();
+  return getActiveSessionsList().map((session) => {
+    const habitId = String(session?.habitId || session?.targetHabitId || "").trim();
+    const habit = habits?.[habitId];
+    if (!habit || habit.archived) return null;
+    const bounds = getRunningEffectiveBounds(session, Date.now());
+    if (!bounds) return null;
+    const startTs = Math.max(dayStartTs, bounds.effectiveStartedAt);
+    const endTs = Math.min(dayEndTs, bounds.effectiveEndedAt);
+    if (!(endTs > startTs)) return null;
+    const isPaused = session?.status === "paused" || session?.isPaused;
+    return {
+      id: `live-${session.sessionId}-${dateKey}`,
+      sessionId: String(session.sessionId || "").trim(),
+      habitId,
+      habit,
+      habitNameSnapshot: String(habit?.name || session?.meta?.habitName || "Hábito").trim(),
+      timelineLabel: `${habit?.name || "Hábito"} · ${isPaused ? "en pausa" : "en curso"}`,
+      source: "live",
+      dateKey,
+      startTs,
+      endTs,
+      startedAt: startTs,
+      endedAt: endTs,
+      realStartedAt: bounds.realStartedAt,
+      realEndedAt: bounds.realEndedAt,
+      effectiveStartedAt: startTs,
+      effectiveEndedAt: endTs,
+      durationMs: Math.max(1000, endTs - startTs),
+      durationSec: Math.max(1, Math.round((endTs - startTs) / 1000)),
+      isLive: true,
+      isPaused
+    };
+  }).filter(Boolean);
+}
+
+function buildScheduleTimelineRealtimeSegments(dateKey = todayKey()) {
+  return buildScheduleTimelineRows(dateKey)
+    .map((row, index) => {
+      const bounds = parseSessionBounds(row);
+      if (!bounds) return null;
+      const habitId = resolveScheduleTimelineHabitId(row);
+      if (!isScheduleTimelineHabitVisible(habitId)) return null;
+      const habit = row.habit || habits?.[habitId] || null;
+      const startDate = new Date(bounds.startTs);
+      const endDate = new Date(bounds.endTs);
+      const startMin = (startDate.getHours() * 60) + startDate.getMinutes() + (startDate.getSeconds() / 60);
+      const endMin = (endDate.getHours() * 60) + endDate.getMinutes() + (endDate.getSeconds() / 60);
+      const title = row.timelineLabel || row.habitNameSnapshot || habit?.name || "Hábito";
+      const durationMin = Math.max(1, Math.round((bounds.endTs - bounds.startTs) / 60000));
+      return {
+        key: `real-${dateKey}-${String(row.sessionId || row.id || index)}`,
+        habitId,
+        habit,
+        title,
+        color: resolveHabitColor(habit) || DEFAULT_COLOR,
+        startTs: bounds.startTs,
+        endTs: bounds.endTs,
+        startMin,
+        endMin: Math.max(startMin + (1 / 60), endMin),
+        renderWidthMin: Math.max(1 / 60, Math.max(startMin + (1 / 60), endMin) - startMin),
+        durationMin,
+        detailTimeLabel: `${formatHHMM(startMin)}-${formatHHMM(Math.max(startMin + 1, endMin))}`,
+        detailSource: row.isPlanned ? "Planificado" : (row.isLive ? (row.isPaused ? "En pausa" : "En curso") : "Real"),
+        detailMeta: "",
+        sourceKind: row.isPlanned ? "planned" : (row.isLive ? "live" : "real"),
+        isLive: !!row.isLive,
+        isPaused: !!row.isPaused,
+        isPlanned: !!row.isPlanned,
+        isRegistered: !!row.isRegistered
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin || a.title.localeCompare(b.title));
+}
+
+function getScheduleTimelineHistoryWindow(anchorDateKey = todayKey(), historyDays = SCHEDULE_HORIZONTAL_HISTORY_DAYS) {
+  const requested = parseDateKey(anchorDateKey) || new Date();
+  const today = new Date();
+  const cappedEnd = requested.getTime() > today.getTime() ? today : requested;
+  const end = new Date(cappedEnd.getFullYear(), cappedEnd.getMonth(), cappedEnd.getDate(), 0, 0, 0, 0);
+  const safeDays = Math.max(1, Math.round(Number(historyDays) || SCHEDULE_HORIZONTAL_HISTORY_DAYS));
+  const start = addDays(end, -(safeDays - 1));
+  return { start, end, safeDays };
+}
+
+function buildScheduleTimelineAverageByDow(anchorDateKey = todayKey(), historyDays = SCHEDULE_HORIZONTAL_HISTORY_DAYS) {
+  const { start, end, safeDays } = getScheduleTimelineHistoryWindow(anchorDateKey, historyDays);
+  const cacheKey = `${dateKeyLocal(end)}::${safeDays}::v${habitHistoryDataVersion}`;
+  if (scheduleTimelineAverageCache.has(cacheKey)) return scheduleTimelineAverageCache.get(cacheKey);
+
+  const dateKeys = [];
+  const availableDaysByDow = { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 };
+  for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
+    const key = dateKeyLocal(cursor);
+    const dow = dowFromDateKey(key);
+    if (dow) availableDaysByDow[dow] += 1;
+    dateKeys.push(key);
+  }
+
+  const buckets = {};
+  activeHabits().forEach((habit) => {
+    dateKeys.forEach((dayKey) => {
+      const timedSessions = (getSessionsForHabitDate(habit.id, dayKey) || []).filter((session) => parseSessionBounds(session));
+      if (!timedSessions.length) return;
+      let firstStartMin = Number.POSITIVE_INFINITY;
+      let lastEndMin = 0;
+      let totalDurationMin = 0;
+      timedSessions.forEach((session) => {
+        const bounds = parseSessionBounds(session);
+        if (!bounds) return;
+        const startDate = new Date(bounds.startTs);
+        const endDate = new Date(bounds.endTs);
+        const startMin = (startDate.getHours() * 60) + startDate.getMinutes() + (startDate.getSeconds() / 60);
+        const endMin = (endDate.getHours() * 60) + endDate.getMinutes() + (endDate.getSeconds() / 60);
+        firstStartMin = Math.min(firstStartMin, startMin);
+        lastEndMin = Math.max(lastEndMin, Math.max(startMin + (1 / 60), endMin));
+        totalDurationMin += Math.max(1, Math.round((bounds.endTs - bounds.startTs) / 60000));
+      });
+      if (!Number.isFinite(firstStartMin) || !(lastEndMin > firstStartMin)) return;
+      const dow = dowFromDateKey(dayKey);
+      if (!dow) return;
+      if (!buckets[dow]) buckets[dow] = {};
+      if (!buckets[dow][habit.id]) {
+        buckets[dow][habit.id] = {
+          habit,
+          habitId: habit.id,
+          appearances: 0,
+          startTotal: 0,
+          endTotal: 0,
+          durationTotal: 0
+        };
+      }
+      const bucket = buckets[dow][habit.id];
+      bucket.appearances += 1;
+      bucket.startTotal += firstStartMin;
+      bucket.endTotal += lastEndMin;
+      bucket.durationTotal += totalDurationMin;
+    });
+  });
+
+  const result = {};
+  Object.keys(availableDaysByDow).forEach((dow) => {
+    const availableDays = availableDaysByDow[dow] || 0;
+    const segments = Object.values(buckets[dow] || {})
+      .map((bucket) => {
+        const frequencyRatio = availableDays > 0 ? (bucket.appearances / availableDays) : 0;
+        if (bucket.appearances < SCHEDULE_HORIZONTAL_MIN_AVG_OCCURRENCES || frequencyRatio < SCHEDULE_HORIZONTAL_MIN_AVG_RATIO) return null;
+        const avgStartMin = Math.max(0, Math.min(1439, Math.round(bucket.startTotal / bucket.appearances)));
+        const avgDurationMin = Math.max(1, Math.round(bucket.durationTotal / bucket.appearances));
+        const avgEndMin = Math.round(bucket.endTotal / bucket.appearances);
+        const normalizedEndMin = Math.max(avgStartMin + 1, Math.min(1440, Math.max(avgEndMin, avgStartMin + avgDurationMin)));
+        return {
+          key: `avg-${dow}-${bucket.habitId}`,
+          habitId: bucket.habitId,
+          habit: bucket.habit,
+          title: bucket.habit?.name || "Hábito",
+          color: resolveHabitColor(bucket.habit) || DEFAULT_COLOR,
+          startMin: avgStartMin,
+          endMin: normalizedEndMin,
+          durationMin: avgDurationMin,
+          sourceKind: "average",
+          occurrences: bucket.appearances,
+          availableDays,
+          frequencyRatio
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin || a.title.localeCompare(b.title));
+    result[dow] = { dow, availableDays, segments };
+  });
+
+  scheduleTimelineAverageCache.set(cacheKey, result);
+  return result;
+}
+
+function layoutScheduleTimelineSegments(segments = []) {
+  const ordered = segments.slice().sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin || a.title.localeCompare(b.title));
+  const laneEnds = [];
+  ordered.forEach((segment) => {
+    let lane = 0;
+    while (lane < laneEnds.length && laneEnds[lane] > segment.startMin) lane += 1;
+    laneEnds[lane] = segment.endMin;
+    segment.lane = lane;
+  });
+  return {
+    laneCount: ordered.length ? Math.max(1, laneEnds.length) : 0,
+    segments: ordered
+  };
+}
+
+function formatScheduleTimelineAverageFrequency(occurrences = 0, availableDays = 0, dow = "mon") {
+  const dayLabel = String(WORK_SCHEDULE_DOW_FULL_LABELS[dow] || dow || "día").toLowerCase();
+  return `Aparece en ${occurrences} de los últimos ${availableDays} ${dayLabel}${availableDays === 1 ? "" : "s"}`;
+}
+
+function shouldWrapScheduleTimelineAverageStarts(samples = []) {
+  if (!Array.isArray(samples) || !samples.length) return false;
+  const startValues = samples
+    .map((sample) => Number(sample?.startMin))
+    .filter((value) => Number.isFinite(value) && value >= 0 && value <= 1439.999);
+  if (startValues.length < 2) return false;
+  const minStart = Math.min(...startValues);
+  const maxStart = Math.max(...startValues);
+  const hasLateNight = startValues.some((value) => value >= 1080);
+  const hasEarlyMorning = startValues.some((value) => value <= 360);
+  return (maxStart - minStart) >= 720 && hasLateNight && hasEarlyMorning;
+}
+
+function pickScheduleTimelinePrimaryDailySample(samples = []) {
+  if (!Array.isArray(samples) || !samples.length) return null;
+  const ordered = samples.slice().sort((a, b) => {
+    const durationDiff = (Number(b?.durationMin) || 0) - (Number(a?.durationMin) || 0);
+    if (durationDiff !== 0) return durationDiff;
+    if (!!b?.crossesMidnight !== !!a?.crossesMidnight) return b?.crossesMidnight ? 1 : -1;
+    const startDiff = (Number(a?.startMin) || 0) - (Number(b?.startMin) || 0);
+    if (startDiff !== 0) return startDiff;
+    return (Number(a?.endMinExtended) || 0) - (Number(b?.endMinExtended) || 0);
+  });
+  return ordered[0] || null;
+}
+
+function buildScheduleTimelineAverageByDowV2(anchorDateKey = todayKey(), historyDays = SCHEDULE_HORIZONTAL_HISTORY_DAYS) {
+  const { start, end, safeDays } = getScheduleTimelineHistoryWindow(anchorDateKey, historyDays);
+  const cacheKey = `v2::${dateKeyLocal(end)}::${safeDays}::v${habitHistoryDataVersion}`;
+  if (scheduleTimelineAverageCache.has(cacheKey)) return scheduleTimelineAverageCache.get(cacheKey);
+
+  const availableDaysByDow = { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 };
+  for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
+    const key = dateKeyLocal(cursor);
+    const dow = dowFromDateKey(key);
+    if (dow) availableDaysByDow[dow] += 1;
+  }
+
+  const groupedSamples = {};
+  activeHabits().forEach((habit) => {
+    const detailedSessions = Array.isArray(habitSessionTimeline?.[habit.id]) ? habitSessionTimeline[habit.id] : [];
+    detailedSessions.forEach((session) => {
+      const bounds = parseSessionBounds(session);
+      const sessionId = String(session?.sessionId || session?.id || "").trim();
+      const rawStart = session?.effectiveStartedAt ?? session?.startTs ?? session?.startedAt ?? null;
+      const rawEnd = session?.effectiveEndedAt ?? session?.endTs ?? session?.endedAt ?? null;
+      if (session?.active || session?.isRunning || session?.isLive || session?.source === "live") {
+        debugScheduleTimeline("average:discard", { habitId: habit.id, habitName: habit.name || "", sessionId, reason: "active-session", rawStart, rawEnd });
+        return;
+      }
+      if (!bounds) {
+        debugScheduleTimeline("average:discard", { habitId: habit.id, habitName: habit.name || "", sessionId, reason: "invalid-bounds", rawStart, rawEnd });
+        return;
+      }
+      const startDate = new Date(bounds.startTs);
+      const endDate = new Date(bounds.endTs);
+      if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        debugScheduleTimeline("average:discard", { habitId: habit.id, habitName: habit.name || "", sessionId, reason: "invalid-date", rawStart, rawEnd, parsedStart: bounds.startTs, parsedEnd: bounds.endTs });
+        return;
+      }
+      const durationMin = Math.max(1, Math.round((bounds.endTs - bounds.startTs) / 60000));
+      const startDayKey = dateKeyLocal(startDate);
+      const startDay = parseDateKey(startDayKey);
+      if (!startDay || startDay < start || startDay > end) {
+        debugScheduleTimeline("average:discard", { habitId: habit.id, habitName: habit.name || "", sessionId, reason: "outside-window", rawStart, rawEnd, parsedStart: bounds.startTs, parsedEnd: bounds.endTs, startDayKey });
+        return;
+      }
+      if (durationMin > (20 * 60)) {
+        debugScheduleTimeline("average:discard", { habitId: habit.id, habitName: habit.name || "", sessionId, reason: "duration-too-large", rawStart, rawEnd, parsedStart: bounds.startTs, parsedEnd: bounds.endTs, durationMin, startDayKey });
+        return;
+      }
+      const endDayKey = dateKeyLocal(endDate);
+      const startMidnightTs = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0).getTime();
+      const endMidnightTs = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 0, 0, 0, 0).getTime();
+      const dayDelta = Math.max(0, Math.round((endMidnightTs - startMidnightTs) / 86400000));
+      if (dayDelta > 1) {
+        debugScheduleTimeline("average:discard", { habitId: habit.id, habitName: habit.name || "", sessionId, reason: "spans-multiple-days", rawStart, rawEnd, parsedStart: bounds.startTs, parsedEnd: bounds.endTs, durationMin, startDayKey, endDayKey });
+        return;
+      }
+      const dow = dowFromDateKey(startDayKey);
+      if (!dow) {
+        debugScheduleTimeline("average:discard", { habitId: habit.id, habitName: habit.name || "", sessionId, reason: "missing-weekday", rawStart, rawEnd, parsedStart: bounds.startTs, parsedEnd: bounds.endTs, startDayKey });
+        return;
+      }
+      const startMin = (startDate.getHours() * 60) + startDate.getMinutes() + (startDate.getSeconds() / 60);
+      const endMinLocal = (endDate.getHours() * 60) + endDate.getMinutes() + (endDate.getSeconds() / 60);
+      const endMinExtended = endMinLocal + (dayDelta * 1440);
+      if (!(endMinExtended > startMin)) {
+        debugScheduleTimeline("average:discard", { habitId: habit.id, habitName: habit.name || "", sessionId, reason: "end-before-start-local", rawStart, rawEnd, parsedStart: bounds.startTs, parsedEnd: bounds.endTs, startMin, endMinLocal, endMinExtended, durationMin, weekday: dow });
+        return;
+      }
+      const groupKey = `${dow}::${habit.id}::${startDayKey}`;
+      if (!groupedSamples[groupKey]) {
+        groupedSamples[groupKey] = [];
+      }
+      groupedSamples[groupKey].push({
+        habit,
+        habitId: habit.id,
+        dow,
+        dateKey: startDayKey,
+        sessionId,
+        rawStart,
+        rawEnd,
+        startMin,
+        endMinExtended,
+        durationMin,
+        crossesMidnight: dayDelta > 0
+      });
+      debugScheduleTimeline("average:sample", {
+        habitId: habit.id,
+        habitName: habit.name || "",
+        sessionId,
+        rawStart,
+        rawEnd,
+        parsedStart: startDate.toString(),
+        parsedEnd: endDate.toString(),
+        durationMin,
+        weekday: dow,
+        startDayKey,
+        endDayKey,
+        crossesMidnight: dayDelta > 0
+      });
+    });
+  });
+
+  const representativeSamples = [];
+  Object.values(groupedSamples).forEach((samples) => {
+    const primary = pickScheduleTimelinePrimaryDailySample(samples);
+    if (!primary) return;
+    representativeSamples.push(primary);
+    samples.forEach((sample) => {
+      if (sample === primary) return;
+      debugScheduleTimeline("average:discard", {
+        habitId: sample.habitId,
+        habitName: sample.habit?.name || "",
+        sessionId: sample.sessionId,
+        reason: "secondary-session-same-day",
+        rawStart: sample.rawStart,
+        rawEnd: sample.rawEnd,
+        parsedStart: formatHHMM(sample.startMin),
+        parsedEnd: formatHHMM(sample.endMinExtended % 1440),
+        durationMin: sample.durationMin,
+        weekday: sample.dow,
+        dateKey: sample.dateKey,
+        keptSessionId: primary.sessionId
+      });
+    });
+  });
+
+  const buckets = {};
+  representativeSamples.forEach((sample) => {
+    const dow = sample.dow;
+    if (!buckets[dow]) buckets[dow] = {};
+    if (!buckets[dow][sample.habitId]) {
+      buckets[dow][sample.habitId] = {
+        habit: sample.habit,
+        habitId: sample.habitId,
+        samples: []
+      };
+    }
+    buckets[dow][sample.habitId].samples.push(sample);
+  });
+
+  const result = {};
+  Object.keys(availableDaysByDow).forEach((dow) => {
+    const availableDays = availableDaysByDow[dow] || 0;
+    const segments = Object.values(buckets[dow] || {})
+      .map((bucket) => {
+        const samples = Array.isArray(bucket.samples) ? bucket.samples : [];
+        const appearances = samples.length;
+        const frequencyRatio = availableDays > 0 ? (appearances / availableDays) : 0;
+        if (appearances < SCHEDULE_HORIZONTAL_MIN_AVG_OCCURRENCES || frequencyRatio < SCHEDULE_HORIZONTAL_MIN_AVG_RATIO) return null;
+        const wrapStarts = shouldWrapScheduleTimelineAverageStarts(samples);
+        const normalizedSamples = samples.map((sample) => {
+          const shift = wrapStarts && sample.startMin < 720 ? 1440 : 0;
+          return {
+            ...sample,
+            normalizedStartMin: sample.startMin + shift,
+            normalizedEndMin: sample.endMinExtended + shift
+          };
+        });
+        let avgStartRaw = normalizedSamples.reduce((acc, sample) => acc + sample.normalizedStartMin, 0) / appearances;
+        let avgEndRaw = normalizedSamples.reduce((acc, sample) => acc + sample.normalizedEndMin, 0) / appearances;
+        while (avgStartRaw >= 1440 && avgEndRaw >= 1440) {
+          avgStartRaw -= 1440;
+          avgEndRaw -= 1440;
+        }
+        const avgStartMin = Math.max(0, Math.min(1439, Math.round(avgStartRaw)));
+        const avgDurationMin = Math.max(1, Math.round(samples.reduce((acc, sample) => acc + sample.durationMin, 0) / appearances));
+        const avgEndExtendedMin = Math.max(avgStartRaw + 1, Math.round(avgEndRaw));
+        const renderEndMin = Math.max(avgStartMin + (1 / 60), Math.min(1440, avgEndExtendedMin));
+        const crossesMidnight = avgEndExtendedMin > 1440 || samples.some((sample) => sample.crossesMidnight);
+        return {
+          key: `avg-${dow}-${bucket.habitId}`,
+          habitId: bucket.habitId,
+          habit: bucket.habit,
+          title: bucket.habit?.name || "Hábito",
+          color: resolveHabitColor(bucket.habit) || DEFAULT_COLOR,
+          startMin: avgStartMin,
+          endMin: renderEndMin,
+          endMinExtended: avgEndExtendedMin,
+          renderWidthMin: Math.max(1 / 60, renderEndMin - avgStartMin),
+          durationMin: avgDurationMin,
+          detailTimeLabel: `${formatHHMM(avgStartMin)}-${formatHHMM(avgEndExtendedMin % 1440)}${crossesMidnight ? " (+1)" : ""}`,
+          detailSource: "Habitual",
+          detailMeta: formatScheduleTimelineAverageFrequency(appearances, availableDays, dow),
+          sourceKind: "average",
+          occurrences: appearances,
+          availableDays,
+          frequencyRatio,
+          crossesMidnight
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin || a.title.localeCompare(b.title));
+    result[dow] = { dow, availableDays, segments };
+  });
+
+  scheduleTimelineAverageCache.set(cacheKey, result);
+  return result;
+}
+
+function applyScheduleTimelineLabelVisibility(segments = [], options = {}) {
+  const minWidthPx = Math.max(0, Number(options.minWidthPx) || 64);
+  const gapPx = Math.max(0, Number(options.gapPx) || 16);
+  const lastLabelEndByLane = new Map();
+  segments.forEach((segment) => {
+    const widthMin = Math.max(0, Number(segment.renderWidthMin ?? (segment.endMin - segment.startMin)) || 0);
+    const widthPx = (widthMin / 60) * SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX;
+    if (segment.isPoint || widthPx < minWidthPx || segment.sourceKind === "average") {
+      segment.showLabel = false;
+      return;
+    }
+    const lane = Number(segment.lane) || 0;
+    const leftPx = (segment.startMin / 60) * SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX;
+    const estimatedLabelWidth = Math.min(140, Math.max(56, String(segment.title || "").length * 6.5));
+    const lastEnd = lastLabelEndByLane.get(lane) || Number.NEGATIVE_INFINITY;
+    if (leftPx < lastEnd) {
+      segment.showLabel = false;
+      return;
+    }
+    segment.showLabel = true;
+    lastLabelEndByLane.set(lane, leftPx + estimatedLabelWidth + gapPx);
+  });
+  return segments;
+}
+
+function renderScheduleTimelineTicksHtml() {
+  return Array.from({ length: 25 }, (_, hour) => {
+    const leftPx = hour * SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX;
+    const label = hour < 24 && hour % 2 === 0
+      ? `<span class="habit-horizontalTimeline__tickLabel">${escapeHtml(formatHHMM(hour * 60))}</span>`
+      : "";
+    return `<div class="habit-horizontalTimeline__tick${hour % 6 === 0 ? " is-major" : ""}" style="left:${leftPx}px;">
+      <span class="habit-horizontalTimeline__tickLine" aria-hidden="true"></span>
+      ${label}
+    </div>`;
+  }).join("");
+}
+
+function buildScheduleTimelineFilterSummary() {
+  const visibleHabits = activeHabits().filter((habit) => !scheduleTimelineHiddenHabitIds.includes(habit.id));
+  const totalHabits = activeHabits().length;
+  if (!totalHabits) return "Sin hábitos";
+  if (visibleHabits.length === totalHabits) return `Hábitos visibles · ${totalHabits}/${totalHabits}`;
+  return `Hábitos visibles · ${visibleHabits.length}/${totalHabits}`;
+}
+
+function renderScheduleTimelineFilterHtml() {
+  const sortedHabits = activeHabits().slice().sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), "es"));
+  if (!sortedHabits.length) return "";
+  return `<details class="habit-horizontalTimeline__filter">
+    <summary>${escapeHtml(buildScheduleTimelineFilterSummary())}</summary>
+    <div class="habit-horizontalTimeline__filterMenu">
+      <button class="btn ghost btn-compact" type="button" data-role="schedule-timeline-show-all">Mostrar todos</button>
+      <div class="habit-horizontalTimeline__filterList">
+        ${sortedHabits.map((habit) => {
+          const checked = !scheduleTimelineHiddenHabitIds.includes(habit.id);
+          const color = escapeHtml(resolveHabitColor(habit) || DEFAULT_COLOR);
+          return `<label class="habit-horizontalTimeline__filterItem">
+            <input type="checkbox" data-role="schedule-timeline-habit-toggle" data-habit-id="${escapeHtml(habit.id)}" ${checked ? "checked" : ""}/>
+            <span class="habit-horizontalTimeline__filterSwatch" style="--slot-color:${color};"></span>
+            <span>${escapeHtml(`${habit.emoji || "•"} ${habit.name || "Hábito"}`)}</span>
+          </label>`;
+        }).join("")}
+      </div>
+    </div>
+  </details>`;
+}
+
+function renderScheduleTimelineDowTabs(selectedDow = "mon") {
+  return WORK_SCHEDULE_DOWS.map((dow) => {
+    const selected = normalizeScheduleTimelineDow(selectedDow) === dow;
+    return `<button class="habit-horizontalTimeline__dowBtn${selected ? " is-active" : ""}" type="button" data-role="schedule-timeline-average-dow" data-dow="${dow}" aria-pressed="${selected ? "true" : "false"}" title="${escapeHtml(WORK_SCHEDULE_DOW_FULL_LABELS[dow] || dow)}">${escapeHtml(WORK_SCHEDULE_DOW_LABELS[dow] || dow.slice(0, 1).toUpperCase())}</button>`;
+  }).join("");
+}
+
+function renderScheduleTimelineSegmentsHtml(segments = [], options = {}) {
+  const showLabels = options.showLabels !== false;
+  const sourceRowMultiplier = Math.max(1, Number(options.sourceRowMultiplier) || 1);
+  const sourceRowOffset = Math.max(0, Number(options.sourceRowOffset) || 0);
+  return segments.map((segment) => {
+    const leftPx = (segment.startMin / 60) * SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX;
+    const widthPx = Math.max(3, ((segment.endMin - segment.startMin) / 60) * SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX);
+    const rowIndex = (segment.lane * sourceRowMultiplier) + sourceRowOffset;
+    const topPx = rowIndex * SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX;
+    const label = showLabels
+      ? `<span class="habit-horizontalTimeline__segmentLabel">${escapeHtml(segment.title)}</span>`
+      : "";
+    const timeLabel = `${formatHHMM(segment.startMin)}-${formatHHMM(segment.endMin)}`;
+    const detailSource = segment.sourceKind === "average"
+      ? "Habitual"
+      : (segment.sourceKind === "planned" ? "Planificado" : (segment.sourceKind === "live" ? (segment.isPaused ? "En pausa" : "En curso") : "Real"));
+    const detailFrequency = segment.sourceKind === "average"
+      ? `${segment.occurrences}/${segment.availableDays} dÃ­as (${Math.round((segment.frequencyRatio || 0) * 100)}%)`
+      : "";
+    return `<button type="button" class="habit-horizontalTimeline__segment${segment.sourceKind === "average" ? " is-average" : ""}${segment.sourceKind === "planned" ? " is-planned" : ""}${segment.sourceKind === "live" ? " is-live" : ""}" style="--slot-color:${escapeHtml(segment.color || DEFAULT_COLOR)};left:${leftPx.toFixed(2)}px;top:${topPx}px;width:${widthPx.toFixed(2)}px;" data-role="schedule-horizontal-segment" data-detail-name="${escapeHtml(segment.title)}" data-detail-time="${escapeHtml(timeLabel)}" data-detail-duration="${escapeHtml(formatMinutes(segment.durationMin))}" data-detail-source="${escapeHtml(detailSource)}" data-detail-frequency="${escapeHtml(detailFrequency)}">
+      ${label}
+      <span class="habit-horizontalTimeline__segmentDot" aria-hidden="true"></span>
+      <span class="habit-horizontalTimeline__segmentLine" aria-hidden="true"></span>
+      <span class="habit-horizontalTimeline__segmentEnd" aria-hidden="true"></span>
+    </button>`;
+  }).join("");
+}
+
+function renderScheduleTimelineSegmentsHtmlV2(segments = [], options = {}) {
+  const showLabels = options.showLabels !== false;
+  const sourceRowMultiplier = Math.max(1, Number(options.sourceRowMultiplier) || 1);
+  const sourceRowOffset = Math.max(0, Number(options.sourceRowOffset) || 0);
+  return segments.map((segment) => {
+    const leftPx = (segment.startMin / 60) * SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX;
+    const widthPx = segment.isPoint
+      ? 14
+      : Math.max(3, ((Number(segment.renderWidthMin ?? (segment.endMin - segment.startMin)) || 0) / 60) * SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX);
+    const rowIndex = (segment.lane * sourceRowMultiplier) + sourceRowOffset;
+    const topPx = rowIndex * SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX;
+    const label = showLabels && segment.showLabel
+      ? `<span class="habit-horizontalTimeline__segmentLabel">${escapeHtml(segment.title)}</span>`
+      : "";
+    const detailTime = String(segment.detailTimeLabel || `${formatHHMM(segment.startMin)}-${formatHHMM(segment.endMin)}`);
+    const detailSource = String(segment.detailSource || (segment.isPoint ? "Punto" : "Real"));
+    const detailMeta = String(segment.detailMeta || "");
+    return `<button type="button" class="habit-horizontalTimeline__segment${segment.sourceKind === "average" ? " is-average" : ""}${segment.sourceKind === "planned" ? " is-planned" : ""}${segment.sourceKind === "live" ? " is-live" : ""}${segment.isPoint ? " is-point" : ""}" style="--slot-color:${escapeHtml(segment.color || DEFAULT_COLOR)};left:${leftPx.toFixed(2)}px;top:${topPx}px;width:${widthPx.toFixed(2)}px;" data-role="schedule-horizontal-segment" data-detail-name="${escapeHtml(segment.title)}" data-detail-time="${escapeHtml(detailTime)}" data-detail-duration="${escapeHtml(segment.isPoint ? "" : formatMinutes(segment.durationMin))}" data-detail-source="${escapeHtml(detailSource)}" data-detail-frequency="${escapeHtml(detailMeta)}">
+      ${label}
+      <span class="habit-horizontalTimeline__segmentDot" aria-hidden="true"></span>
+      ${segment.isPoint ? "" : '<span class="habit-horizontalTimeline__segmentLine" aria-hidden="true"></span><span class="habit-horizontalTimeline__segmentEnd" aria-hidden="true"></span>'}
+    </button>`;
+  }).join("");
+}
+
+function renderScheduleTimelinePanelHtml({
+  panelKey = "panel",
+  title = "Timeline",
+  subtitle = "",
+  controlsHtml = "",
+  legendHtml = "",
+  tickHtml = "",
+  segmentsHtml = "",
+  canvasHeight = SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX,
+  emptyMessage = "Sin datos para mostrar.",
+  hasSegments = false
+} = {}) {
+  const canvasWidth = SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX * 24;
+  return `<section class="habits-history-section habit-horizontalTimeline" data-role="schedule-horizontal-panel" data-panel-key="${escapeHtml(panelKey)}">
+    <div class="habit-horizontalTimeline__header">
+      <div>
+        <div class="habits-history-section-title">${escapeHtml(title)}</div>
+        ${subtitle ? `<div class="habit-horizontalTimeline__subtitle">${escapeHtml(subtitle)}</div>` : ""}
+      </div>
+      ${controlsHtml}
+    </div>
+    ${legendHtml ? `<div class="habit-horizontalTimeline__legend">${legendHtml}</div>` : ""}
+    <div class="habit-horizontalTimeline__scroller">
+      <div class="habit-horizontalTimeline__canvas" style="width:${canvasWidth}px;">
+        <div class="habit-horizontalTimeline__axis" style="height:${SCHEDULE_HORIZONTAL_AXIS_HEIGHT_PX}px;">
+          ${tickHtml}
+        </div>
+        <div class="habit-horizontalTimeline__lanesViewport">
+          <div class="habit-horizontalTimeline__lanes" style="height:${canvasHeight}px;">
+            ${hasSegments ? segmentsHtml : `<div class="habit-horizontalTimeline__empty">${escapeHtml(emptyMessage)}</div>`}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="habit-horizontalTimeline__detail" data-role="schedule-horizontal-detail">Toca una línea para ver nombre, tramo y duración.</div>
+  </section>`;
+}
+
+function renderScheduleTimelineOverviewHtml(dateKey = todayKey()) {
+  const referenceDow = normalizeScheduleTimelineDow(dowFromDateKey(dateKey) || "mon");
+  const averagesByDow = buildScheduleTimelineAverageByDow(dateKey);
+  const averageEntry = averagesByDow[referenceDow] || { availableDays: 0, segments: [] };
+  const averageSegments = averageEntry.segments.filter((segment) => isScheduleTimelineHabitVisible(segment.habitId));
+  const realSegments = buildScheduleTimelineRealtimeSegments(dateKey);
+  const realLayout = layoutScheduleTimelineSegments(realSegments);
+  const averageLayout = layoutScheduleTimelineSegments(averageSegments);
+  const hasAverage = averageLayout.laneCount > 0;
+  const rowMultiplier = hasAverage ? 2 : 1;
+  const rowCount = hasAverage
+    ? Math.max(1, Math.max(realLayout.laneCount, averageLayout.laneCount) * 2)
+    : Math.max(1, realLayout.laneCount);
+  const canvasHeight = Math.max(SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX * rowCount, SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX * 2);
+  const legendHtml = [
+    averageSegments.length ? '<span class="habit-horizontalTimeline__legendItem is-average"><i></i>Horario habitual</span>' : "",
+    realSegments.length ? '<span class="habit-horizontalTimeline__legendItem"><i></i>Sesiones del día</span>' : ""
+  ].filter(Boolean).join("");
+  const segmentsHtml = [
+    hasAverage ? renderScheduleTimelineSegmentsHtml(averageLayout.segments, { showLabels: false, sourceRowMultiplier: 2, sourceRowOffset: 0 }) : "",
+    renderScheduleTimelineSegmentsHtml(realLayout.segments, { showLabels: true, sourceRowMultiplier: rowMultiplier, sourceRowOffset: hasAverage ? 1 : 0 })
+  ].join("");
+  const subtitle = averageSegments.length
+    ? `${WORK_SCHEDULE_DOW_FULL_LABELS[referenceDow] || "Día"} · patrón de los últimos ${SCHEDULE_HORIZONTAL_HISTORY_DAYS} días`
+    : `${WORK_SCHEDULE_DOW_FULL_LABELS[referenceDow] || "Día"} · sin histórico suficiente aún`;
+  const emptyMessage = realSegments.length
+    ? "Sin tramos visibles con el filtro actual."
+    : (averageSegments.length ? "No hay sesiones reales en este día." : "Sin sesiones ni patrón habitual para este día.");
+  return renderScheduleTimelinePanelHtml({
+    panelKey: "day",
+    title: "Timeline del día",
+    subtitle,
+    controlsHtml: renderScheduleTimelineFilterHtml(),
+    legendHtml,
+    tickHtml: renderScheduleTimelineTicksHtml(),
+    segmentsHtml,
+    canvasHeight,
+    emptyMessage,
+    hasSegments: averageSegments.length > 0 || realSegments.length > 0
+  });
+}
+
+function renderScheduleTimelineWeeklyAverageHtml(dateKey = todayKey()) {
+  const fallbackDow = normalizeScheduleTimelineDow(dowFromDateKey(dateKey) || "mon");
+  if (!WORK_SCHEDULE_DOWS.includes(scheduleTimelineAverageDow)) {
+    scheduleTimelineAverageDow = fallbackDow;
+  }
+  const averagesByDow = buildScheduleTimelineAverageByDow(dateKey);
+  const averageEntry = averagesByDow[scheduleTimelineAverageDow] || { availableDays: 0, segments: [] };
+  const segments = averageEntry.segments.filter((segment) => isScheduleTimelineHabitVisible(segment.habitId));
+  const layout = layoutScheduleTimelineSegments(segments);
+  const canvasHeight = Math.max(SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX * Math.max(1, layout.laneCount), SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX * 2);
+  const subtitle = averageEntry.availableDays
+    ? `${averageEntry.availableDays} ${averageEntry.availableDays === 1 ? "día disponible" : "días disponibles"} en ventana de ${SCHEDULE_HORIZONTAL_HISTORY_DAYS} días`
+    : "Todavía no hay días suficientes en la ventana de cálculo";
+  return renderScheduleTimelinePanelHtml({
+    panelKey: "average",
+    title: `Promedio semanal · ${WORK_SCHEDULE_DOW_FULL_LABELS[scheduleTimelineAverageDow] || "Día"}`,
+    subtitle,
+    controlsHtml: `<div class="habit-horizontalTimeline__dowTabs">${renderScheduleTimelineDowTabs(scheduleTimelineAverageDow)}</div>`,
+    legendHtml: '<span class="habit-horizontalTimeline__legendItem is-average"><i></i>Horario habitual medio</span>',
+    tickHtml: renderScheduleTimelineTicksHtml(),
+    segmentsHtml: renderScheduleTimelineSegmentsHtml(layout.segments, { showLabels: true, sourceRowMultiplier: 1, sourceRowOffset: 0 }),
+    canvasHeight,
+    emptyMessage: "Sin histórico suficiente para construir un horario habitual.",
+    hasSegments: layout.segments.length > 0
+  });
+}
+
+function renderScheduleTimelineControlsHtml() {
+  const averageLabel = scheduleTimelineShowAverage ? "Ocultar horario habitual" : "Mostrar horario habitual";
+  return `<div class="habit-horizontalTimeline__controls">
+    ${renderScheduleTimelineFilterHtml()}
+    <button class="btn ghost btn-compact habit-horizontalTimeline__toggle" type="button" data-role="schedule-timeline-average-toggle" aria-pressed="${scheduleTimelineShowAverage ? "true" : "false"}">${escapeHtml(averageLabel)}</button>
+  </div>`;
+}
+
+function resolveScheduleTimelineAverageDowSelection(dateKey = todayKey()) {
+  const fallbackDow = normalizeScheduleTimelineDow(dowFromDateKey(todayKey()) || dowFromDateKey(dateKey) || "mon");
+  if (!scheduleTimelineAverageDowTouched || !WORK_SCHEDULE_DOWS.includes(scheduleTimelineAverageDow)) {
+    scheduleTimelineAverageDow = fallbackDow;
+  }
+  return scheduleTimelineAverageDow;
+}
+
+function renderScheduleTimelineOverviewHtmlV2(dateKey = todayKey()) {
+  const referenceDow = normalizeScheduleTimelineDow(dowFromDateKey(dateKey) || "mon");
+  const averagesByDow = buildScheduleTimelineAverageByDowV2(dateKey);
+  const averageEntry = averagesByDow[referenceDow] || { availableDays: 0, segments: [] };
+  const averageSegments = scheduleTimelineShowAverage
+    ? averageEntry.segments.filter((segment) => isScheduleTimelineHabitVisible(segment.habitId))
+    : [];
+  const realSegments = buildScheduleTimelineRealtimeSegments(dateKey);
+  const pointSegments = buildScheduleTimelinePointSegments(dateKey);
+  const realLayout = layoutScheduleTimelineSegments(realSegments);
+  const pointLayout = layoutScheduleTimelineSegments(pointSegments);
+  const averageLayout = layoutScheduleTimelineSegments(averageSegments);
+  applyScheduleTimelineLabelVisibility(realLayout.segments, { minWidthPx: 68, gapPx: 18 });
+  const hasAverage = scheduleTimelineShowAverage && averageLayout.laneCount > 0;
+  const pointOffset = hasAverage ? (Math.max(realLayout.laneCount, averageLayout.laneCount) * 2) : realLayout.laneCount;
+  const rowCount = Math.max(1, pointOffset + pointLayout.laneCount);
+  const canvasHeight = Math.max(SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX * rowCount, SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX * 2);
+  const legendHtml = [
+    hasAverage ? '<span class="habit-horizontalTimeline__legendItem is-average"><i></i>Horario habitual</span>' : "",
+    realSegments.length ? '<span class="habit-horizontalTimeline__legendItem"><i></i>Sesiones del día</span>' : "",
+    pointSegments.length ? '<span class="habit-horizontalTimeline__legendItem is-point"><i></i>Checks y conteos</span>' : ""
+  ].filter(Boolean).join("");
+  const segmentsHtml = [
+    hasAverage ? renderScheduleTimelineSegmentsHtmlV2(averageLayout.segments, { showLabels: false, sourceRowMultiplier: 2, sourceRowOffset: 0 }) : "",
+    renderScheduleTimelineSegmentsHtmlV2(realLayout.segments, { showLabels: true, sourceRowMultiplier: hasAverage ? 2 : 1, sourceRowOffset: hasAverage ? 1 : 0 }),
+    renderScheduleTimelineSegmentsHtmlV2(pointLayout.segments, { showLabels: false, sourceRowMultiplier: 1, sourceRowOffset: pointOffset })
+  ].join("");
+  const subtitle = scheduleTimelineShowAverage
+    ? (averageSegments.length
+      ? `${WORK_SCHEDULE_DOW_FULL_LABELS[referenceDow] || "Día"} · patrón de los últimos ${SCHEDULE_HORIZONTAL_HISTORY_DAYS} días`
+      : `${WORK_SCHEDULE_DOW_FULL_LABELS[referenceDow] || "Día"} · sin histórico suficiente aún`)
+    : `${WORK_SCHEDULE_DOW_FULL_LABELS[referenceDow] || "Día"} · horario habitual oculto`;
+  const emptyMessage = realSegments.length || pointSegments.length
+    ? "Sin tramos visibles con el filtro actual."
+    : "Sin sesiones ni puntos con hora precisa para este día.";
+  return renderScheduleTimelinePanelHtml({
+    panelKey: "day",
+    title: "Timeline del día",
+    subtitle,
+    controlsHtml: renderScheduleTimelineControlsHtml(),
+    legendHtml,
+    tickHtml: renderScheduleTimelineTicksHtml(),
+    segmentsHtml,
+    canvasHeight,
+    emptyMessage,
+    hasSegments: averageSegments.length > 0 || realSegments.length > 0 || pointSegments.length > 0
+  });
+}
+
+function renderScheduleTimelineWeeklyAverageHtmlV2(dateKey = todayKey()) {
+  const selectedDow = resolveScheduleTimelineAverageDowSelection(dateKey);
+  const averagesByDow = buildScheduleTimelineAverageByDowV2(dateKey);
+  const averageEntry = averagesByDow[selectedDow] || { availableDays: 0, segments: [] };
+  const segments = averageEntry.segments.filter((segment) => isScheduleTimelineHabitVisible(segment.habitId));
+  const layout = layoutScheduleTimelineSegments(segments);
+  applyScheduleTimelineLabelVisibility(layout.segments, { minWidthPx: 74, gapPx: 20 });
+  const canvasHeight = Math.max(SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX * Math.max(1, layout.laneCount), SCHEDULE_HORIZONTAL_ROW_HEIGHT_PX * 2);
+  const subtitle = averageEntry.availableDays
+    ? `${averageEntry.availableDays} ${averageEntry.availableDays === 1 ? "día disponible" : "días disponibles"} en ventana de ${SCHEDULE_HORIZONTAL_HISTORY_DAYS} días`
+    : "Todavía no hay días suficientes en la ventana de cálculo";
+  return renderScheduleTimelinePanelHtml({
+    panelKey: "average",
+    title: `Promedio semanal · ${WORK_SCHEDULE_DOW_FULL_LABELS[selectedDow] || "Día"}`,
+    subtitle,
+    controlsHtml: `<div class="habit-horizontalTimeline__dowTabs">${renderScheduleTimelineDowTabs(selectedDow)}</div>`,
+    legendHtml: '<span class="habit-horizontalTimeline__legendItem is-average"><i></i>Horario habitual medio</span>',
+    tickHtml: renderScheduleTimelineTicksHtml(),
+    segmentsHtml: renderScheduleTimelineSegmentsHtmlV2(layout.segments, { showLabels: true, sourceRowMultiplier: 1, sourceRowOffset: 0 }),
+    canvasHeight,
+    emptyMessage: "Sin histórico suficiente para construir un horario habitual.",
+    hasSegments: layout.segments.length > 0
+  });
+}
+
+function activateScheduleHorizontalTimelineSegment(button) {
+  const panel = button?.closest?.('[data-role="schedule-horizontal-panel"]');
+  if (!panel) return;
+  panel.querySelectorAll('[data-role="schedule-horizontal-segment"]').forEach((item) => {
+    item.classList.toggle("is-active", item === button);
+  });
+  const detail = panel.querySelector('[data-role="schedule-horizontal-detail"]');
+  if (!detail) return;
+  const name = String(button.dataset.detailName || "Hábito").trim();
+  const time = String(button.dataset.detailTime || "").trim();
+  const duration = String(button.dataset.detailDuration || "").trim();
+  const source = String(button.dataset.detailSource || "").trim();
+  const frequency = String(button.dataset.detailFrequency || "").trim();
+  detail.innerHTML = `<strong>${escapeHtml(name)}</strong><span>${escapeHtml(source)} · ${escapeHtml(time)} · ${escapeHtml(duration)}</span>${frequency ? `<span>${escapeHtml(frequency)}</span>` : ""}`;
+}
+
+function activateScheduleHorizontalTimelineSegmentV2(button) {
+  const panel = button?.closest?.('[data-role="schedule-horizontal-panel"]');
+  if (!panel) return;
+  panel.querySelectorAll('[data-role="schedule-horizontal-segment"]').forEach((item) => {
+    item.classList.toggle("is-active", item === button);
+  });
+  const detail = panel.querySelector('[data-role="schedule-horizontal-detail"]');
+  if (!detail) return;
+  const name = String(button.dataset.detailName || "Hábito").trim();
+  const time = String(button.dataset.detailTime || "").trim();
+  const duration = String(button.dataset.detailDuration || "").trim();
+  const source = String(button.dataset.detailSource || "").trim();
+  const extra = String(button.dataset.detailFrequency || "").trim();
+  const summaryParts = [source, time, duration].filter(Boolean);
+  detail.innerHTML = `<strong>${escapeHtml(name)}</strong><span>${escapeHtml(summaryParts.join(" · "))}</span>${extra ? `<span>${escapeHtml(extra)}</span>` : ""}`;
+}
+
+function bindScheduleHorizontalTimelineEvents(root = $habitScheduleView) {
+  root?.querySelectorAll?.('[data-role="schedule-timeline-habit-toggle"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      const habitId = String(input.getAttribute("data-habit-id") || "").trim();
+      if (!habitId) return;
+      const next = new Set(scheduleTimelineHiddenHabitIds);
+      if (input.checked) next.delete(habitId);
+      else next.add(habitId);
+      scheduleTimelineHiddenHabitIds = Array.from(next);
+      persistScheduleTimelineHiddenHabitIds();
+      renderSchedule("manual");
+    });
+  });
+  root?.querySelector?.('[data-role="schedule-timeline-show-all"]')?.addEventListener("click", () => {
+    scheduleTimelineHiddenHabitIds = [];
+    persistScheduleTimelineHiddenHabitIds();
+    renderSchedule("manual");
+  });
+  root?.querySelector?.('[data-role="schedule-timeline-average-toggle"]')?.addEventListener("click", () => {
+    scheduleTimelineShowAverage = !scheduleTimelineShowAverage;
+    renderSchedule("manual");
+  });
+  root?.querySelectorAll?.('[data-role="schedule-timeline-average-dow"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      scheduleTimelineAverageDow = normalizeScheduleTimelineDow(button.getAttribute("data-dow") || "mon");
+      persistScheduleTimelineAverageDow();
+      renderSchedule("manual");
+    });
+  });
+  root?.querySelectorAll?.('[data-role="schedule-horizontal-segment"]').forEach((button) => {
+    const activate = () => activateScheduleHorizontalTimelineSegmentV2(button);
+    button.addEventListener("pointerdown", activate, { passive: true });
+    button.addEventListener("click", activate);
+  });
+  root?.querySelectorAll?.('[data-role="schedule-horizontal-panel"]').forEach((panel) => {
+    const firstSegment = panel.querySelector('[data-role="schedule-horizontal-segment"]:not(.is-average)') || panel.querySelector('[data-role="schedule-horizontal-segment"]');
+    if (firstSegment) activateScheduleHorizontalTimelineSegmentV2(firstSegment);
+  });
 }
 
 function renderScheduleDayTimelineHtml(dateKey = todayKey()) {
@@ -13339,11 +14323,15 @@ function saveDayDetailModal() {
 
     const check = controls.find((el) => el.dataset.kind === "check");
     const checked = !!check?.checked;
+    const wasChecked = !!habitChecks?.[habitId]?.[dayDetailDateKey];
     if (!habitChecks[habitId]) habitChecks[habitId] = {};
     if (checked) habitChecks[habitId][dayDetailDateKey] = true;
     else delete habitChecks[habitId][dayDetailDateKey];
     saveCache();
     persistHabitCheck(habitId, dayDetailDateKey, checked ? true : null);
+    if (checked && !wasChecked) {
+      recordScheduleTimelinePointEvent({ habitId, dateKey: dayDetailDateKey, kind: "check", quantity: 1 });
+    }
     invalidateDominantCache(dayDetailDateKey);
   });
 
@@ -13368,11 +14356,15 @@ function handleEntrySubmit(e) {
     setHabitCount(habitId, dateKey, n);
   } else {
     const checked = !!$habitEntryCheck?.checked;
+    const wasChecked = !!habitChecks?.[habitId]?.[dateKey];
     if (!habitChecks[habitId]) habitChecks[habitId] = {};
     if (checked) habitChecks[habitId][dateKey] = true;
     else delete habitChecks[habitId][dateKey];
     saveCache();
     persistHabitCheck(habitId, dateKey, checked ? true : null);
+    if (checked && !wasChecked) {
+      recordScheduleTimelinePointEvent({ habitId, dateKey, kind: "check", quantity: 1 });
+    }
     renderHabits();
   }
 
@@ -14163,7 +15155,7 @@ function listenRemoteLegacy() {
     syncPrimaryRunningSession();
     updateSessionUI();
     updateCompareLiveInterval();
-    rerenderIfActiveTab(["today", "schedule", "history"]);
+    rerenderIfActiveTab(["today"]);
     emitHabitsData("remote:active-sessions");
   });
   bindRemote(HABIT_SESSIONS_PATH, (snap) => {
@@ -14714,7 +15706,7 @@ function listenRemote() {
     saveCache();
     updateSessionUI();
     updateCompareLiveInterval();
-    rerenderIfActiveTab(["today", "schedule", "history"]);
+    rerenderIfActiveTab(["today"]);
     emitHabitsData("remote:active-sessions");
   });
 

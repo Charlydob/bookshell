@@ -9652,7 +9652,7 @@ function renderScheduleTimelinePanelHtml({
   const canvasWidth = SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX * 24;
   return `<section class="habits-history-section habit-horizontalTimeline" data-role="schedule-horizontal-panel" data-panel-key="${escapeHtml(panelKey)}">
     <div class="habit-horizontalTimeline__header">
-      <div>
+      <div class="titulo-habitos">
         <div class="habits-history-section-title">${escapeHtml(title)}</div>
         ${subtitle ? `<div class="habit-horizontalTimeline__subtitle">${escapeHtml(subtitle)}</div>` : ""}
       </div>

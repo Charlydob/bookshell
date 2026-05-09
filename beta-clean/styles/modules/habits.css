@@ -82,7 +82,7 @@ body.is-session-detail-open #app {
 
 .habits-subtabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   padding: 0px;
   margin-bottom: 0;
@@ -5068,6 +5068,15 @@ button#habit-detail-edit, #habit-detail-close{
 }
 /*  #endregion DIAS EN FUNCION DE MAÑANA LIBRE O TARDE  */
 /* #endregion  panel dias */
+/* #region timeline  */
+
+.titulo-habitos{
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+/* #endregion timeline  */
+
 /* #region Sesiones rapidas */
 
   #habit-quick-sessions-add{
@@ -5424,9 +5433,9 @@ button#habit-detail-edit, #habit-detail-close{
 }
 
 .habit-horizontalTimeline__controls {
-  display: flex;
+  display: grid;
   align-items: center;
-  justify-content: flex-end;
+grid-template-columns: repeat(2, 1fr);
   flex-wrap: wrap;
   gap: 8px;
 }

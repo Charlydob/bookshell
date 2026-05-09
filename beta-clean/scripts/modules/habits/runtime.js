@@ -5205,6 +5205,8 @@ const $habitDayDetailClose = document.getElementById("habit-day-detail-close");
 const $habitDayDetailCancel = document.getElementById("habit-day-detail-cancel");
 const $habitDayDetailSave = document.getElementById("habit-day-detail-save");
 const $habitScheduleView = document.getElementById("habit-schedule-view");
+const $habitTodayPanelCycle = document.getElementById("habit-today-panel-cycle");
+const $habitTodayInsights = document.getElementById("habit-today-insights");
 const $habitScheduleSummaryModal = document.getElementById("habit-schedule-summary-modal");
 const $habitScheduleSummaryTitle = document.getElementById("habit-schedule-summary-title");
 const $habitScheduleSummaryContent = document.getElementById("habit-schedule-summary-content");
@@ -6867,6 +6869,54 @@ function applyTodaySearch(value) {
   });
 }
 
+function renderTodayInsightsPanel() {
+  if (!$habitTodayInsights) return;
+  const panelOrder = ["week", "schedule", "timeline"];
+  const panelLabel = { week: "Semana visual", schedule: "Horarios · Semana", timeline: "Timeline del día" };
+  if ($habitTodayPanelCycle && !$habitTodayPanelCycle.dataset.bound) {
+    $habitTodayPanelCycle.dataset.bound = "1";
+    $habitTodayPanelCycle.addEventListener("click", () => {
+      const idx = panelOrder.indexOf(habitHistoryPanelView);
+      habitHistoryPanelView = panelOrder[(idx + 1) % panelOrder.length];
+      saveHistoryPanelView();
+      renderToday();
+    });
+  }
+  if ($habitTodayPanelCycle) {
+    $habitTodayPanelCycle.textContent = panelLabel[habitHistoryPanelView] || panelLabel.week;
+    $habitTodayPanelCycle.title = "Cambiar vista del panel de Hoy";
+  }
+
+  $habitTodayInsights.innerHTML = "";
+  const shouldRenderWorkScheduleBand = ["week", "month", "year", "total"].includes(habitHistoryRange);
+  if (habitHistoryPanelView === "week") {
+    $habitTodayInsights.appendChild(buildHistoryMonthCalendar(getHistoryWeekAnchorDate(), {
+      onDateChange: () => renderToday()
+    }));
+    return;
+  }
+  if (habitHistoryPanelView === "schedule" && shouldRenderWorkScheduleBand) {
+    const { start } = getHistoryRangeBounds(habitHistoryRange);
+    if (habitHistoryRange === "week") {
+      const weekStartKey = dateKeyLocal(startOfWeek(parseDateKey(selectedDateKey) || new Date()));
+      $habitTodayInsights.appendChild(buildWorkScheduleWeekBand(weekStartKey));
+    } else if (habitHistoryRange === "month") {
+      const anchor = parseDateKey(selectedDateKey) || new Date();
+      $habitTodayInsights.appendChild(buildWorkScheduleMonthBand(anchor.getFullYear(), anchor.getMonth()));
+    } else {
+      $habitTodayInsights.appendChild(buildWorkScheduleSummaryBand(habitHistoryRange));
+    }
+    return;
+  }
+  if (habitHistoryPanelView === "timeline") {
+    scheduleTimelineDateKey = selectedDateKey || scheduleTimelineDateKey || todayKey();
+    const timelineWrap = document.createElement("div");
+    timelineWrap.innerHTML = renderScheduleTimelineOverviewHtmlV2(scheduleTimelineDateKey);
+    bindScheduleHorizontalTimelineEvents(timelineWrap);
+    $habitTodayInsights.appendChild(timelineWrap);
+  }
+}
+
 function renderToday() {
   if (!parseDateKey(selectedDateKey)) {
     selectedDateKey = todayKey();
@@ -6874,6 +6924,7 @@ function renderToday() {
   const selectedDate = parseDateKey(selectedDateKey) || new Date();
   renderTodayMonthCalendar(selectedDate);
   const dateKey = selectedDateKey || todayKey();
+  renderTodayInsightsPanel();
 
   // clear
   $habitTodayCountPending.innerHTML = "";
@@ -10392,49 +10443,6 @@ function renderHistory() {
     $habitHistoryEmpty.style.display = hasData ? "none" : "block";
   }
 
-  const insights = document.createElement("div");
-  insights.className = "habits-history-insights";
-  const cycleBtn = document.createElement("button");
-  cycleBtn.type = "button";
-  cycleBtn.className = "habits-history-toggle-btn habits-history-toggle-btn--panel";
-  const panelOrder = ["week", "schedule", "timeline"];
-  const panelLabel = { week: "Semana visual", schedule: "Horarios", timeline: "Timeline" };
-  cycleBtn.textContent = panelLabel[habitHistoryPanelView] || "Semana visual";
-  cycleBtn.title = "Cambiar vista del panel semanal";
-  cycleBtn.addEventListener("click", () => {
-    const idx = panelOrder.indexOf(habitHistoryPanelView);
-    habitHistoryPanelView = panelOrder[(idx + 1) % panelOrder.length];
-    saveHistoryPanelView();
-    renderHistory();
-  });
-  historyHeader.appendChild(cycleBtn);
-  const historyCalendarSection = buildHistoryMonthCalendar(getHistoryWeekAnchorDate(), {
-    onDateChange: () => {
-      renderHistory();
-    }
-  });
-  if (habitHistoryPanelView === "week") {
-    insights.appendChild(historyCalendarSection);
-  } else if (habitHistoryPanelView === "schedule" && shouldRenderWorkScheduleBand) {
-    console.log("[habits:schedule:view]", { range: habitHistoryRange, selectedDateKey });
-    if (habitHistoryRange === "week") {
-      const weekStartKey = dateKeyLocal(startOfWeek(parseDateKey(selectedDateKey) || new Date()));
-      insights.appendChild(buildWorkScheduleWeekBand(weekStartKey));
-    } else if (habitHistoryRange === "month") {
-      const anchor = parseDateKey(selectedDateKey) || new Date();
-      insights.appendChild(buildWorkScheduleMonthBand(anchor.getFullYear(), anchor.getMonth()));
-    } else {
-      insights.appendChild(buildWorkScheduleSummaryBand(habitHistoryRange));
-    }
-  } else if (habitHistoryPanelView === "timeline") {
-    scheduleTimelineDateKey = selectedDateKey || scheduleTimelineDateKey || todayKey();
-    console.log("[habits:timeline:view]", { dateKey: scheduleTimelineDateKey });
-    const timelineWrap = document.createElement("div");
-    timelineWrap.innerHTML = renderScheduleTimelineOverviewHtmlV2(scheduleTimelineDateKey);
-    bindScheduleHorizontalTimelineEvents(timelineWrap);
-    insights.appendChild(timelineWrap);
-  }
-  $habitHistoryList.appendChild(insights);
   if (!hasData) {
     return;
   }

@@ -3420,6 +3420,16 @@ display: grid;
   white-space: nowrap;
 }
 
+.habit-today-panel-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin: 4px 0 8px;
+}
+
+.habit-today-insights {
+  margin-bottom: 10px;
+}
+
 .habits-history-select,
 .habits-history-input {
   border: 1px solid rgba(255,255,255,0.12);

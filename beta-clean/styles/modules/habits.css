@@ -3413,6 +3413,13 @@ display: grid;
   color: #fff;
 }
 
+.habits-history-toggle-btn--panel {
+  margin-left: auto;
+  padding: 4px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .habits-history-select,
 .habits-history-input {
   border: 1px solid rgba(255,255,255,0.12);

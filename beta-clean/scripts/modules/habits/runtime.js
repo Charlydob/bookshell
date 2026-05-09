@@ -122,6 +122,7 @@ const LAST_HABIT_KEY = "bookshell-habits-last-used";
 const HEATMAP_YEAR_STORAGE = "bookshell-habits-heatmap-year";
 const HISTORY_RANGE_STORAGE = "bookshell-habits-history-range:v1";
 const HISTORY_CALENDAR_VIEW_STORAGE = "bookshell-habits-calendar-view:v3";
+const HISTORY_PANEL_VIEW_STORAGE = "bookshell-habits-history-panel-view:v1";
 const COMPARE_SETTINGS_STORAGE = "bookshell-habits-compare-settings:v1";
 const HABITS_SCHEDULE_STORAGE = "bookshell-habits-schedule-cache:v1";
 const HABITS_SCHEDULE_VIEW_MODE_STORAGE = "scheduleViewMode";
@@ -196,6 +197,7 @@ let habitHistoryGroupMode = { kind: "habit", cat: null };
 let historyCalYear = null;
 let historyCalMonth = null;
 let historyCalView = "week";
+let habitHistoryPanelView = "week";
 let habitDeleteTarget = null;
 let habitToastEl = null;
 let habitToastTimeout = null;
@@ -4250,6 +4252,23 @@ function loadHistoryCalendarView() {
     historyCalView = stored === "month" || stored === "year" ? stored : "week";
   } catch (err) {
     console.warn("No se pudo leer vista del calendario", err);
+  }
+}
+
+function loadHistoryPanelView() {
+  try {
+    const stored = String(localStorage.getItem(HISTORY_PANEL_VIEW_STORAGE) || "");
+    habitHistoryPanelView = ["week", "schedule", "timeline"].includes(stored) ? stored : "week";
+  } catch (err) {
+    console.warn("No se pudo leer vista del panel semanal", err);
+  }
+}
+
+function saveHistoryPanelView() {
+  try {
+    localStorage.setItem(HISTORY_PANEL_VIEW_STORAGE, habitHistoryPanelView);
+  } catch (err) {
+    console.warn("No se pudo guardar vista del panel semanal", err);
   }
 }
 
@@ -10375,13 +10394,29 @@ function renderHistory() {
 
   const insights = document.createElement("div");
   insights.className = "habits-history-insights";
+  const cycleBtn = document.createElement("button");
+  cycleBtn.type = "button";
+  cycleBtn.className = "habits-history-toggle-btn habits-history-toggle-btn--panel";
+  const panelOrder = ["week", "schedule", "timeline"];
+  const panelLabel = { week: "Semana visual", schedule: "Horarios", timeline: "Timeline" };
+  cycleBtn.textContent = panelLabel[habitHistoryPanelView] || "Semana visual";
+  cycleBtn.title = "Cambiar vista del panel semanal";
+  cycleBtn.addEventListener("click", () => {
+    const idx = panelOrder.indexOf(habitHistoryPanelView);
+    habitHistoryPanelView = panelOrder[(idx + 1) % panelOrder.length];
+    saveHistoryPanelView();
+    renderHistory();
+  });
+  historyHeader.appendChild(cycleBtn);
   const historyCalendarSection = buildHistoryMonthCalendar(getHistoryWeekAnchorDate(), {
     onDateChange: () => {
       renderHistory();
     }
   });
-  insights.appendChild(historyCalendarSection);
-  if (shouldRenderWorkScheduleBand) {
+  if (habitHistoryPanelView === "week") {
+    insights.appendChild(historyCalendarSection);
+  } else if (habitHistoryPanelView === "schedule" && shouldRenderWorkScheduleBand) {
+    console.log("[habits:schedule:view]", { range: habitHistoryRange, selectedDateKey });
     if (habitHistoryRange === "week") {
       const weekStartKey = dateKeyLocal(startOfWeek(parseDateKey(selectedDateKey) || new Date()));
       insights.appendChild(buildWorkScheduleWeekBand(weekStartKey));
@@ -10391,6 +10426,13 @@ function renderHistory() {
     } else {
       insights.appendChild(buildWorkScheduleSummaryBand(habitHistoryRange));
     }
+  } else if (habitHistoryPanelView === "timeline") {
+    scheduleTimelineDateKey = selectedDateKey || scheduleTimelineDateKey || todayKey();
+    console.log("[habits:timeline:view]", { dateKey: scheduleTimelineDateKey });
+    const timelineWrap = document.createElement("div");
+    timelineWrap.innerHTML = renderScheduleTimelineOverviewHtmlV2(scheduleTimelineDateKey);
+    bindScheduleHorizontalTimelineEvents(timelineWrap);
+    insights.appendChild(timelineWrap);
   }
   $habitHistoryList.appendChild(insights);
   if (!hasData) {
@@ -15335,6 +15377,7 @@ function persistHabitCheck(habitId, dateKey, value) {
 
 function persistHabitCount(habitId, dateKey, value) {
   if (!habitId || !dateKey) return;
+  console.log("[habits:counts:save]", { habitId, dateKey, value, path: `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}` });
   void writeRtdbWithOfflineQueue({
     uid: currentUid,
     module: "habits",
@@ -15693,6 +15736,7 @@ function listenRemote() {
 
   bindRemote(HABIT_COUNTS_PATH, (snap) => {
     habitCounts = applyQueuedHabitRemoteValue(HABIT_COUNTS_PATH, snap.val() || {}) || {};
+    console.log("[habits:counts:load]", { path: HABIT_COUNTS_PATH, habits: Object.keys(habitCounts || {}).length });
     invalidateDominantCache();
     markHistoryDataChanged("remote:counts");
     saveCache();
@@ -15760,6 +15804,9 @@ async function initHabitsLegacy() {
     });
     await traceHabitsInitStep("loadHistoryCalendarView", () => {
       loadHistoryCalendarView();
+    });
+    await traceHabitsInitStep("loadHistoryPanelView", () => {
+      loadHistoryPanelView();
     });
     await traceHabitsInitStep("ensureUnknownHabit", () => {
       ensureUnknownHabit(true);
@@ -16013,6 +16060,9 @@ async function initHabits() {
     });
     await traceHabitsInitStep("loadHistoryCalendarView", () => {
       loadHistoryCalendarView();
+    });
+    await traceHabitsInitStep("loadHistoryPanelView", () => {
+      loadHistoryPanelView();
     });
     await traceHabitsInitStep("ensureUnknownHabit", () => {
       ensureUnknownHabit(true);

@@ -771,7 +771,7 @@
 </div>
 <!-- MODAL RECETA -->
 <div class="modal-backdrop hidden" id="recipe-modal-backdrop">
-<div class="modal recipe-modal" role="dialog" aria-modal="true" aria-labelledby="recipe-modal-title">
+<div class="modal recipe-modal" id="recipe-modal" role="dialog" aria-modal="true" aria-labelledby="recipe-modal-title">
 <div class="modal-handle"></div>
 <div class="modal-header">
 <div class="modal-title" id="recipe-modal-title">Nueva receta</div>
@@ -817,10 +817,6 @@
 <label class="field recipe-quick-field">
 <span class="field-label">Valoración</span>
 <input id="recipe-rating" max="5" min="0" step="0.5" inputmode="decimal" type="number" value="4"/>
-</label>
-<label class="field recipe-quick-field">
-<span class="field-label">Última vez cocinada</span>
-<input id="recipe-last-cooked" type="date"/>
 </label>
 <label class="favorite-toggle recipe-header-toggle">
 <input id="recipe-favorite" type="checkbox"/>

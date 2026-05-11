@@ -1713,7 +1713,22 @@ background-color: transparent;
   box-sizing: border-box;
   position: relative;
 }
+/* #region vista detallada libro */
 
+.spec-grid{
+  display: grid;
+  grid-template-columns: repeat(2,1fr);
+}
+#book-detail-quotes-search{
+  display: grid;
+  grid-template-columns: 1fr;
+  margin: 0px;
+  width: 300px;
+  justify-content: center;
+  justify-self: center;
+}
+
+/* #endregion vista detallada libro */
 
 /* #region CONSERVAR */
 

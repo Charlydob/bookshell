@@ -3597,7 +3597,7 @@ function buildReminderCalendarPanelMarkup(dateKey = "", reminders = []) {
             const categories = Array.isArray(reminder?.categories) ? reminder.categories : [];
             const timeLabel = buildReminderDayTimeLabel(reminder, dateKey);
             return `
-              <article class="notes-reminders-calendar-panel__item ${item?.status === 'completado' ? 'reminder--done' : ''} is-${escapeHtml(computedStatus)}" style="${escapeHtml(accentStyle)}">
+              <article class="notes-reminders-calendar-panel__item ${reminder?.status === 'completado' ? 'reminder--done' : ''} is-${escapeHtml(computedStatus)}" style="${escapeHtml(accentStyle)}">
                 <button
                   class="notes-reminders-calendar-panel__itemMain"
                   type="button"

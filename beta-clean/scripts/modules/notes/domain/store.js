@@ -86,6 +86,59 @@ function buildNoteText(note = {}) {
   return parts.filter(Boolean).join(" ").trim();
 }
 
+function splitLocationSegments(...values) {
+  const seen = new Set();
+  const items = [];
+
+  values.flat().forEach((value) => {
+    String(value || "")
+      .split(",")
+      .map((chunk) => chunk.trim())
+      .filter(Boolean)
+      .forEach((chunk) => {
+        const key = chunk.toLocaleLowerCase("es");
+        if (seen.has(key)) return;
+        seen.add(key);
+        items.push(chunk);
+      });
+  });
+
+  return items;
+}
+
+function normalizeLocationFilterText(value = "") {
+  return String(value || "").trim().toLocaleLowerCase("es");
+}
+
+export function getNoteLocationDetails(note = {}) {
+  const location = note?.location || {};
+  const segments = splitLocationSegments(
+    location?.exactAddress,
+    location?.label,
+    location?.text,
+  );
+  const lastIndex = segments.length - 1;
+  const countryFallback = lastIndex >= 1 ? segments[lastIndex] : "";
+  const regionFallback = lastIndex >= 2 ? segments[lastIndex - 1] : "";
+  const cityFallback = lastIndex >= 2
+    ? segments[lastIndex - 2]
+    : (segments[0] || "");
+  const municipalityFallback = lastIndex >= 3 ? segments[lastIndex - 3] : "";
+  const address = String(location?.exactAddress || location?.label || location?.text || segments.join(", ")).trim();
+
+  return {
+    country: String(location?.country || countryFallback).trim(),
+    region: String(location?.region || location?.state || location?.province || location?.county || regionFallback).trim(),
+    province: String(location?.province || location?.county || regionFallback).trim(),
+    city: String(location?.city || location?.town || location?.village || location?.place || location?.municipality || cityFallback).trim(),
+    municipality: String(location?.municipality || municipalityFallback).trim(),
+    postalCode: String(location?.postalCode || "").trim(),
+    address,
+    label: String(location?.label || address).trim(),
+    text: String(location?.text || address).trim(),
+  };
+}
+
 function buildWordCount(text = "") {
   if (!text) return 0;
   return String(text)
@@ -211,6 +264,9 @@ function createEmptyFolderInsights(folderId = "") {
   return {
     folderId: normalizeId(folderId),
     totalNotes: 0,
+    uniqueCategoriesCount: 0,
+    categorizedNotesCount: 0,
+    uncategorizedNotesCount: 0,
     ratedNotesCount: 0,
     unratedNotesCount: 0,
     ratedShare: 0,
@@ -250,6 +306,7 @@ function createEmptyFolderInsights(folderId = "") {
     topVisitedNotes: [],
     recentlyVisitedNotes: [],
     notesWithMostTags: [],
+    topCategories: [],
     longestNote: null,
     shortestNote: null,
     activityByMonth: [],
@@ -301,10 +358,18 @@ function computeFolderInsights(notes = [], folderId = "") {
 
   const tagUsage = new Map();
   const ratedTagUsage = new Map();
+  const categoryUsage = new Map();
   let totalTagAssignments = 0;
 
   folderNotes.forEach((note) => {
     totalTagAssignments += Number(note.tagsCount || 0);
+
+    const categoryLabel = String(note.category || "").trim();
+    if (categoryLabel) {
+      const categoryRow = categoryUsage.get(categoryLabel) || { label: categoryLabel, count: 0 };
+      categoryRow.count += 1;
+      categoryUsage.set(categoryLabel, categoryRow);
+    }
 
     note.tags.forEach((label) => {
       const tagRow = tagUsage.get(label) || { label, count: 0 };
@@ -320,6 +385,7 @@ function computeFolderInsights(notes = [], folderId = "") {
   });
 
   const notesWithTagsCount = folderNotes.filter((note) => Number(note.tagsCount || 0) > 0).length;
+  const categorizedNotesCount = folderNotes.filter((note) => String(note.category || "").trim()).length;
   const monthlyCounts = new Map();
   const titleGroups = new Map();
 
@@ -353,6 +419,9 @@ function computeFolderInsights(notes = [], folderId = "") {
   return {
     folderId: safeFolderId,
     totalNotes,
+    uniqueCategoriesCount: categoryUsage.size,
+    categorizedNotesCount,
+    uncategorizedNotesCount: totalNotes - categorizedNotesCount,
     ratedNotesCount,
     unratedNotesCount,
     ratedShare: percentage(ratedNotesCount, totalNotes),
@@ -426,6 +495,14 @@ function computeFolderInsights(notes = [], folderId = "") {
       .filter((note) => Number(note.tagsCount || 0) > 0)
       .sort(compareMostTags)
       .slice(0, 3),
+    topCategories: Array.from(categoryUsage.values())
+      .map((row) => ({
+        label: row.label,
+        count: row.count,
+        percentage: percentage(row.count, totalNotes),
+      }))
+      .sort(compareTagUsage)
+      .slice(0, 8),
     longestNote: [...folderNotes].sort(compareLongest)[0] || null,
     shortestNote: [...folderNotes].sort(compareShortest)[0] || null,
     activityByMonth: activityByMonthBase.map((row) => ({
@@ -457,6 +534,12 @@ export function createInitialNotesState() {
     folderTagsFilter: "",
     noteCategoryFilter: "",
     noteTagsFilter: "",
+    noteLocationFilters: {
+      country: "",
+      region: "",
+      city: "",
+      address: "",
+    },
     noteSort: "updated",
     rootSection: "notes",
     reminderFilters: {
@@ -679,13 +762,19 @@ export function filterFolders(folders = [], query = "", category = "", tags = ""
   });
 }
 
-export function filterNotesByFolder(notes = [], folderId = "", query = "", category = "", tags = "") {
+export function filterNotesByFolder(notes = [], folderId = "", query = "", category = "", tags = "", locationFilters = {}) {
   const safeFolderId = normalizeId(folderId);
   if (!safeFolderId) return [];
 
   const safeQuery = String(query || "").trim().toLowerCase();
   const safeCategory = String(category || "").trim().toLowerCase();
   const safeTags = String(tags || "").trim().toLowerCase();
+  const safeLocationFilters = {
+    country: normalizeLocationFilterText(locationFilters?.country),
+    region: normalizeLocationFilterText(locationFilters?.region),
+    city: normalizeLocationFilterText(locationFilters?.city),
+    address: normalizeLocationFilterText(locationFilters?.address),
+  };
 
   const byFolder = notes.filter((note) => normalizeId(note?.folderId) === safeFolderId);
 
@@ -694,13 +783,23 @@ export function filterNotesByFolder(notes = [], folderId = "", query = "", categ
       const title = String(note.title || "").toLowerCase();
       const content = String(note.content || "").toLowerCase();
       const url = String(note.url || "").toLowerCase();
-      if (!title.includes(safeQuery) && !content.includes(safeQuery) && !url.includes(safeQuery)) {
+      const location = getNoteLocationDetails(note);
+      const address = normalizeLocationFilterText(location.address || location.label || location.text);
+      if (!title.includes(safeQuery) && !content.includes(safeQuery) && !url.includes(safeQuery) && !address.includes(safeQuery)) {
         return false;
       }
     }
 
     if (safeCategory && String(note.category || "").toLowerCase() !== safeCategory) return false;
     if (safeTags && !(note.tags || []).map((tag) => String(tag).toLowerCase()).includes(safeTags)) return false;
+
+    if (safeLocationFilters.country || safeLocationFilters.region || safeLocationFilters.city || safeLocationFilters.address) {
+      const location = getNoteLocationDetails(note);
+      if (safeLocationFilters.country && normalizeLocationFilterText(location.country) !== safeLocationFilters.country) return false;
+      if (safeLocationFilters.region && normalizeLocationFilterText(location.region || location.province) !== safeLocationFilters.region) return false;
+      if (safeLocationFilters.city && normalizeLocationFilterText(location.city || location.municipality) !== safeLocationFilters.city) return false;
+      if (safeLocationFilters.address && normalizeLocationFilterText(location.address || location.label || location.text) !== safeLocationFilters.address) return false;
+    }
 
     return true;
   });

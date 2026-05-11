@@ -5076,7 +5076,23 @@ button#habit-detail-edit, #habit-detail-close{
 }
 
 /* #endregion timeline  */
+/* #region horario del dia modal */
 
+#habit-work-schedule-day-modal{
+  display: grid;
+  grid-template-columns: 1fr;
+}
+#sheet-section-horario-dia{
+  margin-top: 0px;
+}
+#habit-work-schedule-day-start, #habit-work-schedule-day-end{
+  width: 300px;
+}
+.sheet-section.habit-work-schedule-day-options{
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+}
+/* #endregion horario del dia modal */
 /* #region Sesiones rapidas */
 
   #habit-quick-sessions-add{

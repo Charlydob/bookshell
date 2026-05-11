@@ -118,19 +118,51 @@
       <input class="filter-search-input" id="notes-search-notes" type="search" placeholder="Buscar notas..." autocomplete="off" />
     </div>
 
+    <div class="notes-filters-dropdown">
+  <button
+    type="button"
+    class="notes-filters-dropdown__toggle"
+    data-notes-toggle-filters
+    aria-expanded="false"
+  >
+    Filtros
+    <span class="notes-filters-dropdown__icon">⌄</span>
+  </button>
+
+  <div class="notes-filters-dropdown__panel" hidden>
     <div class="notes-filters-row">
       <select class="notes-filter-select" id="notes-filter-note-category">
         <option value="">Categoría: Todas</option>
       </select>
+
       <select class="notes-filter-select" id="notes-filter-note-tags">
         <option value="">Tags: Todos</option>
       </select>
+
+      <select class="notes-filter-select" id="notes-filter-note-country">
+        <option value="">Pais: Todos</option>
+      </select>
+
+      <select class="notes-filter-select" id="notes-filter-note-region">
+        <option value="">Region: Todas</option>
+      </select>
+
+      <select class="notes-filter-select" id="notes-filter-note-city">
+        <option value="">Ciudad: Todas</option>
+      </select>
+
+      <select class="notes-filter-select" id="notes-filter-note-address">
+        <option value="">Direccion: Todas</option>
+      </select>
+
       <select class="notes-filter-select" id="notes-filter-note-sort">
         <option value="updated">Orden: Última modificación</option>
         <option value="rating">Orden: Mejor valoradas</option>
         <option value="visits">Orden: Más vistas</option>
       </select>
     </div>
+  </div>
+</div>
 
     <div class="notes-section-label hidden" id="notes-notes-section-label">Notas</div>
     <div class="notes-cards-list" id="notes-cards-list"></div>
@@ -345,19 +377,19 @@
           </select>
         </label>
 
+        <div id="meta-nota">
         <label class="field">
           <input id="notes-note-title" type="text" required />
         </label>
 
         <label class="field">
-          <span class="field-label">Tipo de nota</span>
           <select id="notes-note-kind" class="field-select">
             <option value="text">Texto</option>
             <option value="code">Codigo</option>
             <option value="persona">Persona</option>
           </select>
         </label>
-
+</div>
         <label class="field" id="notes-note-content-wrap">
           <textarea id="notes-note-content" rows="5"></textarea>
         </label>
@@ -477,7 +509,9 @@
             <input id="notes-note-location-label" type="hidden" />
             <input id="notes-note-location-country" type="hidden" />
             <input id="notes-note-location-region" type="hidden" />
+            <input id="notes-note-location-province" type="hidden" />
             <input id="notes-note-location-city" type="hidden" />
+            <input id="notes-note-location-municipality" type="hidden" />
             <input id="notes-note-location-postal-code" type="hidden" />
             <input id="notes-note-location-lat" type="hidden" />
             <input id="notes-note-location-lng" type="hidden" />

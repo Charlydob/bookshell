@@ -1,16 +1,26 @@
 import { onUserChange } from "../../shared/firebase/index.js";
 import {
+  createLeafletMap,
+  DEFAULT_MAP_CENTER_SPAIN,
+  DEFAULT_MAP_ZOOM_SPAIN,
+  ensureLeaflet,
+  invalidateLeafletMap,
+  MAX_AUTO_ZOOM,
+  setLeafletViewForPoints,
+} from "../../shared/vendors/leaflet.js";
+import {
   buildFolderInsights,
   buildFolderOptions,
   buildFolderStats,
   createInitialNotesState,
   filterFolders,
   filterNotesByFolder,
+  getNoteLocationDetails,
   getChildFolders,
   getFolderPath,
   isFolderParentAllowed,
   sortNotes,
-} from "./domain/store.js?v=2026-04-28-v2";
+} from "./domain/store.js?v=2026-05-10-v1";
 import {
   createFolder,
   createNote,
@@ -157,7 +167,7 @@ const SNIPPET_COLOR_LIMIT = 10;
 
 function normalizeNotesStatsSection(section = "") {
   const safeSection = String(section || "").trim();
-  return ["ratings", "tags", "notes"].includes(safeSection) ? safeSection : "ratings";
+  return ["ratings", "tags", "categories", "notes"].includes(safeSection) ? safeSection : "ratings";
 }
 
 function normalizeNoteSortOption(sort = "") {
@@ -167,6 +177,15 @@ function normalizeNoteSortOption(sort = "") {
 
 function normalizeRootSection(section = "") {
   return String(section || "").trim() === "reminders" ? "reminders" : "notes";
+}
+
+function createEmptyNoteLocationFilters() {
+  return {
+    country: "",
+    region: "",
+    city: "",
+    address: "",
+  };
 }
 
 function normalizeReminderGroupBy(value = "") {
@@ -314,6 +333,7 @@ function buildStatsSectionSwitch(active = "ratings") {
   const tabs = [
     { key: "ratings", label: "Ratings" },
     { key: "tags", label: "Tags" },
+    { key: "categories", label: "Categorias" },
     { key: "notes", label: "Notas" },
   ];
 
@@ -451,6 +471,36 @@ function buildTagsStatsMarkup(insights) {
   `;
 }
 
+function buildCategoriesStatsMarkup(insights) {
+  return `
+    <div class="notes-stats-card-head">
+      <h3 class="notes-stats-card-title">Categorias</h3>
+      <p class="notes-stats-card-copy">Reparto de notas por categoria dentro del contexto actual.</p>
+    </div>
+    ${buildStatsMetricChips([
+      { label: "Categorias", value: formatNumber(insights?.uniqueCategoriesCount || 0) },
+      { label: "Con categoria", value: formatNumber(insights?.categorizedNotesCount || 0) },
+      { label: "Sin categoria", value: formatNumber(insights?.uncategorizedNotesCount || 0) },
+    ])}
+    <div class="notes-stats-block">
+      <div class="notes-stats-block-head"><strong>Notas por categoria</strong></div>
+      ${buildStatsBarList(insights?.topCategories || [], {
+        labelFormatter: (row) => row.label || "Sin categoria",
+        valueFormatter: (row) => `${formatNumber(row.count || 0)} notas · ${formatPercentage(row.percentage || 0)}`,
+        emptyText: "Esta carpeta aun no tiene categorias usadas en notas.",
+      })}
+    </div>
+    <div class="notes-stats-block">
+      <div class="notes-stats-block-head"><strong>Categorias mas usadas</strong></div>
+      ${buildStatsBarList((insights?.topCategories || []).slice(0, 5), {
+        labelFormatter: (row) => row.label || "Sin categoria",
+        valueFormatter: (row) => `${formatNumber(row.count || 0)} notas`,
+        emptyText: "Todavia no hay categorias suficientes para comparar.",
+      })}
+    </div>
+  `;
+}
+
 function buildNotesStatsMarkup(insights) {
   const monthlyActivity = insights?.activityByMonth || [];
   const topVisitedNotes = (insights?.topVisitedNotes || []).map((note, index, list) => ({
@@ -553,6 +603,8 @@ function buildActiveStatsCardMarkup(insights, averageRatingLabel, activeSection 
 
   if (safeActive === "tags") {
     sectionMarkup = buildTagsStatsMarkup(insights);
+  } else if (safeActive === "categories") {
+    sectionMarkup = buildCategoriesStatsMarkup(insights);
   } else if (safeActive === "notes") {
     sectionMarkup = buildNotesStatsMarkup(insights);
   } else {
@@ -611,6 +663,13 @@ function renderFolderStatsSectionView(folder, insights, childFolders = []) {
       meta: `${formatNumber(insights?.totalTagAssignments || 0)} usos`,
     },
     {
+      label: "Categorias",
+      value: formatNumber(insights?.uniqueCategoriesCount || 0),
+      meta: Number(insights?.categorizedNotesCount || 0)
+        ? `${formatNumber(insights?.categorizedNotesCount || 0)} con categoria`
+        : "Sin categorias",
+    },
+    {
       label: "Creadas 30d",
       value: formatNumber(insights?.createdRecently30d || 0),
       meta: `${formatNumber(insights?.editedRecently30d || 0)} editadas`,
@@ -659,27 +718,256 @@ function hasRealLocationCoordinates(lat, lng) {
   const safeLng = Number(lng);
   return Number.isFinite(safeLat) && Number.isFinite(safeLng) && !(safeLat === 0 && safeLng === 0);
 }
-function collectNoteLocations(notes = []) { return (notes || []).map((note) => ({ ...note.location, noteId: note.id })).filter((loc) => hasRealLocationCoordinates(loc?.lat || loc?.coords?.lat, loc?.lng || loc?.coords?.lng)); }
-function buildLocationClusters(locations = [], level = "country") { const map = new Map(); locations.forEach((loc) => { const raw = getLocationValueForLevel(loc, level); const label = raw || String(loc?.label || loc?.exactAddress || loc?.text || getLocationValueForLevel(loc, "city") || getLocationValueForLevel(loc, "region") || getLocationValueForLevel(loc, "country") || "Ubicación sin nombre").trim(); const key = label.toLowerCase(); const prev = map.get(key) || { label, count: 0 }; prev.count += 1; map.set(key, prev); }); return Array.from(map.values()).sort((a, b) => b.count - a.count); }
+function collectNoteLocations(notes = []) {
+  return (notes || [])
+    .map((note) => ({
+      ...note.location,
+      ...getNoteLocationDetails(note),
+      noteId: note.id,
+      noteTitle: note.title || "Sin titulo",
+    }))
+    .filter((loc) => hasRealLocationCoordinates(loc?.lat || loc?.coords?.lat, loc?.lng || loc?.coords?.lng));
+}
+function buildLocationClusters(locations = [], level = "country") {
+  const map = new Map();
+  locations.forEach((loc) => {
+    const raw = getLocationValueForLevel(loc, level);
+    const label = raw || String(
+      loc?.address
+      || loc?.label
+      || loc?.exactAddress
+      || loc?.text
+      || getLocationValueForLevel(loc, "city")
+      || getLocationValueForLevel(loc, "region")
+      || getLocationValueForLevel(loc, "country")
+      || "Ubicacion sin nombre"
+    ).trim();
+    const key = label.toLocaleLowerCase("es");
+    const prev = map.get(key) || { label, count: 0 };
+    prev.count += 1;
+    map.set(key, prev);
+  });
+  return Array.from(map.values()).sort((a, b) => b.count - a.count);
+}
 function normalizeTitleKey(title = "") { return String(title || "").trim().toLowerCase().replace(/\s+/g, " "); }
 function buildDuplicateTitleGroups(notes = []) { const groups = new Map(); notes.forEach((note) => { const key = normalizeTitleKey(note?.title); if (!key) return; const g = groups.get(key) || { key: encodeURIComponent(key), title: note.title.trim(), count: 0, notes: [] }; g.count += 1; g.notes.push(note); groups.set(key, g); }); return Array.from(groups.values()).filter((g) => g.count > 1); }
-async function initStatsMap(locations = []) { if (!window.L) { await new Promise((resolve) => { const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(css); const script = document.createElement("script"); script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"; script.onload = resolve; document.body.appendChild(script); }); } const el = $id("notes-stats-map"); if (!el || !window.L) return; el.innerHTML = ""; const map = window.L.map(el).setView([0, 0], 2); window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map); const markers = []; const dotIcon = window.L.divIcon({ className: "notes-map-dot-icon", html: '<span class="notes-map-dot" aria-hidden="true"></span>', iconSize: [12, 12], iconAnchor: [6, 6] }); locations.forEach((loc) => { const lat = Number(loc.lat || loc.coords?.lat); const lng = Number(loc.lng || loc.coords?.lng); if (!hasRealLocationCoordinates(lat, lng)) return; const marker = window.L.marker([lat, lng], { icon: dotIcon }).addTo(map); marker.bindPopup(escapeHtml(loc.label || loc.text || "Ubicación")); markers.push([lat, lng]); }); if (markers.length) map.fitBounds(markers, { padding: [24, 24] }); setTimeout(() => map.invalidateSize(), 50); }
+async function initStatsMap(locations = []) {
+  const el = $id("notes-stats-map");
+  if (!el) return;
 
-function selectLocationSuggestion(suggestion = {}) {
-  const label = String(suggestion?.label || "").trim();
+  try {
+    const leaflet = await ensureLeaflet();
+    if (!leaflet?.map) return;
+    const map = createLeafletMap(el, {
+      center: DEFAULT_MAP_CENTER_SPAIN,
+      zoom: DEFAULT_MAP_ZOOM_SPAIN,
+    });
+    if (!map) return;
+
+    const dotIcon = leaflet.divIcon({
+      className: "notes-map-dot-icon",
+      html: '<span class="notes-map-dot" aria-hidden="true"></span>',
+      iconSize: [12, 12],
+      iconAnchor: [6, 6],
+    });
+    const markers = [];
+
+    locations.forEach((loc) => {
+      const lat = Number(loc.lat || loc.coords?.lat);
+      const lng = Number(loc.lng || loc.coords?.lng);
+      if (!hasRealLocationCoordinates(lat, lng)) return;
+      const marker = leaflet.marker([lat, lng], { icon: dotIcon }).addTo(map);
+      marker.bindPopup(escapeHtml(`${loc.noteTitle || "Nota"} · ${loc.address || loc.label || loc.text || "Ubicacion"}`));
+      markers.push({ lat, lng });
+    });
+
+    setLeafletViewForPoints(map, markers, {
+      defaultCenter: DEFAULT_MAP_CENTER_SPAIN,
+      defaultZoom: DEFAULT_MAP_ZOOM_SPAIN,
+      maxAutoZoom: MAX_AUTO_ZOOM,
+      singlePointZoom: MAX_AUTO_ZOOM,
+    });
+    invalidateLeafletMap(map, 50);
+  } catch (error) {
+    console.warn("[notes:map] no se pudo cargar Leaflet", error);
+  }
+}
+
+function normalizeLocationLookup(value = "") {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("es")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function clearLocationSuggestionList() {
+  const list = $id("notes-note-location-suggestions");
+  if (!list) return;
+  list.classList.add("hidden");
+  list.innerHTML = "";
+}
+
+function clearSelectedLocationFields({ preserveSearchValue = true } = {}) {
+  const search = $id("notes-note-location-search");
+  const searchValue = preserveSearchValue ? String(search?.value || "") : "";
+  if (search) search.value = searchValue;
+  $id("notes-note-location-label").value = "";
+  $id("notes-note-location-country").value = "";
+  $id("notes-note-location-region").value = "";
+  $id("notes-note-location-province").value = "";
+  $id("notes-note-location-city").value = "";
+  $id("notes-note-location-municipality").value = "";
+  $id("notes-note-location-postal-code").value = "";
+  $id("notes-note-location-lat").value = "";
+  $id("notes-note-location-lng").value = "";
+  $id("notes-note-location-source").value = "";
+  $id("notes-note-location-coords").value = "";
+}
+
+function buildLocationSuggestionKey(suggestion = {}) {
+  const label = normalizeLocationLookup(suggestion?.exactAddress || suggestion?.label || suggestion?.text || "");
   const lat = Number(suggestion?.lat);
   const lng = Number(suggestion?.lng);
+  if (hasRealLocationCoordinates(lat, lng)) {
+    return `${label}::${lat.toFixed(5)},${lng.toFixed(5)}`;
+  }
+  return label;
+}
+
+function buildStoredLocationSuggestions(query = "") {
+  const safeQuery = normalizeLocationLookup(query);
+  if (safeQuery.length < 2) return [];
+
+  const grouped = new Map();
+  (state.notes || []).forEach((note) => {
+    const location = getNoteLocationDetails(note);
+    const lat = Number(note?.location?.lat ?? note?.location?.coords?.lat);
+    const lng = Number(note?.location?.lng ?? note?.location?.coords?.lng);
+    const haystack = normalizeLocationLookup([
+      location.address,
+      location.city,
+      location.region,
+      location.country,
+      location.municipality,
+      location.province,
+    ].filter(Boolean).join(" "));
+    if (!haystack.includes(safeQuery)) return;
+
+    const suggestion = {
+      label: location.address || location.label || location.text,
+      country: location.country,
+      region: location.region,
+      province: location.province,
+      city: location.city,
+      municipality: location.municipality,
+      postalCode: location.postalCode,
+      exactAddress: location.address || location.label || location.text,
+      lat: hasRealLocationCoordinates(lat, lng) ? lat : null,
+      lng: hasRealLocationCoordinates(lat, lng) ? lng : null,
+      source: hasRealLocationCoordinates(lat, lng) ? "saved" : "saved-legacy",
+      noteCount: 1,
+      lastUsedAt: Number(note?.updatedAt || note?.createdAt || 0),
+    };
+    const key = buildLocationSuggestionKey(suggestion);
+    if (!key) return;
+    const current = grouped.get(key);
+    if (current) {
+      current.noteCount += 1;
+      current.lastUsedAt = Math.max(current.lastUsedAt, suggestion.lastUsedAt);
+      if (!current.country && suggestion.country) current.country = suggestion.country;
+      if (!current.region && suggestion.region) current.region = suggestion.region;
+      if (!current.province && suggestion.province) current.province = suggestion.province;
+      if (!current.city && suggestion.city) current.city = suggestion.city;
+      if (!current.municipality && suggestion.municipality) current.municipality = suggestion.municipality;
+      if (!current.postalCode && suggestion.postalCode) current.postalCode = suggestion.postalCode;
+      if (!hasRealLocationCoordinates(current.lat, current.lng) && hasRealLocationCoordinates(suggestion.lat, suggestion.lng)) {
+        current.lat = suggestion.lat;
+        current.lng = suggestion.lng;
+      }
+      return;
+    }
+    grouped.set(key, suggestion);
+  });
+
+  return Array.from(grouped.values())
+    .sort((a, b) => {
+      const coordsDiff = Number(hasRealLocationCoordinates(b.lat, b.lng)) - Number(hasRealLocationCoordinates(a.lat, a.lng));
+      if (coordsDiff !== 0) return coordsDiff;
+      const countDiff = Number(b.noteCount || 0) - Number(a.noteCount || 0);
+      if (countDiff !== 0) return countDiff;
+      const updatedDiff = Number(b.lastUsedAt || 0) - Number(a.lastUsedAt || 0);
+      if (updatedDiff !== 0) return updatedDiff;
+      return String(a.label || "").localeCompare(String(b.label || ""), "es", { sensitivity: "base" });
+    })
+    .slice(0, 6);
+}
+
+function dedupeLocationSuggestions(items = []) {
+  const merged = new Map();
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const key = buildLocationSuggestionKey(item);
+    if (!key) return;
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, { ...item });
+      return;
+    }
+    const currentScore = current.source === "saved" ? 2 : current.source === "saved-legacy" ? 1 : 0;
+    const nextScore = item.source === "saved" ? 2 : item.source === "saved-legacy" ? 1 : 0;
+    merged.set(key, {
+      ...(nextScore >= currentScore ? current : item),
+      ...(nextScore >= currentScore ? item : current),
+      noteCount: Math.max(Number(current.noteCount || 0), Number(item.noteCount || 0)),
+      lastUsedAt: Math.max(Number(current.lastUsedAt || 0), Number(item.lastUsedAt || 0)),
+    });
+  });
+  return Array.from(merged.values()).slice(0, 8);
+}
+
+function buildLocationSuggestionMarkup(item = {}) {
+  const parts = [];
+  if (item?.source === "saved") {
+    parts.push(`Guardada · ${formatNumber(item.noteCount || 1)} notas`);
+  } else if (item?.source === "saved-legacy") {
+    parts.push("Guardada sin coordenadas");
+  } else {
+    parts.push("Nueva busqueda");
+  }
+  if (item?.city) parts.push(item.city);
+  if (item?.region && item.region !== item.city) parts.push(item.region);
+  if (item?.country) parts.push(item.country);
+
+  return `
+    <button class="notes-location-option" type="button" data-act="select-location-suggestion" data-location='${escapeHtml(JSON.stringify(item))}'>
+      <span class="notes-location-option-label">${escapeHtml(item.label || item.exactAddress || item.text || "Ubicacion")}</span>
+      <span class="notes-location-option-meta">${escapeHtml(parts.join(" · "))}</span>
+    </button>
+  `;
+}
+
+function selectLocationSuggestion(suggestion = {}) {
+  const details = {
+    ...suggestion,
+    ...getNoteLocationDetails({ location: suggestion }),
+  };
+  const label = String(details?.label || details?.address || details?.text || "").trim();
+  const lat = Number(details?.lat);
+  const lng = Number(details?.lng);
   $id("notes-note-location-search").value = label;
   $id("notes-note-location-label").value = label;
-  $id("notes-note-location-country").value = suggestion?.country || "";
-  $id("notes-note-location-region").value = suggestion?.region || "";
-  $id("notes-note-location-city").value = suggestion?.city || suggestion?.municipality || "";
-  $id("notes-note-location-postal-code").value = suggestion?.postalCode || "";
+  $id("notes-note-location-country").value = details?.country || "";
+  $id("notes-note-location-region").value = details?.region || "";
+  $id("notes-note-location-province").value = details?.province || "";
+  $id("notes-note-location-city").value = details?.city || details?.municipality || "";
+  $id("notes-note-location-municipality").value = details?.municipality || "";
+  $id("notes-note-location-postal-code").value = details?.postalCode || "";
   $id("notes-note-location-lat").value = hasRealLocationCoordinates(lat, lng) ? String(lat) : "";
   $id("notes-note-location-lng").value = hasRealLocationCoordinates(lat, lng) ? String(lng) : "";
-  $id("notes-note-location-source").value = suggestion?.source || "nominatim";
+  $id("notes-note-location-source").value = details?.source || "nominatim";
   $id("notes-note-location-coords").value = hasRealLocationCoordinates(lat, lng) ? `${lat}, ${lng}` : "";
-  $id("notes-note-location-suggestions").classList.add("hidden");
+  clearLocationSuggestionList();
   $id("notes-note-location-status").textContent = label ? "Ubicación seleccionada." : "Selecciona una ubicación de la lista.";
 }
 
@@ -779,16 +1067,14 @@ function normalizeLocationAddress(result = {}) {
 }
 
 function getLocationValueForLevel(location = {}, level = "country") {
-  const cityValue = location?.city || location?.town || location?.village || location?.municipality || location?.place;
-  const provinceValue = location?.province || location?.county;
-  const regionValue = location?.region || location?.state;
+  const details = getNoteLocationDetails({ location });
   const byLevel = {
-    country: location?.country,
-    region: regionValue,
-    province: provinceValue,
-    city: cityValue,
-    postalCode: location?.postalCode,
-    label: location?.label || location?.exactAddress || location?.text,
+    country: details.country,
+    region: details.region,
+    province: details.province,
+    city: details.city || details.municipality,
+    postalCode: details.postalCode,
+    label: details.address || details.label || details.text,
   };
   return String(byLevel[level] || "").trim();
 }
@@ -797,15 +1083,17 @@ async function searchLocationSuggestions(query = "") {
   const safe = String(query || "").trim();
   if (safe.length < 3) return [];
   try {
+    const stored = buildStoredLocationSuggestions(safe);
     const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(safe)}`;
     const response = await fetch(url, { headers: { Accept: "application/json" } });
     const data = await response.json();
-    return (Array.isArray(data) ? data : [])
+    const remote = (Array.isArray(data) ? data : [])
       .map((item) => normalizeLocationAddress(item))
       .filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lng));
+    return dedupeLocationSuggestions([...stored, ...remote]);
   } catch (error) {
     console.warn("[notes:location] autocomplete failed", error);
-    return [];
+    return buildStoredLocationSuggestions(safe);
   }
 }
 
@@ -891,6 +1179,24 @@ function buildVisitsBadgeMarkup(note = {}) {
       <span class="notes-visits-badge-value">${escapeHtml(formatNumber(visitsCount))}</span>
     </span>
   `;
+}
+
+function buildCompactNoteMetaMarkup(note = {}) {
+  const items = [
+    note?.person?.phone ? { icon: "📞", label: "Telefono" } : null,
+    note?.person?.socials ? { icon: "📱", label: "Movil o redes" } : null,
+    note?.person?.address ? { icon: "ðŸ ", label: "Direccion guardada" } : null,
+    note?.location?.label || note?.location?.text ? { icon: "📍", label: "Ubicacion" } : null,
+    note?.person?.birthday ? { icon: "🎂", label: "Cumpleanos" } : null,
+  ].filter(Boolean);
+
+  if (!items.length) return "";
+
+  return items.map((item) => `
+    <span class="notes-item-compact-icon" title="${escapeHtml(item.label)}" aria-label="${escapeHtml(item.label)}">
+      ${escapeHtml(item.icon)}
+    </span>
+  `).join("");
 }
 
 function buildRatingPreviewMarkup(rating = null) {
@@ -2418,9 +2724,14 @@ function clearNoteFilters() {
   state.noteQuery = "";
   state.noteCategoryFilter = "";
   state.noteTagsFilter = "";
+  state.noteLocationFilters = createEmptyNoteLocationFilters();
   if ($id("notes-search-notes")) $id("notes-search-notes").value = "";
   if ($id("notes-filter-note-category")) $id("notes-filter-note-category").value = "";
   if ($id("notes-filter-note-tags")) $id("notes-filter-note-tags").value = "";
+  if ($id("notes-filter-note-country")) $id("notes-filter-note-country").value = "";
+  if ($id("notes-filter-note-region")) $id("notes-filter-note-region").value = "";
+  if ($id("notes-filter-note-city")) $id("notes-filter-note-city").value = "";
+  if ($id("notes-filter-note-address")) $id("notes-filter-note-address").value = "";
 }
 
 function setCurrentFolder(folderId = "") {
@@ -2886,9 +3197,14 @@ function renderNoteCards(list, notes = []) {
     const codeKindMarkup = isCodeNote
       ? `<span class="notes-item-kind-badge">${escapeHtml(buildCodeLanguageBadgeLabel(note?.codeLanguage))}</span>`
       : "";
-    const metaMarkup = [codeKindMarkup, ratingMarkup, visitsMarkup].filter(Boolean).join("");
+    const compactMetaMarkup = isNormalNote ? buildCompactNoteMetaMarkup(note) : "";
+    const metaMarkup = isNormalNote
+      ? compactMetaMarkup
+      : [codeKindMarkup, ratingMarkup, visitsMarkup].filter(Boolean).join("");
     const snippetMarkup = buildSnippetMarkup(note);
-    const personIcons = isPersonNote
+    const personIcons = isNormalNote
+      ? ""
+      : isPersonNote
       ? `${note?.person?.phone ? "📞" : ""} ${note?.person?.address || note?.location?.label ? "🏠" : ""} ${note?.person?.socials ? "📱" : ""} ${note?.person?.birthday ? "🎂" : ""}`.trim()
       : "";
     const isExpanded = expandedSnippetNotes.has(note.id);
@@ -2938,6 +3254,8 @@ function renderFolderDetail() {
     return;
   }
 
+  updateFilterOptionsForNotes();
+
   const childFolders = getChildFolders(foldersWithStats, folder.id);
   const allNotes = filterNotesByFolder(state.notes, folder.id);
   const visibleNotes = sortNotes(filterNotesByFolder(
@@ -2946,6 +3264,7 @@ function renderFolderDetail() {
     state.noteQuery,
     state.noteCategoryFilter,
     state.noteTagsFilter,
+    state.noteLocationFilters,
   ), state.noteSort);
   const insights = buildFolderInsights(state.notes, folder.id);
   const hasFilteredNotes = visibleNotes.length !== allNotes.length;
@@ -3700,7 +4019,7 @@ function openFolderModal(folder = null, options = {}) {
   openModal("notes-folder-modal-backdrop");
 }
 
-function updateFilterOptions() {
+function legacyUpdateFilterOptions() {
   const categories = new Set();
   const tags = new Set();
 
@@ -3734,17 +4053,42 @@ function updateFilterOptions() {
     });
     tagsSelect.value = currentValue;
   }
+
+  const scopedNotes = (locationKey = "") => filterNotesByFolder(
+    state.notes,
+    folder.id,
+    state.noteQuery,
+    state.noteCategoryFilter,
+    state.noteTagsFilter,
+    {
+      ...state.noteLocationFilters,
+      [locationKey]: "",
+    },
+  );
+
+  populateSimpleFilterSelect(countrySelect, "Pais: Todos", buildLocationFilterOptions(scopedNotes("country"), "country"));
+  populateSimpleFilterSelect(regionSelect, "Region: Todas", buildLocationFilterOptions(scopedNotes("region"), "region"));
+  populateSimpleFilterSelect(citySelect, "Ciudad: Todas", buildLocationFilterOptions(scopedNotes("city"), "city"));
+  populateSimpleFilterSelect(addressSelect, "Direccion: Todas", buildLocationFilterOptions(scopedNotes("address"), "address"));
 }
 
-function updateFilterOptionsForNotes() {
+function legacyUpdateFilterOptionsForNotes() {
   const folder = getCurrentFolder();
 
   const categorySelect = $id("notes-filter-note-category");
   const tagsSelect = $id("notes-filter-note-tags");
+  const countrySelect = $id("notes-filter-note-country");
+  const regionSelect = $id("notes-filter-note-region");
+  const citySelect = $id("notes-filter-note-city");
+  const addressSelect = $id("notes-filter-note-address");
 
   if (!folder) {
     if (categorySelect) categorySelect.innerHTML = '<option value="">Categoría: Todas</option>';
     if (tagsSelect) tagsSelect.innerHTML = '<option value="">Tags: Todos</option>';
+    if (countrySelect) countrySelect.innerHTML = '<option value="">PaÃ­s: Todos</option>';
+    if (regionSelect) regionSelect.innerHTML = '<option value="">RegiÃ³n: Todas</option>';
+    if (citySelect) citySelect.innerHTML = '<option value="">Ciudad: Todas</option>';
+    if (addressSelect) addressSelect.innerHTML = '<option value="">DirecciÃ³n: Todas</option>';
     return;
   }
 
@@ -3782,6 +4126,181 @@ function updateFilterOptionsForNotes() {
   }
 }
 
+function updateFilterOptions() {
+  const categories = new Set();
+  const tags = new Set();
+
+  state.folders.forEach((folder) => {
+    if (folder.category) categories.add(folder.category);
+    if (folder.tags) folder.tags.forEach((tag) => tags.add(tag));
+  });
+
+  const categorySelect = $id("notes-filter-category");
+  if (categorySelect) {
+    const currentValue = categorySelect.value;
+    categorySelect.innerHTML = '<option value="">Categoria: Todas</option>';
+    Array.from(categories).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((category) => {
+      const option = document.createElement("option");
+      option.value = category;
+      option.textContent = `Categoria: ${category}`;
+      categorySelect.appendChild(option);
+    });
+    categorySelect.value = currentValue;
+  }
+
+  const tagsSelect = $id("notes-filter-tags");
+  if (tagsSelect) {
+    const currentValue = tagsSelect.value;
+    tagsSelect.innerHTML = '<option value="">Tags: Todos</option>';
+    Array.from(tags).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((tag) => {
+      const option = document.createElement("option");
+      option.value = tag;
+      option.textContent = `Tag: ${tag}`;
+      tagsSelect.appendChild(option);
+    });
+    tagsSelect.value = currentValue;
+  }
+}
+
+function updateFilterOptionsForNotes() {
+  const folder = getCurrentFolder();
+
+  const categorySelect = $id("notes-filter-note-category");
+  const tagsSelect = $id("notes-filter-note-tags");
+  const countrySelect = $id("notes-filter-note-country");
+  const regionSelect = $id("notes-filter-note-region");
+  const citySelect = $id("notes-filter-note-city");
+  const addressSelect = $id("notes-filter-note-address");
+
+  if (!folder) {
+    if (categorySelect) categorySelect.innerHTML = '<option value="">Categoria: Todas</option>';
+    if (tagsSelect) tagsSelect.innerHTML = '<option value="">Tags: Todos</option>';
+    if (countrySelect) countrySelect.innerHTML = '<option value="">Pais: Todos</option>';
+    if (regionSelect) regionSelect.innerHTML = '<option value="">Region: Todas</option>';
+    if (citySelect) citySelect.innerHTML = '<option value="">Ciudad: Todas</option>';
+    if (addressSelect) addressSelect.innerHTML = '<option value="">Direccion: Todas</option>';
+    state.noteLocationFilters = createEmptyNoteLocationFilters();
+    return;
+  }
+
+  const notesInFolder = state.notes.filter((note) => note.folderId === folder.id);
+  const categories = new Set();
+  const tags = new Set();
+
+  notesInFolder.forEach((note) => {
+    if (note.category) categories.add(note.category);
+    if (note.tags) note.tags.forEach((tag) => tags.add(tag));
+  });
+
+  if (categorySelect) {
+    const currentValue = categorySelect.value;
+    categorySelect.innerHTML = '<option value="">Categoria: Todas</option>';
+    Array.from(categories).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((category) => {
+      const option = document.createElement("option");
+      option.value = category;
+      option.textContent = `Categoria: ${category}`;
+      categorySelect.appendChild(option);
+    });
+    categorySelect.value = currentValue;
+  }
+
+  if (tagsSelect) {
+    const currentValue = tagsSelect.value;
+    tagsSelect.innerHTML = '<option value="">Tags: Todos</option>';
+    Array.from(tags).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).forEach((tag) => {
+      const option = document.createElement("option");
+      option.value = tag;
+      option.textContent = `Tag: ${tag}`;
+      tagsSelect.appendChild(option);
+    });
+    tagsSelect.value = currentValue;
+  }
+
+  const buildScopedNotes = (locationFilters = {}) => filterNotesByFolder(
+    state.notes,
+    folder.id,
+    state.noteQuery,
+    state.noteCategoryFilter,
+    state.noteTagsFilter,
+    locationFilters,
+  );
+
+  const nextLocationFilters = {
+    country: String(state.noteLocationFilters?.country || "").trim(),
+    region: String(state.noteLocationFilters?.region || "").trim(),
+    city: String(state.noteLocationFilters?.city || "").trim(),
+    address: String(state.noteLocationFilters?.address || "").trim(),
+  };
+
+  populateSimpleFilterSelect(
+    countrySelect,
+    "Pais: Todos",
+    buildLocationFilterOptions(buildScopedNotes(createEmptyNoteLocationFilters()), "country"),
+  );
+  nextLocationFilters.country = countrySelect?.value || "";
+
+  populateSimpleFilterSelect(
+    regionSelect,
+    "Region: Todas",
+    buildLocationFilterOptions(buildScopedNotes({
+      ...createEmptyNoteLocationFilters(),
+      country: nextLocationFilters.country,
+    }), "region"),
+  );
+  nextLocationFilters.region = regionSelect?.value || "";
+
+  populateSimpleFilterSelect(
+    citySelect,
+    "Ciudad: Todas",
+    buildLocationFilterOptions(buildScopedNotes({
+      ...createEmptyNoteLocationFilters(),
+      country: nextLocationFilters.country,
+      region: nextLocationFilters.region,
+    }), "city"),
+  );
+  nextLocationFilters.city = citySelect?.value || "";
+
+  populateSimpleFilterSelect(
+    addressSelect,
+    "Direccion: Todas",
+    buildLocationFilterOptions(buildScopedNotes({
+      ...createEmptyNoteLocationFilters(),
+      country: nextLocationFilters.country,
+      region: nextLocationFilters.region,
+      city: nextLocationFilters.city,
+    }), "address"),
+  );
+  nextLocationFilters.address = addressSelect?.value || "";
+
+  state.noteLocationFilters = nextLocationFilters;
+  
+}
+
+function buildLocationFilterOptions(notes = [], level = "country") {
+  const values = new Set();
+  (Array.isArray(notes) ? notes : []).forEach((note) => {
+    const location = getNoteLocationDetails(note);
+    const value = level === "address"
+      ? (location.address || location.label || location.text)
+      : location[level];
+    if (value) values.add(value);
+  });
+  return Array.from(values).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+}
+
+function populateSimpleFilterSelect(select, placeholder, values = []) {
+  if (!select) return;
+  const currentValue = select.value;
+  select.innerHTML = `<option value="">${placeholder}</option>`;
+  values.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  select.value = values.includes(currentValue) ? currentValue : "";
+}
+
 function populateNoteCategorySelector(folderId = state.selectedFolderId) {
   const folder = state.folders.find((item) => item.id === folderId);
   const select = $id("notes-note-category-select");
@@ -3808,7 +4327,7 @@ function populateNoteCategorySelector(folderId = state.selectedFolderId) {
   });
 }
 
-function populateNoteTagsSelector(folderId = state.selectedFolderId) {
+function populateNoteTagsSelector(folderId = state.selectedFolderId, { legacyTags = [] } = {}) {
   const folder = state.folders.find((item) => item.id === folderId);
   const select = $id("notes-note-tags-select");
   if (!select) return;
@@ -3825,11 +4344,22 @@ function populateNoteTagsSelector(folderId = state.selectedFolderId) {
     if (note.tags) note.tags.forEach((tag) => tags.add(tag));
   });
 
+  const folderTagLabels = collectTagLabels(Array.from(tags));
+  const folderTagKeys = new Set(folderTagLabels.map((tag) => buildTagDefinitionKey(tag)));
+  const safeLegacyTags = collectTagLabels(Array.isArray(legacyTags) ? legacyTags : [])
+    .filter((tag) => !folderTagKeys.has(buildTagDefinitionKey(tag)));
+
   select.innerHTML = '<option value="">-- Seleccionar o escribir --</option>';
-  collectTagLabels(Array.from(tags), listTagDefinitions().map((tagDefinition) => tagDefinition.label)).forEach((tag) => {
+  folderTagLabels.forEach((tag) => {
     const option = document.createElement("option");
     option.value = tag;
     option.textContent = tag;
+    select.appendChild(option);
+  });
+  safeLegacyTags.forEach((tag) => {
+    const option = document.createElement("option");
+    option.value = tag;
+    option.textContent = `[Legacy] ${tag}`;
     select.appendChild(option);
   });
 }
@@ -3850,7 +4380,7 @@ function populateNoteFolderSelector(selectedFolderId = "") {
   select.value = safeSelectedFolderId;
 }
 
-function syncNoteFolderSelection(folderId = "", { allowFolderSelection = false } = {}) {
+function syncNoteFolderSelection(folderId = "", { allowFolderSelection = false, legacyTags = [] } = {}) {
   const safeFolderId = String(folderId || "").trim();
   const wrap = $id("notes-note-folder-wrap");
   const select = $id("notes-note-folder-select");
@@ -3865,7 +4395,7 @@ function syncNoteFolderSelection(folderId = "", { allowFolderSelection = false }
   }
   $id("notes-note-folder-id").value = safeFolderId;
   populateNoteCategorySelector(safeFolderId);
-  populateNoteTagsSelector(safeFolderId);
+  populateNoteTagsSelector(safeFolderId, { legacyTags });
   renderNoteTagImageEditor();
 }
 
@@ -3914,6 +4444,7 @@ function openNoteImagePicker(mode = "gallery") {
 function closeNoteModal() {
   clearNotePhotoObjectUrl();
   clearNoteTagImageDrafts();
+  clearLocationSuggestionList();
   notePhotoRemove = false;
   if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
   if ($id("notes-note-tag-image-file")) $id("notes-note-tag-image-file").value = "";
@@ -3926,7 +4457,10 @@ function openNoteModal(note = null, options = {}) {
   const allowFolderSelection = Boolean(options.allowFolderSelection)
     || !folderId
     || (!note && getChildFolders(state.folders, folderId).length > 0);
-  syncNoteFolderSelection(folderId, { allowFolderSelection });
+  syncNoteFolderSelection(folderId, {
+    allowFolderSelection,
+    legacyTags: note?.tags || [],
+  });
 
   notePhotoRemove = false;
   clearNotePhotoObjectUrl();
@@ -3949,6 +4483,7 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-category").value = note?.category || "";
   $id("notes-note-category-select").value = note?.category || "";
   $id("notes-note-tags").value = (note?.tags || []).join(", ");
+  populateNoteTagsSelector(folderId, { legacyTags: note?.tags || [] });
   $id("notes-note-tags-select").value = "";
   $id("notes-note-rating").value = note?.rating === null || note?.rating === undefined ? "" : String(note.rating);
   $id("notes-note-is-link").checked = note?.type === "link";
@@ -3957,7 +4492,9 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-location-label").value = note?.location?.label || "";
   $id("notes-note-location-country").value = note?.location?.country || "";
   $id("notes-note-location-region").value = note?.location?.region || "";
+  $id("notes-note-location-province").value = note?.location?.province || "";
   $id("notes-note-location-city").value = note?.location?.city || note?.location?.place || "";
+  $id("notes-note-location-municipality").value = note?.location?.municipality || "";
   $id("notes-note-location-postal-code").value = note?.location?.postalCode || "";
   $id("notes-note-location-lat").value = note?.location?.lat || note?.location?.coords?.lat || "";
   $id("notes-note-location-lng").value = note?.location?.lng || note?.location?.coords?.lng || "";
@@ -4483,16 +5020,18 @@ function bindNoteModalEvents() {
     const status = $id("notes-note-location-status");
     if (!list || !status) return;
     clearTimeout(notesLocationSearchTimer);
+    if (normalizeLocationLookup(query) !== normalizeLocationLookup($id("notes-note-location-label")?.value || "")) {
+      clearSelectedLocationFields();
+    }
     if (query.length < 3) {
-      list.classList.add("hidden");
-      list.innerHTML = "";
+      clearLocationSuggestionList();
       status.textContent = "Escribe al menos 3 caracteres.";
       return;
     }
     status.textContent = "Buscando ubicación…";
     notesLocationSearchTimer = setTimeout(async () => {
       const rows = await searchLocationSuggestions(query);
-      list.innerHTML = rows.map((item) => `<button class="notes-location-option" type="button" data-act="select-location-suggestion" data-location='${escapeHtml(JSON.stringify(item))}'>${escapeHtml(item.label)}</button>`).join("");
+      list.innerHTML = rows.map((item) => buildLocationSuggestionMarkup(item)).join("");
       list.classList.toggle("hidden", rows.length === 0);
       status.textContent = rows.length ? `${rows.length} sugerencias` : "Sin resultados.";
     }, 300);
@@ -4523,7 +5062,9 @@ function bindNoteModalEvents() {
     const locationLabel = $id("notes-note-location-label")?.value?.trim?.() || $id("notes-note-location-search")?.value?.trim?.() || "";
     const locationCountry = $id("notes-note-location-country")?.value?.trim?.() || "";
     const locationRegion = $id("notes-note-location-region")?.value?.trim?.() || "";
+    const locationProvince = $id("notes-note-location-province")?.value?.trim?.() || "";
     const locationCity = $id("notes-note-location-city")?.value?.trim?.() || "";
+    const locationMunicipality = $id("notes-note-location-municipality")?.value?.trim?.() || "";
     const locationPostalCode = $id("notes-note-location-postal-code")?.value?.trim?.() || "";
     const locationLat = Number($id("notes-note-location-lat")?.value || 0);
     const locationLng = Number($id("notes-note-location-lng")?.value || 0);
@@ -4599,7 +5140,9 @@ function bindNoteModalEvents() {
           label: locationLabel,
           country: locationCountry,
           region: locationRegion,
+          province: locationProvince,
           city: locationCity,
+          municipality: locationMunicipality,
           postalCode: locationPostalCode,
           lat: hasValidLocationCoordinates ? rawLocationLat : null,
           lng: hasValidLocationCoordinates ? rawLocationLng : null,
@@ -4893,7 +5436,7 @@ function bindUiEvents() {
     $id("notes-note-folder-id").value = folderId;
     $id("notes-note-form-error").textContent = "";
     populateNoteCategorySelector(folderId);
-    populateNoteTagsSelector(folderId);
+    populateNoteTagsSelector(folderId, { legacyTags: getCurrentNoteModalTags() });
   });
 
   $id("notes-folder-category-select")?.addEventListener("change", (event) => {
@@ -4954,6 +5497,38 @@ function bindUiEvents() {
 
   $id("notes-filter-note-tags")?.addEventListener("change", (event) => {
     state.noteTagsFilter = event.target.value || "";
+    renderFolderDetail();
+  });
+
+  $id("notes-filter-note-country")?.addEventListener("change", (event) => {
+    state.noteLocationFilters = {
+      ...state.noteLocationFilters,
+      country: event.target.value || "",
+    };
+    renderFolderDetail();
+  });
+
+  $id("notes-filter-note-region")?.addEventListener("change", (event) => {
+    state.noteLocationFilters = {
+      ...state.noteLocationFilters,
+      region: event.target.value || "",
+    };
+    renderFolderDetail();
+  });
+
+  $id("notes-filter-note-city")?.addEventListener("change", (event) => {
+    state.noteLocationFilters = {
+      ...state.noteLocationFilters,
+      city: event.target.value || "",
+    };
+    renderFolderDetail();
+  });
+
+  $id("notes-filter-note-address")?.addEventListener("change", (event) => {
+    state.noteLocationFilters = {
+      ...state.noteLocationFilters,
+      address: event.target.value || "",
+    };
     renderFolderDetail();
   });
 
@@ -5531,3 +6106,13 @@ export function destroy() {
     delete window.__bookshellNotes;
   }
 }
+const filtersDropdown = document.querySelector('.notes-filters-dropdown');
+const filtersToggle = document.querySelector('[data-notes-toggle-filters]');
+const filtersPanel = document.querySelector('.notes-filters-dropdown__panel');
+
+filtersToggle?.addEventListener('click', () => {
+  const isOpen = filtersDropdown.classList.toggle('is-open');
+
+  filtersPanel.hidden = !isOpen;
+  filtersToggle.setAttribute('aria-expanded', String(isOpen));
+});

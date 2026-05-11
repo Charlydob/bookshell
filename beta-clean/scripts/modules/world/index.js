@@ -3,6 +3,16 @@ import { getCountryEnglishName, getCountryOptions, normalizeCountryInput } from 
 import { auth, db, firebasePaths, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
 import { ref, get, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
+import {
+  createLeafletMap,
+  DEFAULT_MAP_CENTER_SPAIN,
+  DEFAULT_MAP_ZOOM_SPAIN,
+  destroyLeafletMap,
+  ensureLeaflet,
+  invalidateLeafletMap,
+  MAX_AUTO_ZOOM,
+  setLeafletViewForPoints,
+} from "../../shared/vendors/leaflet.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 const LS_VISITS = "world_visits_v1";
@@ -302,6 +312,13 @@ export async function init() {
   }
 
   function findExistingForSelection(sel) {
+    const directId = String(sel?.recordId || "").trim();
+    if (directId) {
+      return state.customPins.find((v) => v.id === directId)
+        || state.areaVisits.find((v) => v.id === directId)
+        || state.visits.find((v) => v.id === directId)
+        || null;
+    }
     const code = iso2(sel.countryCode);
     const areaName = String(sel.subdivision || sel.placeName || "").trim();
     const key = subdivisionKey(code, areaName);
@@ -352,6 +369,98 @@ export async function init() {
     chart.on("mouseup", cancel); chart.on("touchend", cancel); chart.on("globalout", cancel);
   }
 
+  function cleanupMapHost() {
+    const cleanup = $map.__geoCleanup;
+    delete $map.__geoCleanup;
+    delete $map.__geoChart;
+    delete $map.__worldClickBound;
+    if (typeof cleanup === "function") {
+      try { cleanup(); } catch {}
+    }
+    destroyLeafletMap($map);
+  }
+
+  function getLeafletSelectionForRecord(record) {
+    const countryCode = iso2(record?.countryCode);
+    if (!countryCode) return null;
+    const countryName = getCountryEnglishName(countryCode) || countryCode;
+    const subdivision = String(record?.subdivision || "").trim();
+    const placeName = String(record?.city || record?.placeName || subdivision || countryName).trim();
+    return {
+      level: subdivision ? (record?.city || record?.placeName ? "place" : "subdivision") : "country",
+      countryCode,
+      countryName,
+      subdivision,
+      placeName,
+      label: [countryName, subdivision, record?.city || record?.placeName].filter(Boolean).join(" · ") || countryName,
+      lat: Number(record?.lat),
+      lon: Number(record?.lon),
+      recordId: String(record?.id || "").trim(),
+    };
+  }
+
+  async function renderLeafletWorldMap(rows = [], activeView = { type: "world" }) {
+    try {
+      const leaflet = await ensureLeaflet();
+      if (!leaflet?.map) return false;
+      cleanupMapHost();
+      const map = createLeafletMap($map, {
+        center: DEFAULT_MAP_CENTER_SPAIN,
+        zoom: DEFAULT_MAP_ZOOM_SPAIN,
+      });
+      if (!map) return false;
+
+      const records = rows
+        .filter((row) => Number.isFinite(Number(row?.lat)) && Number.isFinite(Number(row?.lon)))
+        .filter((row) => {
+          if (activeView?.type === "country") return iso2(row.countryCode) === iso2(activeView.countryCode);
+          if (activeView?.type === "subdivision") {
+            return iso2(row.countryCode) === iso2(activeView.countryCode)
+              && subdivisionKey(row.countryCode, row.subdivision) === subdivisionKey(activeView.countryCode, activeView.subdivision);
+          }
+          return true;
+        });
+
+      const statusColor = (status) => ({
+        lived: "#7ff0a1",
+        visited: "#4fd0ff",
+        wishlist: "#ffc857",
+        other: "#f38ba8",
+      })[status] || "#4fd0ff";
+
+      const points = [];
+      records.forEach((record) => {
+        const selection = getLeafletSelectionForRecord(record);
+        const marker = leaflet.circleMarker([Number(record.lat), Number(record.lon)], {
+          radius: record.kind === "pin" ? 7.5 : 6.5,
+          color: "rgba(255,255,255,.92)",
+          weight: 1.5,
+          fillColor: statusColor(record.status),
+          fillOpacity: 0.92,
+        }).addTo(map);
+        marker.bindTooltip(esc(selection?.label || record.placeName || selection?.countryName || "Ubicacion"), { direction: "top" });
+        marker.on("click", () => {
+          if (selection) openSheet(selection);
+        });
+        points.push({ lat: Number(record.lat), lng: Number(record.lon) });
+      });
+
+      setLeafletViewForPoints(map, points, {
+        defaultCenter: DEFAULT_MAP_CENTER_SPAIN,
+        defaultZoom: DEFAULT_MAP_ZOOM_SPAIN,
+        maxAutoZoom: MAX_AUTO_ZOOM,
+        singlePointZoom: activeView?.type === "world" ? 7 : 9,
+      });
+      invalidateLeafletMap(map, 60);
+      $map.__geoCleanup = () => destroyLeafletMap($map);
+      return true;
+    } catch (error) {
+      console.warn("[world] no se pudo cargar Leaflet para el mapa principal", error);
+      cleanupMapHost();
+      return false;
+    }
+  }
+
   function renderWatchlist() {
     const items = Object.values(state.watch || {}).sort((a, b) => (a.label || "").localeCompare(b.label || ""));
     $watchList.innerHTML = items.length ? items.map((it) => `<div class="world-item"><div><div class="name">${esc(it.label)}</div><div class="meta">${esc(it.code)}</div></div><div class="actions"><button class="btn" data-act="remove-watch" data-code="${it.code}">Quitar</button></div></div>`).join("") : '<div class="geo-empty">Sin watchlist.</div>';
@@ -392,7 +501,7 @@ export async function init() {
         return false;
       }
     }
-    if (typeof $map.__geoCleanup === "function") $map.__geoCleanup();
+    cleanupMapHost();
     $map.innerHTML = "";
     const mapId = `world-sub-${Date.now()}`;
     window.echarts.registerMap(mapId, geoJson);
@@ -513,11 +622,32 @@ export async function init() {
     }
 
     if (active.type === "world") {
+      const mapRows = mergeById(
+        filtered,
+        filterByStatus(filterByTime(state.areaVisits, mode), stat),
+        state.customPins,
+      );
+      const mapRendered = await renderLeafletWorldMap(mapRows, active);
+      if (!mapRendered) {
       await renderCountryHeatmap($map, entries, { emptyLabel: "Aún no hay visitas", showCallouts: false });
+      }
       $countryTitle.textContent = "Vista mundo";
+      $countryGrid.innerHTML = `<div class="world-item"><div><div class="name">Resumen</div><div class="meta">${mapRendered ? "Mapa Leaflet reutilizado desde Notas. Toca un punto para acciones rÃ¡pidas." : "Fallback del mapa activo. Clic para detalle y mantener pulsado para acciones rÃ¡pidas."}</div></div></div>`;
       $countryGrid.innerHTML = '<div class="world-item"><div><div class="name">Resumen</div><div class="meta">Clic para detalle y mantener pulsado para acciones rápidas.</div></div></div>';
       $subdivisionList.innerHTML = entries.sort((a, b) => b.value - a.value).map((e) => `<div class="world-item"><div><div class="name">${esc(getCountryEnglishName(e.code) || e.code)}</div><div class="meta">${e.value} registros</div></div><div class="actions"><button class="btn" data-act="open-country" data-country="${e.code}">Abrir país</button></div></div>`).join("") || '<div class="geo-empty">Sin países aún.</div>';
-      if ($map.__geoChart && !$map.__worldClickBound) {
+      if (mapRendered) $countryGrid.innerHTML = `<div class="world-item"><div><div class="name">Resumen</div><div class="meta">Mapa Leaflet reutilizado desde Notas. Toca un punto para acciones rÃ¡pidas.</div></div></div>`;
+      const worldSummary = mapRendered
+        ? "Mapa Leaflet reutilizado desde Notas. Toca un punto para acciones rapidas."
+        : "Fallback del mapa activo. Clic para detalle y mantener pulsado para acciones rapidas.";
+      $countryGrid.innerHTML = `
+        <div class="world-item">
+          <div>
+            <div class="name">Resumen</div>
+            <div class="meta">${worldSummary}</div>
+          </div>
+        </div>
+      `;
+      if (!mapRendered && $map.__geoChart && !$map.__worldClickBound) {
         $map.__worldClickBound = true;
         $map.__geoChart.on("click", (params) => {
           const code = countryCodeFromMapName(params?.name);
@@ -716,6 +846,17 @@ export async function init() {
 }
 
 export function destroy() {
+  const mapHost = document.getElementById("world-map");
+  if (mapHost) {
+    try {
+      const cleanup = mapHost.__geoCleanup;
+      delete mapHost.__geoCleanup;
+      delete mapHost.__geoChart;
+      delete mapHost.__worldClickBound;
+      if (typeof cleanup === "function") cleanup();
+      destroyLeafletMap(mapHost);
+    } catch (_) {}
+  }
   if (worldState.abortController) { worldState.abortController.abort(); worldState.abortController = null; }
   if (worldState.firebaseUnsub) { worldState.firebaseUnsub(); worldState.firebaseUnsub = null; }
   if (worldState.remoteWriteTimer) { clearTimeout(worldState.remoteWriteTimer); worldState.remoteWriteTimer = 0; }

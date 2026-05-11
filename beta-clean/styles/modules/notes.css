@@ -389,21 +389,61 @@
 }
 .notes-item-card.is-compact-note {
   grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 44px;
-  padding: 10px 12px;
+  min-height: 0;
+  gap: 10px;
+  padding: 8px 10px;
   border-radius: 14px;
+}
+.notes-item-card.is-compact-note .notes-item-content {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.notes-item-card.is-compact-note .notes-item-head {
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 .notes-item-card.is-compact-note .notes-item-title {
   font-size: 14px;
-  line-height: 1.25;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notes-item-card.is-compact-note .notes-item-meta {
+  gap: 4px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  margin-left: auto;
+}
+.notes-item-card.is-compact-note .notes-item-preview,
+.notes-item-card.is-compact-note .notes-item-link,
+.notes-item-card.is-compact-note .notes-snippet-block {
+  display: none;
 }
 .notes-item-card.is-compact-note .notes-item-actions {
+  margin-left: auto;
   gap: 6px;
+  flex: 0 0 auto;
 }
 .notes-item-card.is-compact-note .icon-btn.icon-btn-large {
   width: 32px;
   height: 32px;
   min-height: 32px;
+}
+.notes-item-compact-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(245, 249, 255, 0.94);
+  font-size: 12px;
+  line-height: 1;
 }
 
 .notes-item-card.has-note-image::before {
@@ -1297,12 +1337,22 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
 }
 
 .notes-location-option {
+  display: grid;
+  gap: 3px;
   text-align: left;
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
   color: rgba(244, 248, 255, 0.95);
+}
+.notes-location-option-label {
+  font-size: 13px;
+  line-height: 1.35;
+}
+.notes-location-option-meta {
+  font-size: 11px;
+  color: rgba(220, 229, 239, 0.68);
 }
 
 .notes-location-hint {
@@ -1529,6 +1579,11 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
     align-items: start;
   }
 
+  .notes-item-card.is-compact-note {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
   .notes-item-card.is-code-note {
     grid-template-columns: 1fr;
   }
@@ -1538,14 +1593,26 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
     justify-content: flex-end;
   }
 
+  .notes-item-card.is-compact-note .notes-item-actions {
+    grid-column: auto;
+  }
+
   .notes-item-head,
   .notes-stats-bar-head {
     flex-direction: column;
     align-items: flex-start;
   }
 
+  .notes-item-card.is-compact-note .notes-item-head {
+    flex-direction: row;
+    align-items: center;
+  }
+
   .notes-item-meta {
     justify-content: flex-start;
+  }
+  .notes-item-card.is-compact-note .notes-item-meta {
+    justify-content: flex-end;
   }
   .notes-stats-bar-head{
     display: grid;
@@ -2393,6 +2460,127 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* #region notas */
+
+/* #region filtros de busqueda */
+
+.notes-filters-dropdown{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+
+.notes-filters-dropdown__toggle{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:10px;
+  width:100%;
+  padding:12px 14px;
+  border:none;
+  border-radius:6px;
+  background:rgba(255,255,255,.06);
+  color:#fff;
+  font:inherit;
+  cursor:pointer;
+  backdrop-filter:blur(12px);
+}
+
+.notes-filters-dropdown__icon{
+  display: none;
+}
+
+.notes-filters-dropdown.is-open .notes-filters-dropdown__icon{
+  transform:rotate(180deg);
+}
+
+.notes-filters-dropdown__panel{
+  overflow:hidden;
+}
+
+.notes-filters-row{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:10px;
+}
+
+/* #endregion filtros de busqueda */
+/* #region vista nota compacta */
+
+.notes-item-compact-icon{
+  background: none;
+}
+
+/* #endregion vista nota compacta */
+/* #region editar nota modal */
+.modal-scroll{
+  overflow-x: hidden;
+}
+
+#notes-note-person-wrap{
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+#notes-note-person-birthday{
+  width: 180px;
+  height: 40px;
+}
+.field-label{
+  align-items: center;
+  text-align: center;
+  margin-top: 4px;
+}
+#meta-nota{
+  display: grid;
+  grid-template-columns: repeat(2,1fr);
+  height: 50px;
+  margin-bottom: 6px;
+  align-items: baseline;
+  gap: 6px;
+}
+#notes-note-title, #notes-note-kind{
+  height: 40px;
+  align-self: center;
+}
+/* #endregion editar nota modal */
+/* #region estadisticas */
+
+/* #region kpis notas */
+
+#notes-stats-kpis{
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+.notes-stats-kpi{
+  border-radius: 6px;
+  font-size: 10px;
+}
+.notes-stats-kpi-value {
+  font-size: 18px;
+}
+.notes-stats-kpi-meta{
+  display: none;
+}
+/* #endregion kpis notas */
+
+/* #region nav estadisticas */
+
+.notes-stats-section-switch{
+  display: grid;
+  grid-template-columns: repeat(4,1fr);
+}
+
+/* mapa */
+#notes-stats-map {
+  z-index: 1;
+}
+/* #endregion nav estadisticas */
+
+/* #endregion estadisticas */
+
+/* #endregion notas */
 /* #region recordatorios */
 
 /* #region boton crear reci */

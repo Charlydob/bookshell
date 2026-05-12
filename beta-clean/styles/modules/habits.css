@@ -5678,13 +5678,18 @@ grid-template-columns: repeat(2, 1fr);
 
 .habit-horizontalTimeline__segmentDot {
   position: absolute;
-  left: -1px;
-  top: 14px;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--slot-color, rgba(255,255,255,0.84));
-  box-shadow: 0 0 0 3px rgba(8, 10, 16, 0.85);
+  left: -8px;
+  top: 6px;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 10px;
+  background: none;
+  box-shadow: 0 0 0 0px rgba(8, 10, 16, 0.85);
+  color: var(--txt, #fff);
+  pointer-events: none;
+  z-index: 2;
 }
 
 .habit-horizontalTimeline__segmentLine {
@@ -5712,9 +5717,11 @@ grid-template-columns: repeat(2, 1fr);
 }
 
 .habit-horizontalTimeline__segment.is-average .habit-horizontalTimeline__segmentDot {
-  width: 6px;
-  height: 6px;
-  top: 15px;
+  left: -6px;
+  top: 8px;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
   box-shadow: 0 0 0 2px rgba(8, 10, 16, 0.72);
 }
 
@@ -5745,14 +5752,16 @@ grid-template-columns: repeat(2, 1fr);
 }
 
 .habit-horizontalTimeline__segment.is-point .habit-horizontalTimeline__segmentDot {
-  left: 2px;
-  top: 10px;
-  width: 10px;
-  height: 10px;
+  left: -1px;
+  top: 4px;
+  width: 26px;
+  height: 26px;
+  font-size: 14px;
 }
 
 .habit-horizontalTimeline__segment.is-point.is-active .habit-horizontalTimeline__segmentDot {
-  box-shadow: 0 0 0 3px rgba(8, 10, 16, 0.92), 0 0 18px color-mix(in srgb, var(--slot-color, #ffffff) 36%, transparent);
+  box-shadow: 0 0 0 0px none, 0 0 0px color-mix(in srgb, var(--slot-color, #ffffff) 36%, transparent);
+  background: none !important;
 }
 
 .habit-horizontalTimeline__detail {

@@ -9584,6 +9584,12 @@ function renderScheduleTimelineDowTabs(selectedDow = "mon") {
   }).join("");
 }
 
+function resolveScheduleTimelineSegmentEmoji(segment = {}) {
+  const habit = segment?.habit || null;
+  const title = String(segment?.title || habit?.name || "").trim();
+  return String(habit?.emoji || habit?.icon || segment?.emoji || segment?.icon || (title ? title.charAt(0) : "•") || "•");
+}
+
 function renderScheduleTimelineSegmentsHtml(segments = [], options = {}) {
   const showLabels = options.showLabels !== false;
   const sourceRowMultiplier = Math.max(1, Number(options.sourceRowMultiplier) || 1);
@@ -9605,7 +9611,7 @@ function renderScheduleTimelineSegmentsHtml(segments = [], options = {}) {
       : "";
     return `<button type="button" class="habit-horizontalTimeline__segment${segment.sourceKind === "average" ? " is-average" : ""}${segment.sourceKind === "planned" ? " is-planned" : ""}${segment.sourceKind === "live" ? " is-live" : ""}" style="--slot-color:${escapeHtml(segment.color || DEFAULT_COLOR)};left:${leftPx.toFixed(2)}px;top:${topPx}px;width:${widthPx.toFixed(2)}px;" data-role="schedule-horizontal-segment" data-detail-name="${escapeHtml(segment.title)}" data-detail-time="${escapeHtml(timeLabel)}" data-detail-duration="${escapeHtml(formatMinutes(segment.durationMin))}" data-detail-source="${escapeHtml(detailSource)}" data-detail-frequency="${escapeHtml(detailFrequency)}">
       ${label}
-      <span class="habit-horizontalTimeline__segmentDot" aria-hidden="true"></span>
+      <span class="habit-horizontalTimeline__segmentDot habit-emoji habit-icon" aria-hidden="true">${escapeHtml(resolveScheduleTimelineSegmentEmoji(segment))}</span>
       <span class="habit-horizontalTimeline__segmentLine" aria-hidden="true"></span>
       <span class="habit-horizontalTimeline__segmentEnd" aria-hidden="true"></span>
     </button>`;
@@ -9631,7 +9637,7 @@ function renderScheduleTimelineSegmentsHtmlV2(segments = [], options = {}) {
     const detailMeta = String(segment.detailMeta || "");
     return `<button type="button" class="habit-horizontalTimeline__segment${segment.sourceKind === "average" ? " is-average" : ""}${segment.sourceKind === "planned" ? " is-planned" : ""}${segment.sourceKind === "live" ? " is-live" : ""}${segment.isPoint ? " is-point" : ""}" style="--slot-color:${escapeHtml(segment.color || DEFAULT_COLOR)};left:${leftPx.toFixed(2)}px;top:${topPx}px;width:${widthPx.toFixed(2)}px;" data-role="schedule-horizontal-segment" data-detail-name="${escapeHtml(segment.title)}" data-detail-time="${escapeHtml(detailTime)}" data-detail-duration="${escapeHtml(segment.isPoint ? "" : formatMinutes(segment.durationMin))}" data-detail-source="${escapeHtml(detailSource)}" data-detail-frequency="${escapeHtml(detailMeta)}">
       ${label}
-      <span class="habit-horizontalTimeline__segmentDot" aria-hidden="true"></span>
+      <span class="habit-horizontalTimeline__segmentDot habit-emoji habit-icon" aria-hidden="true">${escapeHtml(resolveScheduleTimelineSegmentEmoji(segment))}</span>
       ${segment.isPoint ? "" : '<span class="habit-horizontalTimeline__segmentLine" aria-hidden="true"></span><span class="habit-horizontalTimeline__segmentEnd" aria-hidden="true"></span>'}
     </button>`;
   }).join("");

@@ -17,6 +17,14 @@ import {
   getCountryEnglishName,
   normalizeCountryInput
 } from "./countries.js";
+import { createBookQuotesStore } from "./domain/book-quotes-store.js";
+import {
+  createBookQuoteForBook,
+  deleteBookQuoteForBook,
+  filterBookQuotes,
+  listBookQuotesFromLinks,
+  resolveBookQuoteAuthor,
+} from "./book-quotes-repository.js";
 
 import { getEcharts } from "../../shared/vendors/echarts.js";
 
@@ -239,11 +247,28 @@ const $bookDetailQuotes = document.getElementById("book-detail-quotes");
 const $bookDetailQuotesCount = document.getElementById("book-detail-quotes-count");
 const $bookDetailQuotesBody = document.getElementById("book-detail-quotes-body");
 const $bookDetailQuotesSearch = document.getElementById("book-detail-quotes-search");
+const $bookDetailQuoteAdd = document.getElementById("book-detail-quote-add");
+const $bookDetailQuotesFeedback = document.getElementById("book-detail-quotes-feedback");
 const $bookDetailEdit = document.getElementById("book-detail-edit");
 const $bookDetailDelete = document.getElementById("book-detail-delete");
+const $bookQuoteModalBackdrop = document.getElementById("book-quote-modal-backdrop");
+const $bookQuoteModalClose = document.getElementById("book-quote-modal-close");
+const $bookQuoteModalCancel = document.getElementById("book-quote-modal-cancel");
+const $bookQuoteModalBook = document.getElementById("book-quote-modal-book");
+const $bookQuoteAuthorPill = document.getElementById("book-quote-author-pill");
+const $bookQuoteForm = document.getElementById("book-quote-form");
+const $bookQuoteText = document.getElementById("book-quote-text");
+const $bookQuotePage = document.getElementById("book-quote-page");
+const $bookQuoteNote = document.getElementById("book-quote-note");
+const $bookQuoteFormError = document.getElementById("book-quote-form-error");
+const $bookQuoteSubmit = document.getElementById("book-quote-submit");
+
+if ($bookDetailQuoteAdd) $bookDetailQuoteAdd.textContent = "Agregar cita";
 
 let bookDetailQuoteSearchTimer = null;
 let bookDetailQuoteSearchValue = "";
+const bookQuotesStore = createBookQuotesStore();
+let bookQuotesFeedbackTimer = null;
 
 // Stats
 const $statStreakCurrent = document.getElementById("stat-streak-current");
@@ -1078,7 +1103,10 @@ function closeBookDetail() {
   bookDetailId = null;
   if ($bookDetailBackdrop) $bookDetailBackdrop.classList.add("hidden");
   bookDetailQuoteSearchValue = "";
+  bookQuotesStore.searchValue = "";
   if ($bookDetailQuotesSearch) $bookDetailQuotesSearch.value = "";
+  closeBookQuoteModal();
+  setBookQuotesFeedback("");
   // BOOKS: modal quotes scroll
   document.body.style.overflow = "";
 }
@@ -1126,6 +1154,11 @@ function openBookDetail(bookId) {
   fillDetail($bookDetailFinished, finishDate || "—");
   fillDetail($bookDetailStatus, formatBookStatusLabel(b));
 
+  if ($bookDetailQuotesSearch) $bookDetailQuotesSearch.value = "";
+  bookDetailQuoteSearchValue = "";
+  bookQuotesStore.searchValue = "";
+  setBookQuotesFeedback("");
+
   const notes = b.notes || b.description || "Sin notas";
   fillDetail($bookDetailNotes, notes);
   renderBookDetailQuotes(bookId, b);
@@ -1134,9 +1167,6 @@ function openBookDetail(bookId) {
     $bookDetailFavorite.checked = !!b.favorite;
     $bookDetailFavorite.onchange = () => handleFavoriteToggle(bookId, $bookDetailFavorite.checked);
   }
-
-  if ($bookDetailQuotesSearch) $bookDetailQuotesSearch.value = "";
-  bookDetailQuoteSearchValue = "";
 
   $bookDetailBackdrop.classList.remove("hidden");
   // BOOKS: modal quotes scroll
@@ -1181,37 +1211,137 @@ function normalizeBookTitle(title) {
 }
 
 function getBookLinkedQuotes(bookId, book) {
-  const titleKey = normalizeBookTitle(book?.title || "");
-  return Object.entries(links || {})
-    .map(([id, item]) => ({ id, ...(item || {}) }))
-    .filter((item) => {
-      const cat = String(item.category || "").toLowerCase();
-      if (!(cat === "bookquote" || cat === "bookquote" || cat === "libro/cita" || item.category === "bookQuote")) {
-        if (item.category !== "bookQuote") return false;
-      }
-      if (item.bookId && item.bookId === bookId) return true;
-      const key = normalizeBookTitle(item.bookTitle || "");
-      return !!titleKey && key === titleKey;
-    })
-    .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  return listBookQuotesFromLinks(links, {
+    bookId,
+    bookTitle: book?.title || "",
+  });
 }
 
 function openQuoteInVideos(item) {
   if (!item) return;
+  const rawItem = item?.raw ? { id: item.id, ...(item.raw || {}) } : { id: item.id, ...item };
   window.__bookshellSetView?.("view-videos-hub");
-  window.__bookshellVideos?.openLinksNewView?.({ id: item.id, ...item });
+  window.__bookshellVideos?.openLinksNewView?.(rawItem);
 }
 
-function renderBookDetailQuotes(bookId, book) {
+function setBookQuotesFeedback(message = "", tone = "") {
+  bookQuotesStore.feedbackMessage = String(message || "").trim();
+  bookQuotesStore.feedbackTone = String(tone || "").trim();
+  if (!$bookDetailQuotesFeedback) return;
+
+  clearTimeout(bookQuotesFeedbackTimer);
+  $bookDetailQuotesFeedback.textContent = bookQuotesStore.feedbackMessage;
+  $bookDetailQuotesFeedback.dataset.tone = bookQuotesStore.feedbackTone;
+  $bookDetailQuotesFeedback.classList.toggle("hidden", !bookQuotesStore.feedbackMessage);
+
+  if (bookQuotesStore.feedbackMessage && bookQuotesStore.feedbackTone !== "error") {
+    bookQuotesFeedbackTimer = setTimeout(() => {
+      setBookQuotesFeedback("");
+    }, 2200);
+  }
+}
+
+function resetBookQuoteForm() {
+  bookQuotesStore.draft.text = "";
+  bookQuotesStore.draft.page = "";
+  bookQuotesStore.draft.note = "";
+  if ($bookQuoteText) $bookQuoteText.value = "";
+  if ($bookQuotePage) $bookQuotePage.value = "";
+  if ($bookQuoteNote) $bookQuoteNote.value = "";
+  if ($bookQuoteFormError) $bookQuoteFormError.textContent = "";
+}
+
+function syncBookQuoteSubmitState() {
+  if ($bookQuoteSubmit) $bookQuoteSubmit.disabled = !!bookQuotesStore.isSaving;
+}
+
+function openBookQuoteModal() {
+  if (!bookDetailId || !$bookQuoteModalBackdrop) return;
+  const book = books?.[bookDetailId];
+  if (!book) return;
+
+  resetBookQuoteForm();
+  if ($bookQuoteModalBook) $bookQuoteModalBook.textContent = book.title || "Libro actual";
+  if ($bookQuoteAuthorPill) $bookQuoteAuthorPill.textContent = resolveBookQuoteAuthor(book);
+  syncBookQuoteSubmitState();
+  $bookQuoteModalBackdrop.classList.remove("hidden");
+  setTimeout(() => $bookQuoteText?.focus(), 0);
+}
+
+function closeBookQuoteModal() {
+  if ($bookQuoteModalBackdrop) $bookQuoteModalBackdrop.classList.add("hidden");
+  bookQuotesStore.isSaving = false;
+  syncBookQuoteSubmitState();
+  resetBookQuoteForm();
+}
+
+async function handleCreateBookQuote(event) {
+  event?.preventDefault?.();
+  if (!bookDetailId) return;
+  const book = books?.[bookDetailId];
+  if (!book) return;
+
+  const nextText = String($bookQuoteText?.value || "").trim();
+  const nextPage = String($bookQuotePage?.value || "").trim();
+  const nextNote = String($bookQuoteNote?.value || "").trim();
+
+  if ($bookQuoteFormError) $bookQuoteFormError.textContent = "";
+  if (!nextText) {
+    if ($bookQuoteFormError) $bookQuoteFormError.textContent = "Escribe el texto de la cita.";
+    $bookQuoteText?.focus();
+    return;
+  }
+
+  bookQuotesStore.isSaving = true;
+  syncBookQuoteSubmitState();
+
+  try {
+    const createdQuote = await createBookQuoteForBook({
+      linksPath: LINKS_PATH,
+      bookId: bookDetailId,
+      book,
+      text: nextText,
+      page: nextPage,
+      note: nextNote,
+    });
+    if (createdQuote?.id) {
+      links = {
+        ...(links || {}),
+        [createdQuote.id]: createdQuote.raw,
+      };
+    }
+    closeBookQuoteModal();
+    renderBookDetailQuotes(bookDetailId, book);
+    setBookQuotesFeedback("Cita guardada.", "success");
+  } catch (error) {
+    console.error("Error guardando cita", error);
+    if ($bookQuoteFormError) $bookQuoteFormError.textContent = "No se pudo guardar la cita.";
+    setBookQuotesFeedback("No se pudo guardar la cita.", "error");
+  } finally {
+    bookQuotesStore.isSaving = false;
+    syncBookQuoteSubmitState();
+  }
+}
+
+function renderBookDetailQuotesLegacySummary(bookId, book) {
   if (!$bookDetailQuotesBody || !$bookDetailQuotesCount) return;
   const allItems = getBookLinkedQuotes(bookId, book);
-  const query = String(bookDetailQuoteSearchValue || "").trim().toLowerCase();
-  const items = !query
+  const searchValue = (bookDetailQuoteSearchValue || "").trim().toLowerCase();
+  const items = !searchValue
     ? allItems
     : allItems.filter((item) => {
-      const text = String(item.note || item.title || "").toLowerCase();
-      const page = String(item.page || "").toLowerCase();
-      return text.includes(query) || page.includes(query);
+      const text = String(
+        item?.raw?.quoteText
+        || item?.raw?.text
+        || item?.raw?.note
+        || item?.raw?.content
+        || item?.raw?.title
+        || item?.text
+        || ""
+      ).toLowerCase();
+      const author = String(item?.author || resolveBookQuoteAuthor(book) || "").toLowerCase();
+      const page = item?.page != null ? String(item.page).toLowerCase() : "";
+      return text.includes(searchValue) || author.includes(searchValue) || page.includes(searchValue);
     });
 
   $bookDetailQuotesCount.textContent = String(allItems.length);
@@ -1219,8 +1349,8 @@ function renderBookDetailQuotes(bookId, book) {
 
   if (!items.length) {
     const empty = document.createElement("div");
-    empty.className = "video-links-empty";
-    empty.textContent = query
+    empty.className = "book-quote-empty";
+    empty.textContent = searchValue
       ? "No hay citas que coincidan"
       : "No hay citas asociadas todavía.";
     $bookDetailQuotesBody.appendChild(empty);
@@ -1262,10 +1392,97 @@ if ($bookDetailQuotesSearch) {
     clearTimeout(bookDetailQuoteSearchTimer);
     bookDetailQuoteSearchTimer = setTimeout(() => {
       bookDetailQuoteSearchValue = String(nextValue || "");
+      bookQuotesStore.searchValue = String(nextValue || "");
       if (bookDetailId && books?.[bookDetailId]) {
         renderBookDetailQuotes(bookDetailId, books[bookDetailId]);
       }
     }, 150);
+  });
+}
+
+if ($bookDetailQuoteAdd) {
+  $bookDetailQuoteAdd.addEventListener("click", openBookQuoteModal);
+}
+
+if ($bookQuoteForm) {
+  $bookQuoteForm.addEventListener("submit", handleCreateBookQuote);
+}
+
+if ($bookQuoteModalClose) $bookQuoteModalClose.addEventListener("click", closeBookQuoteModal);
+if ($bookQuoteModalCancel) $bookQuoteModalCancel.addEventListener("click", closeBookQuoteModal);
+if ($bookQuoteModalBackdrop) {
+  $bookQuoteModalBackdrop.addEventListener("click", (event) => {
+    if (event.target === $bookQuoteModalBackdrop) closeBookQuoteModal();
+  });
+}
+
+function renderBookDetailQuotes(bookId, book) {
+  if (!$bookDetailQuotesBody || !$bookDetailQuotesCount) return;
+  const allItems = getBookLinkedQuotes(bookId, book);
+  const items = filterBookQuotes(allItems, bookDetailQuoteSearchValue);
+
+  $bookDetailQuotesCount.textContent = String(allItems.length);
+  $bookDetailQuotesBody.innerHTML = "";
+  $bookDetailQuotesBody.classList.add("book-detail-quote-list");
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "book-quote-empty";
+    empty.textContent = String(bookQuotesStore.searchValue || "").trim()
+      ? "No hay citas que coincidan"
+      : "Todavia no hay citas guardadas para este libro.";
+    $bookDetailQuotesBody.appendChild(empty);
+    return;
+  }
+
+  items.forEach((item) => {
+    const quoteText = String(
+      item?.raw?.quoteText
+      || item?.raw?.text
+      || item?.raw?.note
+      || item?.raw?.content
+      || item?.raw?.title
+      || item?.text
+      || ""
+    ).trim();
+    const quoteAuthor = item?.author || resolveBookQuoteAuthor(book);
+    const quotePage = item?.page != null ? `Pg. ${item.page}` : "Pg. —";
+
+    const row = document.createElement("article");
+    row.className = "book-detail-quote-card";
+
+    const quote = document.createElement("blockquote");
+    quote.className = "book-detail-quote-text";
+    quote.textContent = `“${quoteText}”`;
+
+    const meta = document.createElement("footer");
+    meta.className = "book-detail-quote-meta";
+    meta.textContent = `— ${quoteAuthor}, ${quotePage}`;
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "book-detail-quote-delete";
+    delBtn.setAttribute("aria-label", "Eliminar cita");
+    delBtn.textContent = "×";
+    delBtn.addEventListener("click", async () => {
+      try {
+        await deleteBookQuoteForBook({ linksPath: LINKS_PATH, quoteId: item.id });
+        if (links?.[item.id]) {
+          const nextLinks = { ...(links || {}) };
+          delete nextLinks[item.id];
+          links = nextLinks;
+        }
+        renderBookDetailQuotes(bookId, book);
+      } catch (error) {
+        console.error("Error eliminando cita", error);
+        setBookQuotesFeedback("No se pudo eliminar la cita.", "error");
+      }
+    });
+
+    row.appendChild(delBtn);
+    row.appendChild(quote);
+    row.appendChild(meta);
+    $bookDetailQuotesBody.appendChild(row);
   });
 }
 

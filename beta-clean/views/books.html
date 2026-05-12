@@ -326,7 +326,11 @@
 <span class="books-finished-count" id="book-detail-quotes-count">0</span>
 </summary>
 <div class="book-detail-quotes-panel">
+<div class="book-detail-quotes-toolbar">
 <input class="book-detail-quotes-search" id="book-detail-quotes-search" type="search" placeholder="Buscar por texto o página"/>
+<button class="btn primary btn-compact" id="book-detail-quote-add" type="button">AÃ±adir cita</button>
+</div>
+<div class="book-detail-quotes-feedback hidden" id="book-detail-quotes-feedback" aria-live="polite"></div>
 <div class="book-detail-quotes-body" id="book-detail-quotes-body"></div>
 </div>
 </details>
@@ -340,3 +344,41 @@
 </div>
 
 
+<div class="modal-backdrop hidden" id="book-quote-modal-backdrop">
+<div class="modal book-quote-modal">
+<div class="modal-handle"></div>
+<div class="modal-header">
+<div>
+<div class="modal-title">Nueva cita</div>
+<div class="book-quote-modal-subtitle" id="book-quote-modal-book"></div>
+</div>
+<button class="btn-x" id="book-quote-modal-close" type="button">X</button>
+</div>
+<form class="modal-form" id="book-quote-form">
+<div class="modal-scroll sheet-body">
+<div class="sheet-section">
+<div class="book-quote-author-pill" id="book-quote-author-pill">Autor desconocido</div>
+<label class="field">
+<span class="field-label">Texto de la cita</span>
+<textarea id="book-quote-text" required rows="5" placeholder="Escribe la cita del libro"></textarea>
+</label>
+<div class="form-grid row-2">
+<label class="field">
+<span class="field-label">Pagina</span>
+<input id="book-quote-page" inputmode="numeric" min="1" placeholder="123" type="number"/>
+</label>
+<label class="field">
+<span class="field-label">Nota breve</span>
+<input id="book-quote-note" maxlength="180" placeholder="Contexto opcional" type="text"/>
+</label>
+</div>
+<p class="book-quote-form-error" id="book-quote-form-error" aria-live="polite"></p>
+</div>
+</div>
+<div class="modal-footer sheet-footer">
+<button class="btn ghost" id="book-quote-modal-cancel" type="button">Cancelar</button>
+<button class="btn primary" id="book-quote-submit" type="submit">Guardar cita</button>
+</div>
+</form>
+</div>
+</div>

@@ -175,6 +175,34 @@
       <div class="empty-state hidden" id="notes-empty-stats">Todavia no hay notas suficientes para generar estadisticas utiles.</div>
     </section>
   </section>
+
+<div class="modal-backdrop hidden" id="notes-note-detail-backdrop">
+  <section class="modal notes-person-detail-modal" aria-modal="true" aria-labelledby="notes-detail-title" role="dialog">
+    <div class="modal-handle"></div>
+    <div class="modal-header notes-detail-modal-header">
+      <div class="notes-detail-modal-copy">
+        <div class="modal-title" id="notes-detail-title">Nota</div>
+        <p id="notes-detail-subtitle">Detalle</p>
+      </div>
+      <button class="icon-btn" id="notes-note-detail-close" type="button">X</button>
+    </div>
+    <div class="modal-scroll notes-detail-modal-scroll">
+      <div class="notes-detail-body" id="notes-detail-body"></div>
+    </div>
+  </section>
+</div>
+
+  <section class="notes-screen hidden" id="notes-note-detail-screen-legacy">
+    <header class="notes-folder-head">
+      <button class="icon-btn icon-btn-large" id="notes-btn-detail-back" type="button">←</button>
+      <div class="notes-folder-head-copy">
+        <h2 id="notes-detail-title-legacy">Nota</h2>
+        <p id="notes-detail-subtitle-legacy">Detalle</p>
+      </div>
+    </header>
+
+    <div class="notes-detail-body" id="notes-detail-body-legacy"></div>
+  </section>
 </div>
 
 <div class="modal-backdrop hidden" id="notes-reminder-modal-backdrop">

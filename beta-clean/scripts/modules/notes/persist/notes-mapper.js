@@ -49,11 +49,41 @@ function normalizeNotePerson(value = {}, fallbackTitle = "") {
     firstName: normalizePersonText(value?.firstName) || legacy.firstName,
     lastName: normalizePersonText(value?.lastName) || legacy.lastName,
     nationality: normalizePersonText(value?.nationality),
+    notesEntries: normalizePersonNotesEntries(value?.notesEntries),
     phone: String(value?.phone || "").trim(),
     birthday: String(value?.birthday || "").trim(),
     address: String(value?.address || "").trim(),
     socials: String(value?.socials || "").trim(),
   };
+}
+
+function normalizeNoteLinkRefs(value = []) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      const label = normalizePersonText(entry?.label);
+      const targetId = String(entry?.targetId || "").trim();
+      if (!label || !targetId) return null;
+      return { label, targetId };
+    })
+    .filter(Boolean);
+}
+
+function normalizePersonNotesEntries(value = []) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry, index) => {
+      const id = String(entry?.id || `person_note_${index}`).trim();
+      const text = String(entry?.text || "").trim();
+      if (!id || !text) return null;
+      return {
+        id,
+        text,
+        createdAt: Number(entry?.createdAt || Date.now()),
+        updatedAt: Number(entry?.updatedAt || entry?.createdAt || Date.now()),
+      };
+    })
+    .filter(Boolean);
 }
 
 function normalizeNoteTagImageKey(value = "") {
@@ -229,6 +259,7 @@ export function mapNoteFromDb(id, value = {}) {
     title,
     name: String(value?.name || title).trim(),
     content: String(value?.content || "").trim(),
+    linkRefs: normalizeNoteLinkRefs(value?.linkRefs),
     code: String(value?.code || "").trim(),
     noteKind,
     codeLanguage: normalizeCodeLanguage(value?.codeLanguage),
@@ -261,6 +292,7 @@ export function mapNoteToDb(note = {}) {
     title,
     name: String(note?.name || title).trim(),
     content: noteKind === "code" ? "" : String(note?.content || "").trim(),
+    linkRefs: noteKind === "code" ? [] : normalizeNoteLinkRefs(note?.linkRefs),
     code: noteKind === "code" ? String(note?.code || "").trim() : "",
     noteKind,
     codeLanguage: noteKind === "code" ? normalizeCodeLanguage(note?.codeLanguage) : "general",

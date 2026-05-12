@@ -10704,9 +10704,9 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2></header>
   <article class="financeGlassCard">
   <div class="finance-row-balance">
-  <button class="boton-calendario" data-balance-month="-1">◀</button>
+  <button type="button" class="boton-calendario" data-balance-month="-1">◀</button>
   <strong>${monthLabelByKey(monthKey)}</strong>
-  <button class="boton-calendario" data-balance-month="1">▶</button></div>
+  <button type="button" class="boton-calendario" data-balance-month="1">▶</button></div>
 
   <div class="finAgg__scopeToggle">
     <button class="finance-pill ${state.balanceAggScope === 'my' ? 'finAgg__active' : ''}" data-fin-agg-scope="my">Mi parte</button>
@@ -15206,7 +15206,7 @@ if (target.closest('[data-test-fixed-expense]')) {
       triggerRender();
       return;
     }
-    const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; state.balanceStatsActiveSegment = null; triggerRender(); return; }
+    const bMonth = target.closest('[data-balance-month]')?.dataset.balanceMonth; if (bMonth) { event.preventDefault(); event.stopImmediatePropagation(); state.balanceMonthOffset += Number(bMonth); state.balanceShowAllTx = false; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsMode = target.closest('[data-finance-stats-mode]')?.dataset.financeStatsMode; if (statsMode) { state.balanceStatsMode = statsMode === 'income' ? 'income' : 'expense'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsRange = target.closest('[data-finance-stats-range]')?.dataset.financeStatsRange; if (statsRange) { state.balanceStatsRange = statsRange; state.balanceStatsActiveSegment = null; triggerRender(); return; }
     const statsScope = target.closest('[data-finance-stats-scope]')?.dataset.financeStatsScope; if (statsScope) { state.balanceStatsScope = statsScope === 'global' ? 'global' : 'personal'; state.balanceStatsActiveSegment = null; triggerRender(); return; }
@@ -15258,7 +15258,7 @@ if (fixedSummaryView) {
   triggerRender();
   return;
 }
-  });
+  }, evtOpts);
 view.addEventListener('focusin', (event) => {
   if (isActiveTicketInput(event.target)) {
     beginReceiptEditSession(event.target);
@@ -15335,7 +15335,7 @@ view.addEventListener('focusout', async (event) => {
   if (isActiveTicketInput(event.target)) {
     window.setTimeout(() => endReceiptEditSession(event.target), 0);
   }
-});
+}, evtOpts);
   view.addEventListener('keydown', async (event) => {
     if (event.key === 'Escape' && event.target.matches('[data-products-receipt-add-name], [data-products-receipt-name]')) {
       event.preventDefault();
@@ -15376,7 +15376,7 @@ view.addEventListener('focusout', async (event) => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     event.target.blur();
-  });
+  }, evtOpts);
   view.addEventListener('change', async (event) => {
     if (event.target.matches('[data-range]')) { state.rangeMode = event.target.value; triggerRender(); }
     if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; triggerRender(); }
@@ -15671,7 +15671,7 @@ if (event.target.closest('[data-fixed-expense-form]')) {
     if (event.target.closest('[data-food-item-form][data-food-item-mode="detail"]')) {
       updateFoodDetailSaveState(event.target.closest('[data-food-item-form]'));
     }
-  });
+  }, evtOpts);
 
   view.addEventListener('toggle', (event) => {
     if (event.target.matches('[data-finance-stats-legend-details]')) {
@@ -15699,7 +15699,7 @@ if (event.target.closest('[data-fixed-expense-form]')) {
         },
       };
     }
-  });
+  }, evtOpts);
 
 
   view.addEventListener('focusout', async (event) => {
@@ -15727,7 +15727,7 @@ if (event.target.closest('[data-fixed-expense-form]')) {
       defaultPrice: Number(prevFood?.defaultPrice || 0)
     }, false);
     toast('Display name guardado');
-  });
+  }, evtOpts);
 
   view.addEventListener('submit', async (event) => {
 if (event.target.matches('[data-products-editor-form]')) {

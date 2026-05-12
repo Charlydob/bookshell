@@ -29,6 +29,33 @@ function normalizeImageTimestamp(value = 0) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
 }
 
+function normalizePersonText(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function splitLegacyPersonName(title = "") {
+  const normalized = normalizePersonText(title);
+  if (!normalized) return { firstName: "", lastName: "" };
+  const parts = normalized.split(" ");
+  return {
+    firstName: parts[0] || "",
+    lastName: parts.slice(1).join(" "),
+  };
+}
+
+function normalizeNotePerson(value = {}, fallbackTitle = "") {
+  const legacy = splitLegacyPersonName(fallbackTitle);
+  return {
+    firstName: normalizePersonText(value?.firstName) || legacy.firstName,
+    lastName: normalizePersonText(value?.lastName) || legacy.lastName,
+    nationality: normalizePersonText(value?.nationality),
+    phone: String(value?.phone || "").trim(),
+    birthday: String(value?.birthday || "").trim(),
+    address: String(value?.address || "").trim(),
+    socials: String(value?.socials || "").trim(),
+  };
+}
+
 function normalizeNoteTagImageKey(value = "") {
   return buildTagDefinitionKey(value);
 }
@@ -195,10 +222,12 @@ export function mapFolderToDb(folder = {}) {
 export function mapNoteFromDb(id, value = {}) {
   const type = value?.type === "link" ? "link" : "note";
   const noteKind = normalizeNoteKind(value?.noteKind);
+  const title = String(value?.title || value?.name || "").trim();
   return {
     id: String(id || ""),
     folderId: String(value?.folderId || ""),
-    title: String(value?.title || "").trim(),
+    title,
+    name: String(value?.name || title).trim(),
     content: String(value?.content || "").trim(),
     code: String(value?.code || "").trim(),
     noteKind,
@@ -218,21 +247,19 @@ export function mapNoteFromDb(id, value = {}) {
     visitsCount: normalizeNoteVisitsCount(value?.visitsCount),
     lastVisitedAt: normalizeNoteVisitTimestamp(value?.lastVisitedAt),
     location: normalizeNoteLocation(value?.location),
-    person: {
-      phone: String(value?.person?.phone || "").trim(),
-      birthday: String(value?.person?.birthday || "").trim(),
-      address: String(value?.person?.address || "").trim(),
-      socials: String(value?.person?.socials || "").trim(),
-    },
+    person: normalizeNotePerson(value?.person, title),
   };
 }
 
 export function mapNoteToDb(note = {}) {
   const type = note?.type === "link" ? "link" : "note";
   const noteKind = normalizeNoteKind(note?.noteKind);
+  const title = String(note?.title || note?.name || "").trim();
+  const person = normalizeNotePerson(note?.person, title);
   return {
     folderId: String(note?.folderId || ""),
-    title: String(note?.title || "").trim(),
+    title,
+    name: String(note?.name || title).trim(),
     content: noteKind === "code" ? "" : String(note?.content || "").trim(),
     code: noteKind === "code" ? String(note?.code || "").trim() : "",
     noteKind,
@@ -252,12 +279,7 @@ export function mapNoteToDb(note = {}) {
     visitsCount: normalizeNoteVisitsCount(note?.visitsCount),
     lastVisitedAt: normalizeNoteVisitTimestamp(note?.lastVisitedAt),
     location: normalizeNoteLocation(note?.location),
-    person: {
-      phone: String(note?.person?.phone || "").trim(),
-      birthday: String(note?.person?.birthday || "").trim(),
-      address: String(note?.person?.address || "").trim(),
-      socials: String(note?.person?.socials || "").trim(),
-    },
+    person,
   };
 }
 

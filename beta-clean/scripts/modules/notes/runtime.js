@@ -20,7 +20,7 @@ import {
   getFolderPath,
   isFolderParentAllowed,
   sortNotes,
-} from "./domain/store.js?v=2026-05-10-v1";
+} from "./domain/store.js?v=2026-05-12-v1";
 import {
   createFolder,
   createNote,
@@ -38,7 +38,7 @@ import {
   updateFolder,
   updateNote,
   updateReminder,
-} from "./persist/notes-datasource.js?v=2026-04-28-v2";
+} from "./persist/notes-datasource.js?v=2026-05-12-v1";
 import {
   deleteNoteImageAsset,
   deleteNoteTagImageAsset,
@@ -104,6 +104,7 @@ let noteSaveInFlight = false;
 let noteTagImageDrafts = new Map();
 let activeNoteTagImageKey = "";
 let noteSelectedTagImageKey = "";
+let noteLinkAutocompleteState = { start: -1, end: -1, activeIndex: 0, items: [], query: "" };
 let activeNotesStatsSection = "ratings";
 let reminderDraftAlerts = [];
 let reminderDraftCategories = [];
@@ -724,7 +725,7 @@ function collectNoteLocations(notes = []) {
       ...note.location,
       ...getNoteLocationDetails(note),
       noteId: note.id,
-      noteTitle: note.title || "Sin titulo",
+      noteTitle: getNoteDisplayTitle(note) || note.title || "Sin titulo",
     }))
     .filter((loc) => hasRealLocationCoordinates(loc?.lat || loc?.coords?.lat, loc?.lng || loc?.coords?.lng));
 }
@@ -749,13 +750,119 @@ function buildLocationClusters(locations = [], level = "country") {
   });
   return Array.from(map.values()).sort((a, b) => b.count - a.count);
 }
-function normalizeTitleKey(title = "") { return String(title || "").trim().toLowerCase().replace(/\s+/g, " "); }
-function buildDuplicateTitleGroups(notes = []) { const groups = new Map(); notes.forEach((note) => { const key = normalizeTitleKey(note?.title); if (!key) return; const g = groups.get(key) || { key: encodeURIComponent(key), title: note.title.trim(), count: 0, notes: [] }; g.count += 1; g.notes.push(note); groups.set(key, g); }); return Array.from(groups.values()).filter((g) => g.count > 1); }
+function normalizeTitleKey(title = "") { return normalizeNoteLookup(title); }
+function buildDuplicateTitleGroups(notes = []) {
+  const groups = new Map();
+  notes.forEach((note) => {
+    const baseTitle = getNoteBaseTitle(note);
+    const key = normalizeTitleKey(baseTitle);
+    if (!key) return;
+    const group = groups.get(key) || { key: encodeURIComponent(key), title: baseTitle.trim(), count: 0, notes: [] };
+    group.count += 1;
+    group.notes.push({
+      ...note,
+      title: getNoteDisplayTitle(note) || note?.title || "Sin titulo",
+    });
+    groups.set(key, group);
+  });
+  return Array.from(groups.values()).filter((group) => group.count > 1);
+}
+
+function buildStatsSingleMarkerPopupMarkup(location = {}) {
+  const title = escapeHtml(location.noteTitle || "Nota");
+  const subtitle = escapeHtml(location.address || location.label || location.text || "Ubicacion");
+  const noteId = escapeHtml(location.noteId || "");
+  return `
+    <div class="notes-map-cluster-popup">
+      <div class="notes-map-cluster-popup-title">${title}</div>
+      <div class="notes-location-option-meta">${subtitle}</div>
+      ${noteId ? `<button class="notes-map-cluster-popup-note" type="button" data-act="open-map-note" data-note-id="${noteId}">Abrir nota</button>` : ""}
+    </div>
+  `;
+}
+
+function buildStatsClusterPopupMarkup(cluster = {}) {
+  return `
+    <div class="notes-map-cluster-popup">
+      <div class="notes-map-cluster-popup-title">${escapeHtml(`${formatNumber(cluster.items?.length || 0)} notas agrupadas`)}</div>
+      <div class="notes-map-cluster-popup-list">
+        ${(cluster.items || []).slice(0, 8).map((item) => `
+          <button class="notes-map-cluster-popup-note" type="button" data-act="open-map-note" data-note-id="${escapeHtml(item.noteId || "")}">
+            ${escapeHtml(item.noteTitle || "Nota")}
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function createStatsClusterIcon(leaflet, count = 0) {
+  const safeCount = Math.max(1, Number(count || 0));
+  return leaflet.divIcon({
+    className: "notes-map-cluster-icon",
+    html: `<span class="notes-map-cluster${safeCount >= 10 ? " is-large" : ""}"><span class="notes-map-cluster-count">${escapeHtml(String(safeCount))}</span></span>`,
+    iconSize: safeCount >= 10 ? [38, 38] : [34, 34],
+    iconAnchor: safeCount >= 10 ? [19, 19] : [17, 17],
+  });
+}
+
+function buildStatsMapClusters(map, locations = []) {
+  const zoom = Number(map?.getZoom?.() || DEFAULT_MAP_ZOOM_SPAIN);
+  const cellSize = zoom >= 11 ? 34 : zoom >= 9 ? 42 : 54;
+  const groups = new Map();
+
+  locations.forEach((loc) => {
+    const lat = Number(loc.lat || loc.coords?.lat);
+    const lng = Number(loc.lng || loc.coords?.lng);
+    if (!hasRealLocationCoordinates(lat, lng)) return;
+    const projected = map.project([lat, lng], zoom);
+    const key = `${Math.floor(projected.x / cellSize)}:${Math.floor(projected.y / cellSize)}`;
+    const group = groups.get(key) || {
+      items: [],
+      latSum: 0,
+      lngSum: 0,
+      coordKeys: new Set(),
+    };
+    group.items.push({ ...loc, lat, lng });
+    group.latSum += lat;
+    group.lngSum += lng;
+    group.coordKeys.add(`${lat.toFixed(6)},${lng.toFixed(6)}`);
+    groups.set(key, group);
+  });
+
+  return Array.from(groups.values()).map((group) => ({
+    items: group.items,
+    lat: group.latSum / Math.max(1, group.items.length),
+    lng: group.lngSum / Math.max(1, group.items.length),
+    coordCount: group.coordKeys.size,
+  }));
+}
+
+function zoomToStatsCluster(map, leaflet, cluster = {}) {
+  const points = (cluster.items || []).map((item) => [item.lat, item.lng]);
+  if (!points.length) return;
+  const currentZoom = Number(map.getZoom?.() || 0);
+  if ((cluster.coordCount || 0) <= 1 || points.length <= 1) {
+    if (currentZoom >= 14) return;
+    map.setView(points[0], Math.min(16, Math.max(currentZoom + 2, 12)));
+    return;
+  }
+  const bounds = leaflet.latLngBounds(points);
+  map.fitBounds(bounds, {
+    padding: [40, 40],
+    maxZoom: Math.max(currentZoom + 2, 14),
+  });
+}
+
 async function initStatsMap(locations = []) {
   const el = $id("notes-stats-map");
   if (!el) return;
 
   try {
+    if (typeof el.__notesMapClusterCleanup === "function") {
+      try { el.__notesMapClusterCleanup(); } catch (_) {}
+      delete el.__notesMapClusterCleanup;
+    }
     const leaflet = await ensureLeaflet();
     if (!leaflet?.map) return;
     const map = createLeafletMap(el, {
@@ -770,7 +877,13 @@ async function initStatsMap(locations = []) {
       iconSize: [12, 12],
       iconAnchor: [6, 6],
     });
-    const markers = [];
+    const markers = locations
+      .map((loc) => ({
+        lat: Number(loc.lat || loc.coords?.lat),
+        lng: Number(loc.lng || loc.coords?.lng),
+      }))
+      .filter((point) => hasRealLocationCoordinates(point.lat, point.lng));
+    const layer = leaflet.layerGroup().addTo(map);
 
     locations.forEach((loc) => {
       const lat = Number(loc.lat || loc.coords?.lat);
@@ -778,8 +891,27 @@ async function initStatsMap(locations = []) {
       if (!hasRealLocationCoordinates(lat, lng)) return;
       const marker = leaflet.marker([lat, lng], { icon: dotIcon }).addTo(map);
       marker.bindPopup(escapeHtml(`${loc.noteTitle || "Nota"} · ${loc.address || loc.label || loc.text || "Ubicacion"}`));
-      markers.push({ lat, lng });
+      markers.push({ lat, lng, marker });
     });
+
+    const renderClusters = () => {
+      layer.clearLayers();
+      buildStatsMapClusters(map, locations).forEach((cluster) => {
+        if ((cluster.items || []).length <= 1) {
+          const item = cluster.items[0];
+          if (!item) return;
+          const marker = leaflet.marker([item.lat, item.lng], { icon: dotIcon }).addTo(layer);
+          marker.bindPopup(buildStatsSingleMarkerPopupMarkup(item));
+          return;
+        }
+
+        const marker = leaflet.marker([cluster.lat, cluster.lng], {
+          icon: createStatsClusterIcon(leaflet, cluster.items.length),
+        }).addTo(layer);
+        marker.bindPopup(buildStatsClusterPopupMarkup(cluster));
+        marker.on("click", () => zoomToStatsCluster(map, leaflet, cluster));
+      });
+    };
 
     setLeafletViewForPoints(map, markers, {
       defaultCenter: DEFAULT_MAP_CENTER_SPAIN,
@@ -787,6 +919,17 @@ async function initStatsMap(locations = []) {
       maxAutoZoom: MAX_AUTO_ZOOM,
       singlePointZoom: MAX_AUTO_ZOOM,
     });
+    markers.forEach((point) => {
+      try { point.marker?.remove?.(); } catch (_) {}
+    });
+    renderClusters();
+    map.on("zoomend", renderClusters);
+    map.on("moveend", renderClusters);
+    el.__notesMapClusterCleanup = () => {
+      map.off("zoomend", renderClusters);
+      map.off("moveend", renderClusters);
+      try { layer.clearLayers(); } catch (_) {}
+    };
     invalidateLeafletMap(map, 50);
   } catch (error) {
     console.warn("[notes:map] no se pudo cargar Leaflet", error);
@@ -993,6 +1136,179 @@ function escapeHtml(value = "") {
   }[char]));
 }
 
+function getFolderLabelById(folderId = "") {
+  return String(state.folders.find((folder) => folder.id === String(folderId || "").trim())?.name || "").trim();
+}
+
+function resetNoteLinkAutocompleteState() {
+  noteLinkAutocompleteState = { start: -1, end: -1, activeIndex: 0, items: [], query: "" };
+}
+
+function clearNoteLinkSuggestionList() {
+  const host = $id("notes-note-link-suggestions");
+  if (host) {
+    host.classList.add("hidden");
+    host.innerHTML = "";
+  }
+  resetNoteLinkAutocompleteState();
+}
+
+function buildNoteLinkSuggestions(query = "", currentNoteId = "") {
+  const lookup = normalizeNoteLookup(query);
+  const safeCurrentNoteId = String(currentNoteId || "").trim();
+
+  return (state.notes || [])
+    .filter((note) => note?.id && note.id !== safeCurrentNoteId)
+    .map((note) => {
+      const person = getNotePersonFields(note);
+      const label = getNoteDisplayTitle(note) || "Sin titulo";
+      const baseName = getNoteBaseTitle(note) || label;
+      const folderLabel = getFolderLabelById(note?.folderId);
+      const searchText = normalizeNoteLookup([
+        label,
+        baseName,
+        note?.title,
+        note?.name,
+        person.firstName,
+        person.lastName,
+        person.nationality,
+      ].filter(Boolean).join(" "));
+      const meta = [];
+      if (normalizeNoteKind(note?.noteKind) === "persona") {
+        if (person.nationality) meta.push(person.nationality);
+        else meta.push("Persona");
+      }
+      if (folderLabel) meta.push(folderLabel);
+      return {
+        note,
+        id: note.id,
+        label,
+        baseName,
+        meta: meta.join(" · "),
+        searchText,
+      };
+    })
+    .filter((item) => !lookup || item.searchText.includes(lookup))
+    .sort((a, b) => {
+      const aBase = normalizeNoteLookup(a.baseName);
+      const bBase = normalizeNoteLookup(b.baseName);
+      const aLabel = normalizeNoteLookup(a.label);
+      const bLabel = normalizeNoteLookup(b.label);
+      const aStarts = lookup ? Number(aBase.startsWith(lookup) || aLabel.startsWith(lookup)) : 1;
+      const bStarts = lookup ? Number(bBase.startsWith(lookup) || bLabel.startsWith(lookup)) : 1;
+      if (bStarts !== aStarts) return bStarts - aStarts;
+      const updatedDiff = Number(b.note?.updatedAt || b.note?.createdAt || 0) - Number(a.note?.updatedAt || a.note?.createdAt || 0);
+      if (updatedDiff !== 0) return updatedDiff;
+      return a.label.localeCompare(b.label, "es", { sensitivity: "base" });
+    })
+    .slice(0, 8);
+}
+
+function renderNoteLinkSuggestions() {
+  const host = $id("notes-note-link-suggestions");
+  const items = noteLinkAutocompleteState.items || [];
+  if (!host) return;
+  if (!items.length) {
+    host.classList.add("hidden");
+    host.innerHTML = "";
+    return;
+  }
+
+  host.innerHTML = items.map((item, index) => `
+    <button
+      class="notes-note-link-option${index === noteLinkAutocompleteState.activeIndex ? " is-active" : ""}"
+      type="button"
+      data-act="select-note-link-suggestion"
+      data-note-id="${escapeHtml(item.id)}"
+      role="option"
+      aria-selected="${index === noteLinkAutocompleteState.activeIndex ? "true" : "false"}"
+    >
+      <span class="notes-note-link-option-label">${escapeHtml(item.label)}</span>
+      <span class="notes-note-link-option-meta">${escapeHtml(item.meta || "Nota")}</span>
+    </button>
+  `).join("");
+  host.classList.remove("hidden");
+}
+
+function refreshNoteLinkSuggestions({ resetActiveIndex = false } = {}) {
+  const textarea = $id("notes-note-content");
+  if (!textarea || normalizeNoteKind($id("notes-note-kind")?.value) === "code") {
+    clearNoteLinkSuggestionList();
+    return;
+  }
+
+  const match = findActiveNoteLinkQuery(textarea.value || "", textarea.selectionStart || 0);
+  if (!match) {
+    clearNoteLinkSuggestionList();
+    return;
+  }
+
+  const currentNoteId = String($id("notes-note-id")?.value || "").trim();
+  const items = buildNoteLinkSuggestions(match.query, currentNoteId);
+  if (!items.length) {
+    clearNoteLinkSuggestionList();
+    return;
+  }
+
+  noteLinkAutocompleteState = {
+    ...match,
+    items,
+    activeIndex: resetActiveIndex ? 0 : Math.max(0, Math.min(noteLinkAutocompleteState.activeIndex || 0, items.length - 1)),
+  };
+  renderNoteLinkSuggestions();
+}
+
+function moveNoteLinkSuggestion(delta = 1) {
+  const items = noteLinkAutocompleteState.items || [];
+  if (!items.length) return false;
+  const total = items.length;
+  const currentIndex = Number(noteLinkAutocompleteState.activeIndex || 0);
+  noteLinkAutocompleteState.activeIndex = (currentIndex + delta + total) % total;
+  renderNoteLinkSuggestions();
+  return true;
+}
+
+function selectNoteLinkSuggestion(noteId = "") {
+  const textarea = $id("notes-note-content");
+  const safeNoteId = String(noteId || "").trim();
+  const item = (noteLinkAutocompleteState.items || []).find((entry) => entry.id === safeNoteId);
+  if (!textarea || !item) return;
+
+  const token = buildNoteLinkToken(item.note);
+  if (!token) return;
+
+  const value = String(textarea.value || "");
+  const start = Math.max(0, Number(noteLinkAutocompleteState.start || 0));
+  const end = Math.max(start, Number(noteLinkAutocompleteState.end || start));
+  textarea.value = `${value.slice(0, start)}${token}${value.slice(end)}`;
+  const caret = start + token.length;
+  textarea.focus();
+  textarea.setSelectionRange(caret, caret);
+  $id("notes-note-form-error").textContent = "";
+  clearNoteLinkSuggestionList();
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function buildInlineNotePreviewMarkup(note = {}) {
+  const content = String(note?.content || "");
+  const links = parseWikiLinks(content);
+  if (!links.length) return "";
+
+  let cursor = 0;
+  let html = "";
+  links.forEach((link) => {
+    html += escapeHtml(content.slice(cursor, link.start));
+    const target = resolveWikiLinkTarget(link);
+    const label = target ? (getNoteDisplayTitle(target) || link.label) : (link.label || "Enlace");
+    html += target
+      ? `<button class="notes-inline-link" type="button" data-act="open-linked-note" data-linked-note-id="${escapeHtml(target.id)}">${escapeHtml(label)}</button>`
+      : `<span class="notes-inline-link-broken" title="Nota no disponible">${escapeHtml(label)}</span>`;
+    cursor = link.end;
+  });
+  html += escapeHtml(content.slice(cursor));
+  return html.trim();
+}
+
 function tint(color, alpha = 0.18) {
   const hex = String(color || "").replace("#", "");
   if (hex.length !== 6) return `rgba(127,93,255,${alpha})`;
@@ -1038,6 +1354,125 @@ function normalizeNoteKind(value = "") {
 function normalizeCodeLanguage(value = "") {
   const safe = String(value || "").trim().toLowerCase();
   return ["css", "html", "js", "general"].includes(safe) ? safe : "general";
+}
+
+function normalizeNoteTextValue(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function splitLegacyPersonName(title = "") {
+  const normalized = normalizeNoteTextValue(title);
+  if (!normalized) return { firstName: "", lastName: "" };
+  const parts = normalized.split(" ");
+  return {
+    firstName: parts[0] || "",
+    lastName: parts.slice(1).join(" "),
+  };
+}
+
+function getNotePersonFields(note = {}) {
+  const fallbackTitle = normalizeNoteTextValue(note?.title || note?.name || "");
+  const legacy = splitLegacyPersonName(fallbackTitle);
+  return {
+    firstName: normalizeNoteTextValue(note?.person?.firstName) || legacy.firstName,
+    lastName: normalizeNoteTextValue(note?.person?.lastName) || legacy.lastName,
+    nationality: normalizeNoteTextValue(note?.person?.nationality),
+    phone: String(note?.person?.phone || "").trim(),
+    birthday: String(note?.person?.birthday || "").trim(),
+    address: String(note?.person?.address || "").trim(),
+    socials: String(note?.person?.socials || "").trim(),
+  };
+}
+
+function getNoteDisplayTitle(note = {}) {
+  const fallbackTitle = normalizeNoteTextValue(note?.title || note?.name || "");
+  if (normalizeNoteKind(note?.noteKind) !== "persona") return fallbackTitle;
+  const person = getNotePersonFields(note);
+  return normalizeNoteTextValue([person.firstName || fallbackTitle, person.lastName].filter(Boolean).join(" ")) || fallbackTitle;
+}
+
+function getNoteBaseTitle(note = {}) {
+  const fallbackTitle = normalizeNoteTextValue(note?.title || note?.name || "");
+  if (normalizeNoteKind(note?.noteKind) !== "persona") return fallbackTitle;
+  const person = getNotePersonFields(note);
+  return person.firstName || fallbackTitle;
+}
+
+function stripWikiLinkMarkup(value = "") {
+  return String(value || "").replace(/\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g, (_, label = "") => normalizeNoteTextValue(label));
+}
+
+function parseWikiLinks(value = "") {
+  const text = String(value || "");
+  const matches = [];
+  const regex = /\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g;
+  let match = regex.exec(text);
+  while (match) {
+    matches.push({
+      raw: match[0],
+      start: match.index,
+      end: match.index + match[0].length,
+      label: normalizeNoteTextValue(match[1] || ""),
+      targetId: String(match[2] || "").trim(),
+    });
+    match = regex.exec(text);
+  }
+  return matches;
+}
+
+function normalizeNoteLookup(value = "") {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("es")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function findActiveNoteLinkQuery(text = "", caretIndex = 0) {
+  const safeText = String(text || "");
+  const safeCaret = Math.max(0, Math.min(safeText.length, Number(caretIndex) || 0));
+  const beforeCaret = safeText.slice(0, safeCaret);
+  const openIndex = beforeCaret.lastIndexOf("[[");
+  if (openIndex < 0) return null;
+  const fragment = beforeCaret.slice(openIndex + 2);
+  if (!fragment || fragment.includes("]]") || fragment.includes("|") || /[\r\n]/.test(fragment)) {
+    return null;
+  }
+  return {
+    start: openIndex,
+    end: safeCaret,
+    query: normalizeNoteTextValue(fragment),
+  };
+}
+
+function buildNoteLinkToken(note = {}) {
+  const label = getNoteDisplayTitle(note) || normalizeNoteTextValue(note?.title || note?.name || "");
+  const id = String(note?.id || "").trim();
+  if (!label || !id) return "";
+  return `[[${label}|${id}]]`;
+}
+
+function resolveWikiLinkTarget(link = {}) {
+  const targetId = String(link?.targetId || "").trim();
+  if (targetId) {
+    return state.notes.find((note) => note.id === targetId) || null;
+  }
+
+  const lookup = normalizeNoteLookup(link?.label || "");
+  if (!lookup) return null;
+
+  const matches = (state.notes || []).filter((note) => {
+    const values = [
+      getNoteDisplayTitle(note),
+      getNoteBaseTitle(note),
+      String(note?.title || ""),
+      String(note?.name || ""),
+    ].map((value) => normalizeNoteLookup(value));
+    return values.includes(lookup);
+  });
+
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function formatNumber(value = 0) {
@@ -1261,7 +1696,23 @@ function updateNoteEditorMode(nextKind = "text") {
   }
 
   updateNoteLinkDependentFields(isLink);
+  if (isCode) clearNoteLinkSuggestionList();
   syncNoteModalCodeAssist();
+}
+
+function syncPersonTitleFromFirstName({ force = false } = {}) {
+  const titleInput = $id("notes-note-title");
+  const firstNameInput = $id("notes-note-person-first-name");
+  if (!titleInput || !firstNameInput || normalizeNoteKind($id("notes-note-kind")?.value) !== "persona") return;
+
+  const currentTitle = String(titleInput.value || "").trim();
+  const previousAutoTitle = String(titleInput.dataset.autoPersonTitle || "").trim();
+  const nextTitle = String(firstNameInput.value || "").trim();
+  if (!nextTitle) return;
+  if (force || !currentTitle || currentTitle === previousAutoTitle) {
+    titleInput.value = nextTitle;
+  }
+  titleInput.dataset.autoPersonTitle = nextTitle;
 }
 
 function getCurrentFolder() {
@@ -1269,7 +1720,7 @@ function getCurrentFolder() {
 }
 async function syncPersonBirthdayReminder(noteId = "", note = {}, previous = null) {
   const birthday = String(note?.person?.birthday || "").trim();
-  const title = String(note?.title || "Persona").trim();
+  const title = getNoteDisplayTitle(note) || String(note?.title || "Persona").trim();
   const existing = (state.reminders || []).find((row) => row?.noteId === noteId && row?.type === "cumpleaños");
   if (!birthday) {
     if (existing?.id) await deleteReminder(state.rootPath, existing.id);
@@ -1635,7 +2086,7 @@ async function persistNoteTagDefinitions(tags = []) {
 
 function notePreview(note) {
   if (normalizeNoteKind(note?.noteKind) === "code") return "";
-  return note.content || "";
+  return stripWikiLinkMarkup(note.content || "");
 }
 
 function buildNoteKindIcon(note = {}) {
@@ -3149,9 +3600,11 @@ function renderNoteCards(list, notes = []) {
     const preview = notePreview(note);
     const isCodeNote = normalizeNoteKind(note?.noteKind) === "code";
     const isPersonNote = normalizeNoteKind(note?.noteKind) === "persona";
+    const displayTitle = getNoteDisplayTitle(note) || note.title || "Sin tÃ­tulo";
     const noteImageUrl = isCodeNote ? "" : buildNoteImageRenderUrl(note);
     const tagPreview = resolveNoteTagPreview(note);
     const externalUrl = normalizeExternalUrl(note.url);
+    const inlineLinksPreviewMarkup = !isCodeNote && note.type !== "link" ? buildInlineNotePreviewMarkup(note) : "";
     const linkMarkup = note.type === "link"
       ? (externalUrl
         ? `
@@ -3190,6 +3643,7 @@ function renderNoteCards(list, notes = []) {
       noteImageUrl ? "has-note-image" : "",
       isCodeNote ? "is-code-note" : "",
       isNormalNote ? "is-compact-note" : "",
+      inlineLinksPreviewMarkup ? "has-note-links-preview" : "",
     ].filter(Boolean).join(" ");
     const cardStyle = buildNoteCardStyleAttribute(note);
     const ratingMarkup = buildRatingBadgeMarkup(note?.rating);
@@ -3218,9 +3672,10 @@ function renderNoteCards(list, notes = []) {
         ${mediaMarkup}
         <div class="notes-item-content">
           <div class="${headClass}"${headAttrs}>
-            <h4 class="notes-item-title">${escapeHtml(note.title || "Sin título")}</h4>
+            <h4 class="notes-item-title">${escapeHtml(displayTitle)}</h4>
             ${metaMarkup ? `<div class="notes-item-meta">${metaMarkup}</div>` : ""}
           </div>
+          ${inlineLinksPreviewMarkup ? `<div class="notes-item-preview notes-item-preview-links">${inlineLinksPreviewMarkup}</div>` : ""}
           ${personIcons ? `<p class="notes-item-preview">${escapeHtml(personIcons)}</p>` : ""}
           ${preview && note.type === "link" && !isCodeNote && !personIcons ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
           ${isCodeNote ? snippetMarkup : linkMarkup}
@@ -4445,6 +4900,7 @@ function closeNoteModal() {
   clearNotePhotoObjectUrl();
   clearNoteTagImageDrafts();
   clearLocationSuggestionList();
+  clearNoteLinkSuggestionList();
   notePhotoRemove = false;
   if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
   if ($id("notes-note-tag-image-file")) $id("notes-note-tag-image-file").value = "";
@@ -4454,6 +4910,7 @@ function closeNoteModal() {
 
 function openNoteModal(note = null, options = {}) {
   const folderId = String(note?.folderId || options.folderId || state.selectedFolderId || "").trim();
+  const person = getNotePersonFields(note);
   const allowFolderSelection = Boolean(options.allowFolderSelection)
     || !folderId
     || (!note && getChildFolders(state.folders, folderId).length > 0);
@@ -4465,6 +4922,7 @@ function openNoteModal(note = null, options = {}) {
   notePhotoRemove = false;
   clearNotePhotoObjectUrl();
   clearNoteTagImageDrafts();
+  clearNoteLinkSuggestionList();
   noteSelectedTagImageKey = buildTagDefinitionKey(note?.tagImageKey);
   if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
   if ($id("notes-note-tag-image-file")) $id("notes-note-tag-image-file").value = "";
@@ -4502,10 +4960,14 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-location-coords").value = note?.location?.coords
     ? `${note.location.coords.lat}, ${note.location.coords.lng}`
     : "";
+  $id("notes-note-person-first-name").value = person.firstName || "";
+  $id("notes-note-person-last-name").value = person.lastName || "";
+  $id("notes-note-person-nationality").value = person.nationality || "";
   $id("notes-note-person-phone").value = note?.person?.phone || "";
   $id("notes-note-person-birthday").value = note?.person?.birthday || "";
   $id("notes-note-person-address").value = note?.person?.address || "";
   $id("notes-note-person-socials").value = note?.person?.socials || "";
+  $id("notes-note-title").dataset.autoPersonTitle = person.firstName || note?.title || "";
   updateNoteEditorMode(inferredKind);
   $id("notes-note-form-error").textContent = "";
   $id("notes-note-modal-title").textContent = note ? "Editar nota" : "Nueva nota";
@@ -4786,7 +5248,7 @@ async function handleFolderDelete(folder) {
 }
 
 async function handleNoteDelete(note) {
-  if (!window.confirm(`¿Borrar nota "${note.title || "sin título"}"?`)) return;
+  if (!window.confirm(`¿Borrar nota "${getNoteDisplayTitle(note) || note.title || "sin título"}"?`)) return;
 
   try {
     await deleteNote(state.rootPath, note.id);
@@ -4891,6 +5353,8 @@ function bindNoteModalEvents() {
   const tagsTextInput = $id("notes-note-tags");
   const ratingSelect = $id("notes-note-rating");
   const noteKindSelect = $id("notes-note-kind");
+  const noteContentInput = $id("notes-note-content");
+  const personFirstNameInput = $id("notes-note-person-first-name");
   const codeLanguageSelect = $id("notes-note-code-language");
   const codeEditor = $id("notes-note-code");
   const codeShell = $id("notes-note-code-editor-shell");
@@ -4902,7 +5366,61 @@ function bindNoteModalEvents() {
 
   noteKindSelect?.addEventListener("change", (event) => {
     updateNoteEditorMode(event.target?.value);
+    if (normalizeNoteKind(event.target?.value) === "persona") {
+      syncPersonTitleFromFirstName({ force: false });
+    }
     $id("notes-note-form-error").textContent = "";
+  });
+
+  personFirstNameInput?.addEventListener("input", () => {
+    syncPersonTitleFromFirstName({ force: false });
+    $id("notes-note-form-error").textContent = "";
+  });
+
+  noteContentInput?.addEventListener("input", () => {
+    refreshNoteLinkSuggestions({ resetActiveIndex: true });
+    $id("notes-note-form-error").textContent = "";
+  });
+
+  noteContentInput?.addEventListener("click", () => {
+    refreshNoteLinkSuggestions({ resetActiveIndex: false });
+  });
+
+  noteContentInput?.addEventListener("keyup", () => {
+    refreshNoteLinkSuggestions({ resetActiveIndex: false });
+  });
+
+  noteContentInput?.addEventListener("keydown", (event) => {
+    const hasSuggestions = (noteLinkAutocompleteState.items || []).length > 0;
+    if (!hasSuggestions) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveNoteLinkSuggestion(1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveNoteLinkSuggestion(-1);
+      return;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      const active = noteLinkAutocompleteState.items[noteLinkAutocompleteState.activeIndex] || noteLinkAutocompleteState.items[0];
+      if (active?.id) selectNoteLinkSuggestion(active.id);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      clearNoteLinkSuggestionList();
+    }
+  });
+
+  noteContentInput?.addEventListener("blur", () => {
+    window.setTimeout(() => {
+      const host = $id("notes-note-link-suggestions");
+      if (host?.matches(":hover")) return;
+      clearNoteLinkSuggestionList();
+    }, 120);
   });
 
   codeLanguageSelect?.addEventListener("change", () => {
@@ -5047,8 +5565,8 @@ function bindNoteModalEvents() {
       || $id("notes-note-folder-id")?.value
       || "",
     ).trim();
-    const title = $id("notes-note-title").value.trim();
     const noteKind = normalizeNoteKind($id("notes-note-kind")?.value);
+    const rawTitle = $id("notes-note-title").value.trim();
     const content = $id("notes-note-content").value.trim();
     const code = $id("notes-note-code").value.trim();
     const codeLanguage = normalizeCodeLanguage($id("notes-note-code-language")?.value);
@@ -5070,10 +5588,14 @@ function bindNoteModalEvents() {
     const locationLng = Number($id("notes-note-location-lng")?.value || 0);
     const locationSource = $id("notes-note-location-source")?.value?.trim?.() || "";
     const locationCoords = parseLocationCoords($id("notes-note-location-coords")?.value || "");
+    const personFirstName = $id("notes-note-person-first-name")?.value?.trim?.() || "";
+    const personLastName = $id("notes-note-person-last-name")?.value?.trim?.() || "";
+    const personNationality = $id("notes-note-person-nationality")?.value?.trim?.() || "";
     const personPhone = $id("notes-note-person-phone")?.value?.trim?.() || "";
     const personBirthday = $id("notes-note-person-birthday")?.value?.trim?.() || "";
     const personAddress = $id("notes-note-person-address")?.value?.trim?.() || "";
     const personSocials = $id("notes-note-person-socials")?.value?.trim?.() || "";
+    const title = noteKind === "persona" ? (rawTitle || personFirstName || "") : rawTitle;
     const errorField = $id("notes-note-form-error");
     const submitButton = $id("notes-note-form")?.querySelector?.("button[type='submit']");
     const previousSubmitText = submitButton?.textContent || "Guardar";
@@ -5089,7 +5611,11 @@ function bindNoteModalEvents() {
       errorField.textContent = "Espera un momento a que se cargue tu espacio de notas.";
       return;
     }
-    if (!title) return;
+    if (!title) {
+      errorField.textContent = noteKind === "persona" ? "Introduce al menos el nombre de la persona." : "Introduce un titulo para la nota.";
+      (noteKind === "persona" ? $id("notes-note-person-first-name") : $id("notes-note-title"))?.focus?.();
+      return;
+    }
     if (!folderId) {
       errorField.textContent = "Selecciona una carpeta para guardar la nota.";
       $id("notes-note-folder-select")?.focus();
@@ -5119,6 +5645,7 @@ function bindNoteModalEvents() {
     const payload = {
       folderId,
       title,
+      name: title,
       content: noteKind === "code" ? "" : content,
       code: noteKind === "code" ? code : "",
       noteKind,
@@ -5153,6 +5680,9 @@ function bindNoteModalEvents() {
         coords: hasValidLocationCoordinates ? { lat: rawLocationLat, lng: rawLocationLng } : null,
       },
       person: {
+        firstName: personFirstName,
+        lastName: personLastName,
+        nationality: personNationality,
         phone: personPhone,
         birthday: personBirthday,
         address: personAddress,
@@ -5241,6 +5771,13 @@ function bindNoteModalEvents() {
   });
 
   $id("notes-note-modal-close")?.addEventListener("click", closeNoteModal);
+  $id("notes-note-link-suggestions")?.addEventListener("pointerdown", (event) => {
+    const target = event.target.closest("[data-act='select-note-link-suggestion'][data-note-id]");
+    if (!target) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectNoteLinkSuggestion(target.dataset.noteId || "");
+  });
   $id("notes-note-tag-images-list")?.addEventListener("click", (event) => {
     const actionTarget = event.target.closest("[data-act][data-tag-key]");
     if (!actionTarget) return;
@@ -5413,6 +5950,10 @@ function bindUiEvents() {
       $id(`notes-duplicate-${target.dataset.titleKey}`)?.classList.toggle("hidden");
     }
     if (target.dataset.act === "open-note-from-stats") {
+      const note = state.notes.find((row) => row.id === target.dataset.noteId);
+      if (note) openNoteModal(note);
+    }
+    if (target.dataset.act === "open-map-note") {
       const note = state.notes.find((row) => row.id === target.dataset.noteId);
       if (note) openNoteModal(note);
     }
@@ -5598,6 +6139,14 @@ function bindUiEvents() {
       if (opened) {
         registerNoteVisit(note);
       }
+      return;
+    }
+
+    if (action === "open-linked-note") {
+      event.preventDefault();
+      event.stopPropagation();
+      const linkedNote = state.notes.find((row) => row.id === String(target.dataset.linkedNoteId || "").trim());
+      if (linkedNote) openNoteModal(linkedNote);
       return;
     }
 

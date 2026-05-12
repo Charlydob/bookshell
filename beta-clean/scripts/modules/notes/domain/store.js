@@ -9,6 +9,48 @@ function normalizeId(value = "") {
   return String(value || "").trim();
 }
 
+function normalizeNoteTextValue(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function splitLegacyPersonName(title = "") {
+  const normalized = normalizeNoteTextValue(title);
+  if (!normalized) return { firstName: "", lastName: "" };
+  const parts = normalized.split(" ");
+  return {
+    firstName: parts[0] || "",
+    lastName: parts.slice(1).join(" "),
+  };
+}
+
+function getNotePersonFields(note = {}) {
+  const fallbackTitle = normalizeNoteTextValue(note?.title || note?.name || "");
+  const legacy = splitLegacyPersonName(fallbackTitle);
+  return {
+    firstName: normalizeNoteTextValue(note?.person?.firstName) || legacy.firstName,
+    lastName: normalizeNoteTextValue(note?.person?.lastName) || legacy.lastName,
+    nationality: normalizeNoteTextValue(note?.person?.nationality),
+  };
+}
+
+function getNoteDisplayTitle(note = {}) {
+  const fallbackTitle = normalizeNoteTextValue(note?.title || note?.name || "");
+  if (String(note?.noteKind || "").trim() !== "persona") return fallbackTitle;
+  const person = getNotePersonFields(note);
+  return normalizeNoteTextValue([person.firstName || fallbackTitle, person.lastName].filter(Boolean).join(" ")) || fallbackTitle;
+}
+
+function getNoteBaseTitle(note = {}) {
+  const fallbackTitle = normalizeNoteTextValue(note?.title || note?.name || "");
+  if (String(note?.noteKind || "").trim() !== "persona") return fallbackTitle;
+  const person = getNotePersonFields(note);
+  return person.firstName || fallbackTitle;
+}
+
+function stripWikiLinkMarkup(value = "") {
+  return String(value || "").replace(/\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g, (_, label = "") => normalizeNoteTextValue(label));
+}
+
 function normalizeNoteRating(value = null) {
   if (value === null || value === undefined || value === "") return null;
   const numeric = Number(value);
@@ -73,11 +115,16 @@ function buildChildrenMap(folders = [], folderMap = createFolderMap(folders)) {
 
 function buildNoteText(note = {}) {
   const parts = [
-    String(note?.title || "").trim(),
-    String(note?.content || "").trim(),
+    getNoteDisplayTitle(note),
+    stripWikiLinkMarkup(String(note?.content || "").trim()),
     String(note?.code || "").trim(),
     String(note?.previewHtml || "").trim(),
   ];
+
+  if (String(note?.noteKind || "").trim() === "persona") {
+    const person = getNotePersonFields(note);
+    parts.push(person.firstName, person.lastName, person.nationality);
+  }
 
   if (note?.type === "link") {
     parts.push(String(note?.url || "").trim());
@@ -246,7 +293,7 @@ function buildNoteInsight(note = {}) {
 
   return {
     ...note,
-    title: String(note?.title || "").trim(),
+    title: getNoteDisplayTitle(note),
     type: note?.type === "link" ? "link" : "note",
     tags,
     tagsCount: tags.length,
@@ -393,7 +440,8 @@ function computeFolderInsights(notes = [], folderId = "") {
     const monthKey = buildMonthKey(note.createdAt);
     if (!monthKey) return;
     monthlyCounts.set(monthKey, (monthlyCounts.get(monthKey) || 0) + 1);
-    const normalizedTitle = String(note.title || "").trim().toLocaleLowerCase("es");
+    const baseTitle = getNoteBaseTitle(note);
+    const normalizedTitle = baseTitle.toLocaleLowerCase("es");
     if (normalizedTitle) {
       const group = titleGroups.get(normalizedTitle) || { normalizedTitle, title: note.title || "Sin título", count: 0, notes: [] };
       group.count += 1;
@@ -402,6 +450,11 @@ function computeFolderInsights(notes = [], folderId = "") {
         title: note.title || "Sin título",
         updatedAt: note.updatedAt,
       });
+      group.title = baseTitle || group.title;
+      const lastGroupedNote = group.notes[group.notes.length - 1];
+      if (lastGroupedNote) {
+        lastGroupedNote.title = getNoteDisplayTitle(note) || lastGroupedNote.title;
+      }
       titleGroups.set(normalizedTitle, group);
     }
   });
@@ -780,12 +833,13 @@ export function filterNotesByFolder(notes = [], folderId = "", query = "", categ
 
   return byFolder.filter((note) => {
     if (safeQuery) {
-      const title = String(note.title || "").toLowerCase();
-      const content = String(note.content || "").toLowerCase();
+      const title = getNoteDisplayTitle(note).toLowerCase();
+      const legacyTitle = String(note.title || "").toLowerCase();
+      const content = stripWikiLinkMarkup(String(note.content || "")).toLowerCase();
       const url = String(note.url || "").toLowerCase();
       const location = getNoteLocationDetails(note);
       const address = normalizeLocationFilterText(location.address || location.label || location.text);
-      if (!title.includes(safeQuery) && !content.includes(safeQuery) && !url.includes(safeQuery) && !address.includes(safeQuery)) {
+      if (!title.includes(safeQuery) && !legacyTitle.includes(safeQuery) && !content.includes(safeQuery) && !url.includes(safeQuery) && !address.includes(safeQuery)) {
         return false;
       }
     }

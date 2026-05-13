@@ -343,6 +343,7 @@
   gap: 4px;
   padding: 10px 12px;
   border-radius: 14px;
+  width: 80px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
@@ -1674,7 +1675,7 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   height: 12px;
   border-radius: 999px;
   background: #d93025;
-  border: 2px solid rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(0, 0, 0, 0.88);
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
   display: block;
 }
@@ -3341,9 +3342,11 @@ font-size: 10px;
   display:block;
   margin-bottom:6px;
   color:rgba(196,160,255,.78);
-  font-size:.62rem;
+  font-size:.42rem;
   font-weight:800;
   letter-spacing:.13em;
+  width: 20px;
+  min-width: 20px;
 }
 
 .notes-detail-input,
@@ -4110,11 +4113,68 @@ font-size: 10px;
 }
 
 .notes-map-dot{
-  background:white;
+  background:red;
   box-shadow:
     0 0 18px rgba(110,231,255,.9);
 }
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background:
+    linear-gradient(160deg,
+      rgba(14, 22, 38, .96),
+      rgba(8, 14, 28, .98)
+    ) !important;
+  color: rgba(255,255,255,.92) !important;
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow:
+    0 18px 40px rgba(0,0,0,.38),
+    0 0 0 1px rgba(255,255,255,.04) inset;
+  backdrop-filter: blur(18px);
+}
 
+.leaflet-popup-content-wrapper {
+  border-radius: 18px !important;
+  overflow: hidden;
+  position: relative;
+}
+
+.leaflet-popup-content-wrapper::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background:
+    linear-gradient(90deg,
+      #38bdf8,
+      #22c55e,
+      #fbbf24
+    );
+  opacity: .9;
+}
+
+.leaflet-popup-content {
+  margin: 14px 16px !important;
+  line-height: 1.45;
+}
+
+.leaflet-container a.leaflet-popup-close-button {
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.72) !important;
+  transition: .15s ease;
+}
+
+.leaflet-container a.leaflet-popup-close-button:hover {
+  background: rgba(255,255,255,.16);
+  color: #fff !important;
+}
+.notes-map-cluster-popup-title {
+  color: white;
+}
 /* #endregion */
 
 /* #region MODALS */

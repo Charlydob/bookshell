@@ -695,6 +695,7 @@ function renderFolderStatsSectionView(folder, insights, childFolders = []) {
   activeNotesStatsSection = normalizeNotesStatsSection(activeNotesStatsSection);
   grid.innerHTML = `
     ${totalNotes ? buildActiveStatsCardMarkup(insights, averageRatingLabel, activeNotesStatsSection) : ""}
+    ${buildNationalitiesStatsMarkup(insights)}
     <article class="notes-stats-card">
       <div class="notes-stats-card-head"><h3 class="notes-stats-card-title">Mapa de ubicaciones</h3></div>
       ${locations.length ? `<div class="notes-map-shell"><div class="notes-map-frame" id="notes-stats-map"></div></div>` : '<div class="notes-stats-empty-copy">No hay notas con ubicación en esta carpeta.</div>'}
@@ -1386,7 +1387,7 @@ function getNotePersonFields(note = {}) {
   return {
     firstName: normalizeNoteTextValue(note?.person?.firstName) || legacy.firstName,
     lastName: normalizeNoteTextValue(note?.person?.lastName) || legacy.lastName,
-    nationality: normalizeNoteTextValue(note?.person?.nationality),
+    nationality: normalizeNoteTextValue(note?.person?.nationality || note?.nationality),
     phone: String(note?.person?.phone || "").trim(),
     birthday: String(note?.person?.birthday || "").trim(),
     address: String(note?.person?.address || "").trim(),
@@ -1706,7 +1707,7 @@ function buildCompactNoteMetaMarkup(note = {}) {
   const items = [
     note?.person?.phone ? { icon: "📞", label: "Telefono" } : null,
     note?.person?.socials ? { icon: "📱", label: "Movil o redes" } : null,
-    note?.person?.address ? { icon: "ðŸ ", label: "Direccion guardada" } : null,
+    note?.person?.address ? { icon: "🌍 ", label: "Direccion guardada" } : null,
     note?.location?.label || note?.location?.text ? { icon: "📍", label: "Ubicacion" } : null,
     note?.person?.birthday ? { icon: "🎂", label: "Cumpleanos" } : null,
   ].filter(Boolean);
@@ -3463,6 +3464,36 @@ function buildStatsNoteList(items = [], metaBuilder = () => "", emptyText = "Sin
   `;
 }
 
+function buildNationalitiesStatsMarkup(insights = {}) {
+  const personNotesCount = Number(insights?.personNotesCount || 0);
+  const nationalityStats = Array.isArray(insights?.nationalityStats) ? insights.nationalityStats : [];
+  if (!personNotesCount) return "";
+
+  return `
+    <article class="notes-stats-card">
+      <div class="notes-stats-card-head">
+        <h3 class="notes-stats-card-title">Nacionalidades</h3>
+        <p class="notes-stats-card-copy">Recuento de notas tipo persona agrupadas por pais.</p>
+      </div>
+      ${buildStatsMetricChips([
+        { label: "Personas", value: formatNumber(personNotesCount) },
+        { label: "Paises", value: formatNumber(nationalityStats.filter((row) => row?.label !== "Sin nacionalidad").length) },
+        { label: "Sin nacionalidad", value: formatNumber(insights?.nationalityMissingCount || 0) },
+      ])}
+      <div class="notes-stats-block">
+        <div class="notes-stats-block-head">
+          <strong>Ranking</strong>
+        </div>
+        ${buildStatsBarList(nationalityStats, {
+          labelFormatter: (row) => row.label || "Sin nacionalidad",
+          valueFormatter: (row) => `${formatNumber(row.count || 0)} personas`,
+          emptyText: "Todavia no hay personas en esta carpeta.",
+        })}
+      </div>
+    </article>
+  `;
+}
+
 function renderFolderStatsView(folder, insights, childFolders = []) {
   const kpiWrap = $id("notes-stats-kpis");
   const grid = $id("notes-stats-grid");
@@ -3974,7 +4005,7 @@ function renderNoteDetail() {
       ["Nacionalidad", person.nationality || "—"],
       ["Teléfono", person.phone || "—"],
       ["Cumpleaños", person.birthday || "—"],
-      ["Casa / dirección", person.address || note?.location?.label || "—"],
+      ["Dirección", person.address || note?.location?.label || "—"],
       ["Redes", person.socials || "—"],
     ]
     : [
@@ -4011,7 +4042,7 @@ function renderNoteDetail() {
           ${buildEditableDetailField("NACIONALIDAD", "notes-detail-person-nationality", person.nationality || "", "text")}
           ${buildEditableDetailField("TELEFONO", "notes-detail-person-phone", person.phone || "", "text")}
           ${buildEditableDetailField("CUMPLEANOS", "notes-detail-person-birthday", person.birthday || "", "date")}
-          ${buildEditableDetailField("CASA / DIRECCION", "notes-detail-person-address", person.address || note?.location?.label || "", "text")}
+          ${buildEditableDetailField("DIRECCION", "notes-detail-person-address", person.address || note?.location?.label || "", "text")}
           ${buildEditableDetailField("REDES", "notes-detail-person-socials", person.socials || "", "text")}
         </div>
         <div class="notes-detail-inline-actions">

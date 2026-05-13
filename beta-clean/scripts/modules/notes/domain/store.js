@@ -13,6 +13,20 @@ function normalizeNoteTextValue(value = "") {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
+function normalizeNoteKind(value = "") {
+  return String(value || "").trim().toLocaleLowerCase("es");
+}
+
+function normalizeNationalityKey(value = "") {
+  return normalizeNoteTextValue(value).toLocaleLowerCase("es");
+}
+
+function formatNationalityLabel(value = "") {
+  const safe = normalizeNoteTextValue(value);
+  if (!safe) return "";
+  return safe.charAt(0).toLocaleUpperCase("es") + safe.slice(1);
+}
+
 function splitLegacyPersonName(title = "") {
   const normalized = normalizeNoteTextValue(title);
   if (!normalized) return { firstName: "", lastName: "" };
@@ -29,7 +43,7 @@ function getNotePersonFields(note = {}) {
   return {
     firstName: normalizeNoteTextValue(note?.person?.firstName) || legacy.firstName,
     lastName: normalizeNoteTextValue(note?.person?.lastName) || legacy.lastName,
-    nationality: normalizeNoteTextValue(note?.person?.nationality),
+    nationality: normalizeNoteTextValue(note?.person?.nationality || note?.nationality),
   };
 }
 
@@ -290,13 +304,16 @@ function buildNoteInsight(note = {}) {
   const tags = Array.isArray(note?.tags)
     ? note.tags.map((tag) => String(tag).trim()).filter(Boolean)
     : [];
+  const person = getNotePersonFields(note);
 
   return {
     ...note,
     title: getNoteDisplayTitle(note),
+    noteKind: normalizeNoteKind(note?.noteKind),
     type: note?.type === "link" ? "link" : "note",
     tags,
     tagsCount: tags.length,
+    nationality: person.nationality,
     rating: normalizeNoteRating(note?.rating),
     visitsCount: normalizeNoteVisitsCount(note?.visitsCount),
     lastVisitedAt: normalizeVisitTimestamp(note?.lastVisitedAt),
@@ -333,6 +350,10 @@ function createEmptyFolderInsights(folderId = "") {
     totalTagAssignments: 0,
     notesWithTagsCount: 0,
     notesWithoutTagsCount: 0,
+    personNotesCount: 0,
+    nationalityKnownCount: 0,
+    nationalityMissingCount: 0,
+    nationalityStats: [],
     tagsPerNoteAverage: 0,
     tagsCoverage: 0,
     createdRecently7d: 0,
@@ -374,9 +395,11 @@ function computeFolderInsights(notes = [], folderId = "") {
 
   const totalNotes = folderNotes.length;
   const now = Date.now();
+  const personNotes = folderNotes.filter((note) => note.noteKind === "persona");
   const ratedNotes = folderNotes.filter((note) => note.rating !== null);
   const linkNotes = folderNotes.filter((note) => note.type === "link");
   const visitedNotes = linkNotes.filter((note) => normalizeNoteVisitsCount(note.visitsCount) > 0);
+  const personNotesCount = personNotes.length;
   const ratedNotesCount = ratedNotes.length;
   const unratedNotesCount = totalNotes - ratedNotesCount;
   const ratingSum = ratedNotes.reduce((sum, note) => sum + Number(note.rating || 0), 0);
@@ -406,6 +429,7 @@ function computeFolderInsights(notes = [], folderId = "") {
   const tagUsage = new Map();
   const ratedTagUsage = new Map();
   const categoryUsage = new Map();
+  const nationalityUsage = new Map();
   let totalTagAssignments = 0;
 
   folderNotes.forEach((note) => {
@@ -429,6 +453,20 @@ function computeFolderInsights(notes = [], folderId = "") {
       ratedRow.ratingTotal += Number(note.rating || 0);
       ratedTagUsage.set(label, ratedRow);
     });
+  });
+
+  personNotes.forEach((note) => {
+    const safeNationality = normalizeNoteTextValue(note.nationality);
+    const key = normalizeNationalityKey(safeNationality) || "__missing__";
+    const current = nationalityUsage.get(key) || {
+      label: safeNationality ? formatNationalityLabel(safeNationality) : "Sin nacionalidad",
+      count: 0,
+    };
+    current.count += 1;
+    if (safeNationality && current.label === current.label.toLocaleLowerCase("es")) {
+      current.label = formatNationalityLabel(safeNationality);
+    }
+    nationalityUsage.set(key, current);
   });
 
   const notesWithTagsCount = folderNotes.filter((note) => Number(note.tagsCount || 0) > 0).length;
@@ -517,6 +555,16 @@ function computeFolderInsights(notes = [], folderId = "") {
     totalTagAssignments,
     notesWithTagsCount,
     notesWithoutTagsCount: totalNotes - notesWithTagsCount,
+    personNotesCount,
+    nationalityKnownCount: personNotes.filter((note) => normalizeNoteTextValue(note.nationality)).length,
+    nationalityMissingCount: personNotes.filter((note) => !normalizeNoteTextValue(note.nationality)).length,
+    nationalityStats: Array.from(nationalityUsage.values())
+      .map((row) => ({
+        label: row.label,
+        count: row.count,
+        percentage: percentage(row.count, personNotesCount),
+      }))
+      .sort((a, b) => Number(b?.count || 0) - Number(a?.count || 0) || compareText(a?.label, b?.label)),
     tagsPerNoteAverage: totalNotes ? totalTagAssignments / totalNotes : 0,
     tagsCoverage: percentage(notesWithTagsCount, totalNotes),
     createdRecently7d: folderNotes.filter((note) => note.createdAt > 0 && (now - note.createdAt) <= (7 * DAY_MS)).length,

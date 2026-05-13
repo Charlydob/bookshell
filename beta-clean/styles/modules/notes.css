@@ -1871,6 +1871,95 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   overflow: auto;
 }
 
+.notes-location-input-row {
+  display: grid;
+  gap: 8px;
+}
+
+.notes-location-map-trigger {
+  width: 100%;
+  justify-content: center;
+  min-height: 38px;
+  margin-top: 8px;
+  padding-inline: 14px;
+  color: rgba(222, 238, 255, 0.92);
+}
+
+.notes-location-map-modal {
+  width: min(720px, calc(100vw - 16px));
+  max-height: min(88vh, 760px);
+  border-radius: 28px;
+}
+
+.notes-location-map-scroll {
+  display: grid;
+  gap: 12px;
+}
+
+.notes-location-map-shell {
+  display: grid;
+}
+
+.notes-location-map-frame {
+  min-height: 340px;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.01)),
+    rgba(7, 12, 22, 0.88);
+}
+
+.notes-location-map-selection,
+.notes-location-map-status,
+.notes-location-map-subtitle {
+  color: rgba(220, 229, 239, 0.74);
+}
+
+.notes-location-map-selection,
+.notes-location-map-status {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.notes-location-map-selection {
+  min-height: 2.8em;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.notes-location-map-status {
+  min-height: 1.4em;
+}
+
+.notes-location-map-status.is-error {
+  color: #ffb8c7;
+}
+
+.notes-location-map-actions {
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.notes-location-map-actions .btn {
+  flex: 1 1 180px;
+}
+
+@media (max-width: 640px) {
+  .notes-location-map-modal {
+    width: calc(100vw - 12px);
+  }
+
+  .notes-location-map-frame {
+    min-height: 320px;
+  }
+
+  .notes-location-map-actions .btn {
+    flex-basis: 100%;
+  }
+}
+
 .notes-location-option {
   display: grid;
   gap: 3px;

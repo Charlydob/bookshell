@@ -3,6 +3,7 @@ import {
   createLeafletMap,
   DEFAULT_MAP_CENTER_SPAIN,
   DEFAULT_MAP_ZOOM_SPAIN,
+  destroyLeafletMap,
   ensureLeaflet,
   invalidateLeafletMap,
   MAX_AUTO_ZOOM,
@@ -122,6 +123,15 @@ let notesLocationSearchTimer = null;
 let activeLocationGrouping = "country";
 let activeNoteDetailId = "";
 let activeNoteDetailSourceFolderId = "";
+let notesLocationReverseAbort = null;
+const noteLocationMapState = {
+  map: null,
+  marker: null,
+  leaflet: null,
+  selection: null,
+  tileErrorBound: false,
+  mapClickBound: false,
+};
 const reminderExpandedChecklist = new Set();
 const expandedSnippetNotes = new Set();
 const REMINDER_TYPES = ["normal", "cumpleaños", "tarea", "evento", "trámite", "checklist", "personalizado"];
@@ -1928,6 +1938,320 @@ function parseLocationCoords(rawValue = "") {
   const lng = Number(match[2]);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   return { lat, lng };
+}
+
+function formatLocationMapFallbackLabel(lat, lng) {
+  return `Lat: ${Number(lat).toFixed(5)}, Lng: ${Number(lng).toFixed(5)}`;
+}
+
+function setLocationMapStatus(message = "", { isError = false } = {}) {
+  const status = $id("notes-location-map-status");
+  if (!status) return;
+  status.textContent = String(message || "").trim();
+  status.classList.toggle("is-error", Boolean(isError));
+}
+
+function getDraftLocationFromForm() {
+  const locationLabel = String(
+    $id("notes-note-location-label")?.value
+    || $id("notes-note-location-search")?.value
+    || "",
+  ).trim();
+  const rawLat = Number($id("notes-note-location-lat")?.value || 0);
+  const rawLng = Number($id("notes-note-location-lng")?.value || 0);
+  const parsedCoords = parseLocationCoords($id("notes-note-location-coords")?.value || "");
+  const lat = hasRealLocationCoordinates(rawLat, rawLng) ? rawLat : Number(parsedCoords?.lat);
+  const lng = hasRealLocationCoordinates(rawLat, rawLng) ? rawLng : Number(parsedCoords?.lng);
+  const hasCoords = hasRealLocationCoordinates(lat, lng);
+  return {
+    label: locationLabel,
+    exactAddress: locationLabel,
+    country: String($id("notes-note-location-country")?.value || "").trim(),
+    region: String($id("notes-note-location-region")?.value || "").trim(),
+    province: String($id("notes-note-location-province")?.value || "").trim(),
+    city: String($id("notes-note-location-city")?.value || "").trim(),
+    municipality: String($id("notes-note-location-municipality")?.value || "").trim(),
+    postalCode: String($id("notes-note-location-postal-code")?.value || "").trim(),
+    source: String($id("notes-note-location-source")?.value || "").trim(),
+    lat: hasCoords ? lat : null,
+    lng: hasCoords ? lng : null,
+  };
+}
+
+function syncLocationMapConfirmButton() {
+  const confirmButton = $id("notes-location-map-confirm");
+  if (!confirmButton) return;
+  const selection = noteLocationMapState.selection;
+  confirmButton.disabled = !hasRealLocationCoordinates(selection?.lat, selection?.lng);
+}
+
+function renderLocationMapSelection() {
+  const selection = noteLocationMapState.selection;
+  const selectionEl = $id("notes-location-map-selection");
+  if (selectionEl) {
+    if (hasRealLocationCoordinates(selection?.lat, selection?.lng)) {
+      const parts = [
+        String(selection?.label || selection?.exactAddress || "").trim() || formatLocationMapFallbackLabel(selection.lat, selection.lng),
+        formatLocationMapFallbackLabel(selection.lat, selection.lng),
+      ];
+      selectionEl.textContent = parts.filter((part, index, list) => part && list.indexOf(part) === index).join(" · ");
+    } else {
+      selectionEl.textContent = "Toca el mapa o usa tu ubicaciÃ³n actual.";
+    }
+  }
+  syncLocationMapConfirmButton();
+}
+
+function updateLocationMapMarker(selection = null) {
+  const map = noteLocationMapState.map;
+  const leaflet = noteLocationMapState.leaflet;
+  if (!map || !leaflet?.marker) return;
+
+  if (!hasRealLocationCoordinates(selection?.lat, selection?.lng)) {
+    if (noteLocationMapState.marker?.remove) {
+      try { noteLocationMapState.marker.remove(); } catch (_) {}
+    }
+    noteLocationMapState.marker = null;
+    return;
+  }
+
+  if (!noteLocationMapState.marker) {
+    noteLocationMapState.marker = leaflet.marker([selection.lat, selection.lng]).addTo(map);
+  } else {
+    noteLocationMapState.marker.setLatLng([selection.lat, selection.lng]);
+    if (!map.hasLayer(noteLocationMapState.marker)) {
+      noteLocationMapState.marker.addTo(map);
+    }
+  }
+}
+
+async function reverseGeocodeNoteLocation(lat, lng) {
+  if (!hasRealLocationCoordinates(lat, lng)) return null;
+  try {
+    notesLocationReverseAbort?.abort?.();
+  } catch (_) {}
+  notesLocationReverseAbort = new AbortController();
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lng))}`;
+    const response = await fetch(url, {
+      signal: notesLocationReverseAbort.signal,
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return normalizeLocationAddress({
+      ...data,
+      display_name: data?.display_name || data?.name || formatLocationMapFallbackLabel(lat, lng),
+      lat,
+      lon: lng,
+      source: "nominatim-reverse",
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") return null;
+    console.warn("[notes:location-map:error]", error);
+    return null;
+  }
+}
+
+async function ensureNoteLocationMapReady() {
+  const host = $id("notes-location-map-host");
+  if (!host) return null;
+  const leaflet = await ensureLeaflet();
+  if (!leaflet?.map) {
+    throw new Error("Leaflet no disponible.");
+  }
+
+  let map = host.__leafletMap;
+  if (!map) {
+    map = createLeafletMap(host, {
+      center: DEFAULT_MAP_CENTER_SPAIN,
+      zoom: DEFAULT_MAP_ZOOM_SPAIN,
+    });
+  }
+  if (!map) {
+    throw new Error("No se pudo crear el mapa.");
+  }
+
+  noteLocationMapState.leaflet = leaflet;
+  noteLocationMapState.map = map;
+
+  if (!noteLocationMapState.mapClickBound) {
+    map.on("click", (event) => {
+      const lat = Number(event?.latlng?.lat);
+      const lng = Number(event?.latlng?.lng);
+      void selectLocationFromMap(lat, lng, { source: "map" });
+    });
+    noteLocationMapState.mapClickBound = true;
+  }
+
+  const layer = host.__leafletLayer;
+  if (layer?.on && !noteLocationMapState.tileErrorBound) {
+    layer.on("tileerror", () => {
+      setLocationMapStatus("No se han podido cargar los tiles del mapa. Puedes seguir seleccionando o confirmar igualmente.", { isError: false });
+    });
+    noteLocationMapState.tileErrorBound = true;
+  }
+
+  return map;
+}
+
+function centerLocationMap(selection = null) {
+  const map = noteLocationMapState.map;
+  if (!map) return;
+  if (hasRealLocationCoordinates(selection?.lat, selection?.lng)) {
+    setLeafletViewForPoints(map, [selection], {
+      defaultCenter: DEFAULT_MAP_CENTER_SPAIN,
+      defaultZoom: DEFAULT_MAP_ZOOM_SPAIN,
+      maxAutoZoom: 13,
+      singlePointZoom: 13,
+    });
+  } else {
+    setLeafletViewForPoints(map, [], {
+      defaultCenter: DEFAULT_MAP_CENTER_SPAIN,
+      defaultZoom: DEFAULT_MAP_ZOOM_SPAIN,
+    });
+  }
+  invalidateLeafletMap(map, 60);
+  invalidateLeafletMap(map, 180);
+}
+
+async function selectLocationFromMap(lat, lng, { source = "map", recenter = true } = {}) {
+  if (!hasRealLocationCoordinates(lat, lng)) return;
+  console.info("[notes:location-map:select]", { lat, lng, source });
+
+  const fallbackLabel = formatLocationMapFallbackLabel(lat, lng);
+  const requestKey = `${lat}:${lng}:${Date.now()}`;
+  noteLocationMapState.selection = {
+    lat,
+    lng,
+    label: fallbackLabel,
+    exactAddress: fallbackLabel,
+    source,
+    requestKey,
+  };
+  updateLocationMapMarker(noteLocationMapState.selection);
+  renderLocationMapSelection();
+  if (recenter) centerLocationMap(noteLocationMapState.selection);
+  setLocationMapStatus("Intentando resolver la direcciÃ³n del punto seleccionado...");
+
+  const reverse = await reverseGeocodeNoteLocation(lat, lng);
+  if (!noteLocationMapState.selection || noteLocationMapState.selection.requestKey !== requestKey) return;
+
+  if (reverse) {
+    noteLocationMapState.selection = {
+      ...noteLocationMapState.selection,
+      ...reverse,
+      lat,
+      lng,
+      label: String(reverse.label || reverse.exactAddress || fallbackLabel).trim() || fallbackLabel,
+      exactAddress: String(reverse.exactAddress || reverse.label || fallbackLabel).trim() || fallbackLabel,
+      source: source === "geolocation" ? "geolocation" : (reverse.source || source),
+      requestKey,
+    };
+    renderLocationMapSelection();
+    setLocationMapStatus(source === "geolocation" ? "UbicaciÃ³n actual lista para usar." : "Punto marcado y direcciÃ³n resuelta.");
+    return;
+  }
+
+  noteLocationMapState.selection = {
+    ...noteLocationMapState.selection,
+    label: fallbackLabel,
+    exactAddress: fallbackLabel,
+    source,
+    requestKey,
+  };
+  renderLocationMapSelection();
+  setLocationMapStatus("No se encontrÃ³ una direcciÃ³n para ese punto. Se usarÃ¡n las coordenadas.");
+}
+
+function applyLocationMapSelectionToForm() {
+  const selection = noteLocationMapState.selection;
+  if (!hasRealLocationCoordinates(selection?.lat, selection?.lng)) return false;
+  const label = String(selection?.label || selection?.exactAddress || formatLocationMapFallbackLabel(selection.lat, selection.lng)).trim();
+  selectLocationSuggestion({
+    ...selection,
+    label,
+    exactAddress: String(selection?.exactAddress || label).trim() || label,
+    text: label,
+    source: String(selection?.source || "map").trim() || "map",
+    lat: selection.lat,
+    lng: selection.lng,
+  });
+  $id("notes-note-location-status").textContent = "UbicaciÃ³n seleccionada desde el mapa.";
+  return true;
+}
+
+function closeLocationMapModal({ keepSelection = false } = {}) {
+  try {
+    notesLocationReverseAbort?.abort?.();
+  } catch (_) {}
+  notesLocationReverseAbort = null;
+  if (!keepSelection) {
+    noteLocationMapState.selection = null;
+    renderLocationMapSelection();
+  }
+  setLocationMapStatus("");
+  closeModal("notes-location-map-backdrop");
+}
+
+async function openLocationMapModal() {
+  console.info("[notes:location-map:open]");
+  const currentDraft = getDraftLocationFromForm();
+  noteLocationMapState.selection = hasRealLocationCoordinates(currentDraft.lat, currentDraft.lng)
+    ? {
+      ...currentDraft,
+      label: currentDraft.label || formatLocationMapFallbackLabel(currentDraft.lat, currentDraft.lng),
+      exactAddress: currentDraft.exactAddress || currentDraft.label || formatLocationMapFallbackLabel(currentDraft.lat, currentDraft.lng),
+    }
+    : null;
+  renderLocationMapSelection();
+  setLocationMapStatus("Cargando mapa...");
+  const currentLocationButton = $id("notes-location-map-current");
+  if (currentLocationButton) {
+    currentLocationButton.disabled = !(window.isSecureContext && navigator.geolocation);
+  }
+  openModal("notes-location-map-backdrop");
+  try {
+    await ensureNoteLocationMapReady();
+    updateLocationMapMarker(noteLocationMapState.selection);
+    centerLocationMap(noteLocationMapState.selection);
+    setLocationMapStatus(
+      hasRealLocationCoordinates(noteLocationMapState.selection?.lat, noteLocationMapState.selection?.lng)
+        ? "Puedes mover el marcador tocando otro punto del mapa."
+        : "Toca en el mapa para fijar la ubicaciÃ³n.",
+    );
+  } catch (error) {
+    console.warn("[notes:location-map:error]", error);
+    setLocationMapStatus("No se pudo cargar el mapa. El campo manual seguirÃ¡ funcionando.", { isError: true });
+  }
+}
+
+async function useCurrentLocationForMap() {
+  if (!(window.isSecureContext && navigator.geolocation)) return;
+  setLocationMapStatus("Obteniendo tu ubicaciÃ³n actual...");
+  await new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = Number(position?.coords?.latitude);
+        const lng = Number(position?.coords?.longitude);
+        try {
+          await selectLocationFromMap(lat, lng, { source: "geolocation" });
+        } finally {
+          resolve();
+        }
+      },
+      (error) => {
+        console.warn("[notes:location-map:error]", error);
+        setLocationMapStatus("No se pudo obtener tu ubicaciÃ³n actual.", { isError: true });
+        resolve();
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 60000,
+        timeout: 12000,
+      },
+    );
+  });
 }
 
 function updateNoteEditorMode(nextKind = "text") {
@@ -5698,6 +6022,7 @@ function closeNoteModal() {
   clearNotePhotoObjectUrl();
   clearNoteTagImageDrafts();
   clearLocationSuggestionList();
+  closeLocationMapModal();
   clearNoteLinkSuggestionList();
   hideNoteDuplicateWarning();
   const noteForm = $id("notes-note-form");
@@ -5766,6 +6091,9 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-location-coords").value = note?.location?.coords
     ? `${note.location.coords.lat}, ${note.location.coords.lng}`
     : "";
+  $id("notes-note-location-status").textContent = note?.location?.label || note?.location?.text
+    ? "UbicaciÃ³n cargada."
+    : "Escribe una direcciÃ³n o elige un punto en el mapa.";
   $id("notes-note-person-first-name").value = person.firstName || "";
   $id("notes-note-person-last-name").value = person.lastName || "";
   $id("notes-note-person-nationality").value = person.nationality || "";
@@ -6365,6 +6693,23 @@ function bindNoteModalEvents() {
       list.classList.toggle("hidden", rows.length === 0);
       status.textContent = rows.length ? `${rows.length} sugerencias` : "Sin resultados.";
     }, 300);
+  });
+  $id("notes-note-location-map-open")?.addEventListener("click", () => {
+    void openLocationMapModal();
+  });
+  $id("notes-location-map-close")?.addEventListener("click", () => closeLocationMapModal());
+  $id("notes-location-map-cancel")?.addEventListener("click", () => closeLocationMapModal());
+  $id("notes-location-map-current")?.addEventListener("click", () => {
+    void useCurrentLocationForMap();
+  });
+  $id("notes-location-map-confirm")?.addEventListener("click", () => {
+    if (!applyLocationMapSelectionToForm()) return;
+    closeLocationMapModal();
+  });
+  $id("notes-location-map-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === $id("notes-location-map-backdrop")) {
+      closeLocationMapModal();
+    }
   });
 
   $id("notes-note-form")?.addEventListener("submit", async (event) => {
@@ -7722,6 +8067,18 @@ export function destroy() {
   state.unlockedFolderIds = new Set();
   clearNotePhotoObjectUrl();
   clearNoteTagImageDrafts();
+  closeLocationMapModal();
+  try {
+    notesLocationReverseAbort?.abort?.();
+  } catch (_) {}
+  notesLocationReverseAbort = null;
+  destroyLeafletMap($id("notes-location-map-host"));
+  noteLocationMapState.map = null;
+  noteLocationMapState.marker = null;
+  noteLocationMapState.leaflet = null;
+  noteLocationMapState.selection = null;
+  noteLocationMapState.tileErrorBound = false;
+  noteLocationMapState.mapClickBound = false;
   notePhotoRemove = false;
   noteSaveInFlight = false;
   reminderDraftAlerts = [];

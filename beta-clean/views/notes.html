@@ -538,6 +538,7 @@
           <label class="field">
             <span class="field-label">Buscar ubicación</span>
             <input id="notes-note-location-search" type="text" placeholder="Buscar ubicación..." autocomplete="off" />
+            <button class="btn ghost btn-compact notes-location-map-trigger" id="notes-note-location-map-open" type="button">Elegir en mapa</button>
             <input id="notes-note-location-label" type="hidden" />
             <input id="notes-note-location-country" type="hidden" />
             <input id="notes-note-location-region" type="hidden" />
@@ -574,6 +575,31 @@
         <button class="btn primary" type="submit">Guardar</button>
       </div>
     </form>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="notes-location-map-backdrop">
+  <div class="modal notes-location-map-modal" role="dialog" aria-modal="true" aria-labelledby="notes-location-map-title">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="notes-location-map-title">Elegir ubicaciÃ³n</div>
+        <div class="notes-location-map-subtitle" id="notes-location-map-subtitle">Marca un punto en el mapa para asociarlo a la nota.</div>
+      </div>
+      <button class="icon-btn" id="notes-location-map-close" type="button">Ã¢Å“â€¢</button>
+    </div>
+    <div class="modal-scroll notes-location-map-scroll">
+      <div class="notes-location-map-shell">
+        <div class="notes-map-shell notes-location-map-frame" id="notes-location-map-host"></div>
+      </div>
+      <div class="notes-location-map-selection" id="notes-location-map-selection">Toca el mapa o usa tu ubicaciÃ³n actual.</div>
+      <div class="notes-location-map-status" id="notes-location-map-status"></div>
+    </div>
+    <div class="notes-modal-actions notes-location-map-actions">
+      <button class="btn ghost" id="notes-location-map-cancel" type="button">Cancelar</button>
+      <button class="btn ghost" id="notes-location-map-current" type="button">Usar mi ubicaciÃ³n actual</button>
+      <button class="btn primary" id="notes-location-map-confirm" type="button">Confirmar ubicaciÃ³n</button>
+    </div>
   </div>
 </div>
 

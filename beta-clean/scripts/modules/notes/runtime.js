@@ -115,6 +115,8 @@ let reminderCheckTimer = null;
 let reminderToastQueue = [];
 let reminderToastActive = null;
 let reminderNotificationsOpen = false;
+let reminderChecklistToggleVersion = new Map();
+let reminderChecklistToggleQueue = new Map();
 let notesLocationSearchTimer = null;
 let activeLocationGrouping = "country";
 let activeNoteDetailId = "";
@@ -4225,6 +4227,97 @@ function getReminderChecklistSummary(reminder) {
   return { items, total, done };
 }
 
+function cloneReminderForLocalState(reminder = {}) {
+  return {
+    ...reminder,
+    checklistItems: Object.entries(reminder?.checklistItems || {}).reduce((acc, [itemId, item]) => {
+      const safeItemId = String(itemId || item?.id || "").trim();
+      if (!safeItemId) return acc;
+      acc[safeItemId] = { ...item, id: safeItemId };
+      return acc;
+    }, {}),
+  };
+}
+
+function replaceReminderInState(reminderId = "", nextReminder = null) {
+  const safeReminderId = String(reminderId || "").trim();
+  if (!safeReminderId || !nextReminder) return null;
+  let updatedReminder = null;
+  state.reminders = (state.reminders || []).map((row) => {
+    if (row.id !== safeReminderId) return row;
+    updatedReminder = nextReminder;
+    return nextReminder;
+  });
+  return updatedReminder;
+}
+
+function applyReminderChecklistToggle(reminderId = "", itemId = "", done = false) {
+  const safeReminderId = String(reminderId || "").trim();
+  const safeItemId = String(itemId || "").trim();
+  if (!safeReminderId || !safeItemId) return null;
+  const currentReminder = (state.reminders || []).find((row) => row.id === safeReminderId);
+  const currentItem = currentReminder?.checklistItems?.[safeItemId];
+  if (!currentReminder || !currentItem) return null;
+  const nextChecklistItems = {
+    ...(currentReminder.checklistItems || {}),
+    [safeItemId]: {
+      ...currentItem,
+      done,
+      completedAt: done ? Date.now() : 0,
+    },
+  };
+  const checklistRows = Object.values(nextChecklistItems);
+  const allDone = checklistRows.length > 0 && checklistRows.every((row) => Boolean(row?.done));
+  const nextReminder = {
+    ...currentReminder,
+    checklistItems: nextChecklistItems,
+    status: allDone ? "completado" : "pendiente",
+    completedAt: allDone ? Date.now() : 0,
+    updatedAt: Date.now(),
+  };
+  replaceReminderInState(safeReminderId, nextReminder);
+  return nextReminder;
+}
+
+function paintReminderChecklistToggle(toggleTarget, done = false) {
+  const item = toggleTarget?.closest?.(".notes-reminder-check-item");
+  if (!item) return;
+  item.classList.toggle("is-done", Boolean(done));
+  const input = item.querySelector("input[type='checkbox']");
+  if (input) input.checked = Boolean(done);
+}
+
+function queueReminderChecklistTogglePersist(reminderId = "", itemId = "", nextReminder = null, previousReminder = null, version = 0) {
+  const safeReminderId = String(reminderId || "").trim();
+  const safeItemId = String(itemId || "").trim();
+  if (!safeReminderId || !safeItemId || !nextReminder) return Promise.resolve();
+  const key = `${safeReminderId}:${safeItemId}`;
+  const runPersist = async () => {
+    const nextItem = nextReminder?.checklistItems?.[safeItemId];
+    if (!nextItem) return;
+    try {
+      await patchReminderChecklistItem(state.rootPath, safeReminderId, safeItemId, nextItem);
+      await updateReminder(state.rootPath, safeReminderId, nextReminder);
+    } catch (error) {
+      if (reminderChecklistToggleVersion.get(key) === version && previousReminder) {
+        replaceReminderInState(safeReminderId, previousReminder);
+        renderRemindersPanel();
+        enqueueReminderToast({ message: "No se pudo guardar el cambio del checklist." });
+      }
+      throw error;
+    }
+  };
+  const previousQueue = reminderChecklistToggleQueue.get(key) || Promise.resolve();
+  const nextQueue = previousQueue
+    .catch(() => {})
+    .then(runPersist);
+  reminderChecklistToggleQueue.set(key, nextQueue);
+  nextQueue.finally(() => {
+    if (reminderChecklistToggleQueue.get(key) === nextQueue) reminderChecklistToggleQueue.delete(key);
+  });
+  return nextQueue;
+}
+
 function buildReminderAccentStyle(reminder) {
   const color = normalizeReminderColor(reminder?.color);
   return `--notes-reminder-accent:${color};--notes-reminder-accent-soft:${tint(color, 0.18)};--notes-reminder-accent-strong:${tint(color, 0.32)};`;
@@ -4400,8 +4493,8 @@ function renderReminderCardsToMarkup(reminders = []) {
             <div class="notes-reminder-progress"><span style="width:${progress}%;"></span></div>
             <div class="notes-reminder-checklist-items ${isExpanded ? "" : "hidden"}">
               ${visibleItems.map((item) => `
-                <label class="notes-reminder-check-item ${item.done ? "is-done" : ""}">
-                  <input type="checkbox" data-act="toggle-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}" data-item-id="${escapeHtml(item.id)}" ${item.done ? "checked" : ""} />
+                <label class="notes-reminder-check-item ${item.done ? "is-done" : ""}" data-act="toggle-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}" data-item-id="${escapeHtml(item.id)}">
+                  <input type="checkbox" ${item.done ? "checked" : ""} />
                   <span>${escapeHtml(item.text)}</span>
                   <button class="notes-icon-action notes-checklist-delete-inline" type="button" data-act="delete-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}" data-item-id="${escapeHtml(item.id)}">×</button>
                 </label>
@@ -6873,23 +6966,25 @@ function bindUiEvents() {
       return;
     }
     if (target.dataset.act === "toggle-checklist-item") {
-      const itemId = String(target.dataset.itemId || "").trim();
+      const toggleTarget = event.target.closest('[data-act="toggle-checklist-item"]');
+      if (!toggleTarget) return;
+      event.preventDefault();
+      const itemId = String(toggleTarget.dataset.itemId || "").trim();
       const item = reminder?.checklistItems?.[itemId];
       if (!item) return;
+      const key = `${reminder.id}:${itemId}`;
+      const version = Number(reminderChecklistToggleVersion.get(key) || 0) + 1;
+      const previousReminder = cloneReminderForLocalState(reminder);
       const done = !Boolean(item.done);
-      const completedAt = done ? Date.now() : 0;
-      await patchReminderChecklistItem(state.rootPath, reminder.id, itemId, { ...item, done, completedAt });
-      const allItems = Object.values(reminder?.checklistItems || {}).map((row) => row.id === itemId ? { ...row, done } : row);
-      const allDone = allItems.length > 0 && allItems.every((row) => row.done);
-      await updateReminder(state.rootPath, reminder.id, {
-        ...reminder,
-        checklistItems: {
-          ...(reminder.checklistItems || {}),
-          [itemId]: { ...item, done, completedAt },
-        },
-        status: allDone ? "completado" : "pendiente",
-        completedAt: allDone ? Date.now() : 0,
-      });
+      reminderChecklistToggleVersion.set(key, version);
+      paintReminderChecklistToggle(toggleTarget, done);
+      const nextReminder = applyReminderChecklistToggle(reminder.id, itemId, done);
+      if (!nextReminder) {
+        paintReminderChecklistToggle(toggleTarget, Boolean(item.done));
+        return;
+      }
+      renderRemindersPanel();
+      queueReminderChecklistTogglePersist(reminder.id, itemId, nextReminder, previousReminder, version).catch(() => {});
       return;
     }
     if (target.dataset.act === "add-checklist-item") {

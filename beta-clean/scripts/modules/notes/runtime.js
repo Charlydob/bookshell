@@ -8,6 +8,7 @@ import {
   MAX_AUTO_ZOOM,
   setLeafletViewForPoints,
 } from "../../shared/vendors/leaflet.js";
+import { renderCountryHeatmap } from "../books/world-heatmap.js";
 import {
   buildFolderInsights,
   buildFolderOptions,
@@ -20,7 +21,7 @@ import {
   getFolderPath,
   isFolderParentAllowed,
   sortNotes,
-} from "./domain/store.js?v=2026-05-12-v1";
+} from "./domain/store.js?v=2026-05-13-v1";
 import {
   createFolder,
   createNote,
@@ -689,6 +690,11 @@ function renderFolderStatsSectionView(folder, insights, childFolders = []) {
   console.debug("[notes:stats] repeated names computed", duplicateGroups.length);
   console.debug("[notes:map] locations count", locations.length);
 
+  const currentNationalitiesMapHost = grid.querySelector("#notes-nationalities-world-map");
+  if (typeof currentNationalitiesMapHost?.__geoCleanup === "function") {
+    currentNationalitiesMapHost.__geoCleanup();
+  }
+
   empty.classList.add("hidden");
   grid.classList.remove("hidden");
 
@@ -717,6 +723,7 @@ function renderFolderStatsSectionView(folder, insights, childFolders = []) {
       ${duplicateGroups.length ? `<div class="notes-stats-list">${duplicateGroups.map((group) => `<button class="notes-location-option" type="button" data-act="toggle-duplicate-group" data-title-key="${escapeHtml(group.key)}">${escapeHtml(group.title)} · ${formatNumber(group.count)} notas</button><div class="notes-stats-list hidden" id="notes-duplicate-${escapeHtml(group.key)}">${group.notes.map((note) => `<button class="notes-location-option" type="button" data-act="open-note-from-stats" data-note-id="${escapeHtml(note.id)}">${escapeHtml(note.title || "Sin título")}</button>`).join("")}</div>`).join("")}</div>` : '<div class="notes-stats-empty-copy">No hay nombres repetidos en esta carpeta.</div>'}
     </article>
   `;
+  renderNotesNationalitiesWorldMap(insights);
   if (locations.length) initStatsMap(locations);
   console.debug("[notes:map] section rendered");
 }
@@ -1369,6 +1376,163 @@ function normalizeCodeLanguage(value = "") {
 
 function normalizeNoteTextValue(value = "") {
   return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function normalizeDuplicateTitleValue(value = "") {
+  const normalized = normalizeNoteTextValue(value).toLowerCase();
+  return normalized.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeDuplicatePhoneValue(value = "") {
+  const compact = String(value || "").trim().replace(/[\s()-]+/g, "");
+  const withInternationalPrefix = compact.replace(/^00(?=\d)/, "+");
+  const cleaned = withInternationalPrefix.replace(/[^\d+]/g, "");
+  if (!cleaned) return "";
+  if (!cleaned.startsWith("+")) return cleaned.replace(/\+/g, "");
+  return `+${cleaned.slice(1).replace(/\+/g, "")}`;
+}
+
+function getDuplicateTitleCandidatesForNote(note = {}) {
+  const person = getNotePersonFields(note);
+  const fullPersonName = normalizeNoteTextValue([person.firstName, person.lastName].filter(Boolean).join(" "));
+  return Array.from(new Set([
+    note?.title,
+    note?.name,
+    getNoteDisplayTitle(note),
+    fullPersonName,
+    person.firstName,
+  ].map((value) => normalizeDuplicateTitleValue(value)).filter(Boolean)));
+}
+
+function getDuplicateTitleCandidatesForDraft({
+  title = "",
+  firstName = "",
+  lastName = "",
+} = {}) {
+  const normalizedFirstName = normalizeNoteTextValue(firstName);
+  const normalizedLastName = normalizeNoteTextValue(lastName);
+  const fullPersonName = normalizeNoteTextValue([normalizedFirstName, normalizedLastName].filter(Boolean).join(" "));
+  return Array.from(new Set([
+    title,
+    normalizedFirstName,
+    fullPersonName,
+  ].map((value) => normalizeDuplicateTitleValue(value)).filter(Boolean)));
+}
+
+function collectPotentialDuplicateNotes({
+  noteId = "",
+  title = "",
+  firstName = "",
+  lastName = "",
+  phone = "",
+} = {}) {
+  const safeNoteId = String(noteId || "").trim();
+  const titleCandidates = getDuplicateTitleCandidatesForDraft({ title, firstName, lastName });
+  const phoneCandidate = normalizeDuplicatePhoneValue(phone);
+  const matches = [];
+
+  (state.notes || []).forEach((note) => {
+    if (!note?.id || note.id === safeNoteId) return;
+    const reasons = [];
+    const existingTitleCandidates = getDuplicateTitleCandidatesForNote(note);
+    if (titleCandidates.length && titleCandidates.some((candidate) => existingTitleCandidates.includes(candidate))) {
+      reasons.push("title");
+    }
+    const existingPhone = normalizeDuplicatePhoneValue(note?.person?.phone || note?.phone || "");
+    if (phoneCandidate && existingPhone && existingPhone === phoneCandidate) {
+      reasons.push("phone");
+    }
+    if (!reasons.length) return;
+    matches.push({
+      noteId: note.id,
+      label: getNoteDisplayTitle(note) || normalizeNoteTextValue(note?.title || note?.name || "Sin titulo"),
+      reasons,
+    });
+  });
+
+  return matches.sort((left, right) => left.label.localeCompare(right.label, "es"));
+}
+
+function getDuplicateCheckSignature({
+  noteId = "",
+  title = "",
+  firstName = "",
+  lastName = "",
+  phone = "",
+} = {}) {
+  return JSON.stringify({
+    noteId: String(noteId || "").trim(),
+    title: getDuplicateTitleCandidatesForDraft({ title, firstName, lastName }),
+    phone: normalizeDuplicatePhoneValue(phone),
+  });
+}
+
+function formatDuplicateReasons(reasons = []) {
+  const labels = [];
+  if (reasons.includes("title")) labels.push("titulo");
+  if (reasons.includes("phone")) labels.push("telefono");
+  return labels.join(" y ");
+}
+
+function buildDuplicateWarningMarkup(matches = [], options = {}) {
+  const safeMatches = Array.isArray(matches) ? matches : [];
+  const title = String(options.title || "").trim() || "Posible duplicado";
+  const continueAction = String(options.continueAction || "").trim();
+  const dismissAction = String(options.dismissAction || "").trim();
+  return `
+    <p class="notes-duplicate-warning-title">${escapeHtml(title)}</p>
+    <div class="notes-duplicate-warning-list">
+      ${safeMatches.map((match) => `
+        <div class="notes-duplicate-warning-item">
+          <div class="notes-duplicate-warning-copy">
+            <div class="notes-duplicate-warning-name">${escapeHtml(match.label || "Sin titulo")}</div>
+            <div class="notes-duplicate-warning-meta">motivo: ${escapeHtml(formatDuplicateReasons(match.reasons))}</div>
+          </div>
+          <button class="btn ghost btn-compact" type="button" data-act="open-duplicate-note" data-note-id="${escapeHtml(match.noteId)}">Ver</button>
+        </div>
+      `).join("")}
+    </div>
+    <div class="notes-duplicate-warning-actions">
+      <button class="btn primary btn-compact" type="button" data-act="${escapeHtml(continueAction)}">Guardar igualmente</button>
+      <button class="btn ghost btn-compact" type="button" data-act="${escapeHtml(dismissAction)}">Seguir editando</button>
+    </div>
+  `;
+}
+
+function hideNoteDuplicateWarning() {
+  const warning = $id("notes-note-duplicate-warning");
+  if (!warning) return;
+  warning.innerHTML = "";
+  warning.classList.add("hidden");
+}
+
+function renderNoteDuplicateWarning(matches = []) {
+  const warning = $id("notes-note-duplicate-warning");
+  if (!warning) return;
+  warning.innerHTML = buildDuplicateWarningMarkup(matches, {
+    title: matches.length > 1 ? "Posibles duplicados detectados" : "Posible duplicado detectado",
+    continueAction: "confirm-note-duplicate-save",
+    dismissAction: "dismiss-note-duplicate-warning",
+  });
+  warning.classList.remove("hidden");
+}
+
+function hideNoteDetailDuplicateWarning() {
+  const warning = $id("notes-detail-duplicate-warning");
+  if (!warning) return;
+  warning.innerHTML = "";
+  warning.classList.add("hidden");
+}
+
+function renderNoteDetailDuplicateWarning(matches = []) {
+  const warning = $id("notes-detail-duplicate-warning");
+  if (!warning) return;
+  warning.innerHTML = buildDuplicateWarningMarkup(matches, {
+    title: matches.length > 1 ? "Posibles duplicados detectados" : "Posible duplicado detectado",
+    continueAction: "confirm-save-person-detail",
+    dismissAction: "dismiss-note-detail-duplicate-warning",
+  });
+  warning.classList.remove("hidden");
 }
 
 function splitLegacyPersonName(title = "") {
@@ -3468,6 +3632,8 @@ function buildNationalitiesStatsMarkup(insights = {}) {
   const personNotesCount = Number(insights?.personNotesCount || 0);
   const nationalityStats = Array.isArray(insights?.nationalityStats) ? insights.nationalityStats : [];
   if (!personNotesCount) return "";
+  const mappableNationalities = nationalityStats.filter((row) => row?.mappable);
+  const unmappedNationalities = nationalityStats.filter((row) => row?.label !== "Sin nacionalidad" && !row?.mappable);
 
   return `
     <article class="notes-stats-card">
@@ -3479,19 +3645,88 @@ function buildNationalitiesStatsMarkup(insights = {}) {
         { label: "Personas", value: formatNumber(personNotesCount) },
         { label: "Paises", value: formatNumber(nationalityStats.filter((row) => row?.label !== "Sin nacionalidad").length) },
         { label: "Sin nacionalidad", value: formatNumber(insights?.nationalityMissingCount || 0) },
+        { label: "Sin mapa", value: formatNumber(unmappedNationalities.length) },
       ])}
-      <div class="notes-stats-block">
-        <div class="notes-stats-block-head">
-          <strong>Ranking</strong>
+      <div class="notes-nationalities-layout">
+        <div class="notes-stats-block">
+          <div class="notes-stats-block-head">
+            <strong>Heatmap mundial</strong>
+          </div>
+          <div class="notes-nationalities-map-shell">
+            <div class="notes-nationalities-world-map" id="notes-nationalities-world-map" data-empty-text="Aun no hay nacionalidades ubicables en el mapa."></div>
+          </div>
+          ${mappableNationalities.length ? `
+            <p class="notes-nationalities-map-caption">
+              ${escapeHtml(`${formatNumber(mappableNationalities.length)} paises ubicados en el mapa`)}
+            </p>
+          ` : '<div class="notes-stats-empty-copy">Aun no hay nacionalidades ubicables en el mapa.</div>'}
         </div>
-        ${buildStatsBarList(nationalityStats, {
-          labelFormatter: (row) => row.label || "Sin nacionalidad",
-          valueFormatter: (row) => `${formatNumber(row.count || 0)} personas`,
-          emptyText: "Todavia no hay personas en esta carpeta.",
-        })}
+        <div class="notes-stats-block">
+          <div class="notes-stats-block-head">
+            <strong>Ranking</strong>
+          </div>
+          ${buildStatsBarList(nationalityStats, {
+            labelFormatter: (row) => row.label || "Sin nacionalidad",
+            valueFormatter: (row) => `${formatNumber(row.count || 0)} personas`,
+            emptyText: "Todavia no hay personas en esta carpeta.",
+          })}
+          ${unmappedNationalities.length ? `
+            <div class="notes-stats-block">
+              <div class="notes-stats-block-head">
+                <strong>Sin correspondencia exacta en el mapa</strong>
+              </div>
+              <div class="notes-nationalities-unmapped">
+                ${unmappedNationalities.map((row) => `
+                  <span class="notes-nationalities-unmapped-chip">${escapeHtml(row.label || row.rawLabel || "Nacionalidad")}</span>
+                `).join("")}
+              </div>
+            </div>
+          ` : ""}
+        </div>
       </div>
     </article>
   `;
+}
+
+async function renderNotesNationalitiesWorldMap(insights = {}) {
+  const host = $id("notes-nationalities-world-map");
+  if (!host) return;
+
+  const nationalityStats = Array.isArray(insights?.nationalityStats) ? insights.nationalityStats : [];
+  const entries = nationalityStats
+    .filter((row) => row?.mappable && row?.code && Number(row?.count || 0) > 0)
+    .map((row) => ({
+      code: row.code,
+      label: row.label || row.rawLabel || row.code,
+      mapName: row.mapName || row.label || row.code,
+      value: Number(row.count || 0),
+    }));
+
+  try {
+    if (!entries.length) {
+      if (typeof host.__geoCleanup === "function") {
+        host.__geoCleanup();
+        delete host.__geoCleanup;
+      }
+      host.innerHTML = `<div class="geo-empty">${escapeHtml(host.dataset.emptyText || "Aun no hay nacionalidades ubicables en el mapa.")}</div>`;
+      return;
+    }
+
+    if (!host.__notesNationalitiesMapInitLogged) {
+      console.debug("[notes:nationalities-map:init]", entries.length);
+      host.__notesNationalitiesMapInitLogged = true;
+    }
+    console.debug("[notes:nationalities-map:update]", entries.length);
+
+    await renderCountryHeatmap(host, entries, {
+      emptyLabel: host.dataset.emptyText || "Aun no hay nacionalidades ubicables en el mapa.",
+      showTooltip: true,
+      tooltipNoun: "personas",
+    });
+  } catch (error) {
+    console.warn("[notes:nationalities-map:error]", error);
+    host.innerHTML = `<div class="geo-empty">${escapeHtml(host.dataset.emptyText || "No se pudo mostrar el mapa de nacionalidades.")}</div>`;
+  }
 }
 
 function renderFolderStatsView(folder, insights, childFolders = []) {
@@ -4047,6 +4282,7 @@ function renderNoteDetail() {
         </div>
         <div class="notes-detail-inline-actions">
           <p class="notes-detail-save-feedback" id="notes-detail-save-feedback"></p>
+          <div class="notes-duplicate-warning notes-detail-duplicate-warning hidden" id="notes-detail-duplicate-warning" aria-live="polite"></div>
           <div class="notes-detail-inline-buttons">
             <button class="btn primary btn-compact" type="button" data-act="save-person-detail" data-note-id="${escapeHtml(note.id)}">Guardar cambios</button>
             <button class="btn ghost btn-compact" type="button" data-act="edit-note-detail" data-note-id="${escapeHtml(note.id)}">Editar completo</button>
@@ -4936,10 +5172,20 @@ function openNoteDetail(note = null) {
   openModal("notes-note-detail-backdrop");
 }
 
+function openDuplicateNoteReference(noteId = "", options = {}) {
+  const note = state.notes.find((row) => row.id === String(noteId || "").trim());
+  if (!note) return;
+  if (options.closeNoteModalFirst) closeNoteModal();
+  if (options.closeNoteDetailFirst) closeNoteDetail();
+  if (note.type === "note" && normalizeNoteKind(note?.noteKind) !== "code") openNoteDetail(note);
+  else openNoteModal(note);
+}
+
 function closeNoteDetail() {
   activeNoteDetailId = "";
   activeNoteDetailSourceFolderId = "";
   noteDetailSaveInFlight = false;
+  hideNoteDetailDuplicateWarning();
   closeModal("notes-note-detail-backdrop");
   renderShell();
 }
@@ -5453,6 +5699,12 @@ function closeNoteModal() {
   clearNoteTagImageDrafts();
   clearLocationSuggestionList();
   clearNoteLinkSuggestionList();
+  hideNoteDuplicateWarning();
+  const noteForm = $id("notes-note-form");
+  if (noteForm) {
+    delete noteForm.dataset.duplicateConfirmed;
+    delete noteForm.dataset.duplicateSignature;
+  }
   noteLinkDraftReferences = [];
   notePhotoRemove = false;
   if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
@@ -5523,6 +5775,12 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-person-socials").value = note?.person?.socials || "";
   $id("notes-note-title").dataset.autoPersonTitle = person.firstName || note?.title || "";
   updateNoteEditorMode(inferredKind);
+  hideNoteDuplicateWarning();
+  const noteForm = $id("notes-note-form");
+  if (noteForm) {
+    delete noteForm.dataset.duplicateConfirmed;
+    delete noteForm.dataset.duplicateSignature;
+  }
   $id("notes-note-form-error").textContent = "";
   $id("notes-note-modal-title").textContent = note ? "Editar nota" : "Nueva nota";
   updateNoteRatingPreview();
@@ -6113,6 +6371,7 @@ function bindNoteModalEvents() {
     event.preventDefault();
     if (noteSaveInFlight) return;
 
+    const noteForm = $id("notes-note-form");
     const id = String($id("notes-note-id").value || "").trim();
     const folderId = String(
       $id("notes-note-folder-select")?.value
@@ -6150,8 +6409,11 @@ function bindNoteModalEvents() {
     const personAddress = $id("notes-note-person-address")?.value?.trim?.() || "";
     const personSocials = $id("notes-note-person-socials")?.value?.trim?.() || "";
     const title = noteKind === "persona" ? (rawTitle || personFirstName || "") : rawTitle;
+    const duplicateFirstName = noteKind === "persona" ? personFirstName : "";
+    const duplicateLastName = noteKind === "persona" ? personLastName : "";
+    const duplicatePhone = noteKind === "persona" ? personPhone : "";
     const errorField = $id("notes-note-form-error");
-    const submitButton = $id("notes-note-form")?.querySelector?.("button[type='submit']");
+    const submitButton = noteForm?.querySelector?.("button[type='submit']");
     const previousSubmitText = submitButton?.textContent || "Guardar";
     const current = state.notes.find((row) => row.id === id) || null;
     let noteId = id;
@@ -6160,6 +6422,7 @@ function bindNoteModalEvents() {
     let uploadedImagePath = "";
 
     errorField.textContent = "";
+    hideNoteDuplicateWarning();
 
     if (!state.rootPath || !state.uid) {
       errorField.textContent = "Espera un momento a que se cargue tu espacio de notas.";
@@ -6193,6 +6456,27 @@ function bindNoteModalEvents() {
     if (hasLocationText && !hasValidLocationCoordinates) {
       errorField.textContent = "Selecciona una ubicación de la lista.";
       $id("notes-note-location-search")?.focus();
+      return;
+    }
+
+    const duplicateSignature = getDuplicateCheckSignature({
+      noteId: id,
+      title,
+      firstName: duplicateFirstName,
+      lastName: duplicateLastName,
+      phone: duplicatePhone,
+    });
+    const duplicateMatches = collectPotentialDuplicateNotes({
+      noteId: id,
+      title,
+      firstName: duplicateFirstName,
+      lastName: duplicateLastName,
+      phone: duplicatePhone,
+    });
+    const duplicateConfirmed = noteForm?.dataset?.duplicateConfirmed === duplicateSignature;
+    if (duplicateMatches.length && !duplicateConfirmed) {
+      if (noteForm) noteForm.dataset.duplicateSignature = duplicateSignature;
+      renderNoteDuplicateWarning(duplicateMatches);
       return;
     }
 
@@ -6327,6 +6611,29 @@ function bindNoteModalEvents() {
   });
 
   $id("notes-note-modal-close")?.addEventListener("click", closeNoteModal);
+  $id("notes-note-duplicate-warning")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act]");
+    if (!target) return;
+    if (target.dataset.act === "open-duplicate-note") {
+      openDuplicateNoteReference(target.dataset.noteId || "", { closeNoteModalFirst: true });
+      return;
+    }
+    const noteForm = $id("notes-note-form");
+    if (target.dataset.act === "confirm-note-duplicate-save") {
+      const signature = String(noteForm?.dataset?.duplicateSignature || "").trim();
+      if (noteForm && signature) noteForm.dataset.duplicateConfirmed = signature;
+      hideNoteDuplicateWarning();
+      noteForm?.requestSubmit?.();
+      return;
+    }
+    if (target.dataset.act === "dismiss-note-duplicate-warning") {
+      if (noteForm) {
+        delete noteForm.dataset.duplicateConfirmed;
+        delete noteForm.dataset.duplicateSignature;
+      }
+      hideNoteDuplicateWarning();
+    }
+  });
   $id("notes-note-link-suggestions")?.addEventListener("pointerdown", (event) => {
     const target = event.target.closest("[data-act='select-note-link-suggestion'][data-note-id]");
     if (!target) return;
@@ -6690,6 +6997,28 @@ function bindUiEvents() {
     const target = event.target.closest("[data-act]");
     if (!target) return;
 
+    if (target.dataset.act === "open-duplicate-note") {
+      openDuplicateNoteReference(target.dataset.noteId || "", { closeNoteDetailFirst: true });
+      return;
+    }
+
+    if (target.dataset.act === "dismiss-note-detail-duplicate-warning") {
+      delete target.dataset.duplicateConfirmed;
+      hideNoteDetailDuplicateWarning();
+      setNoteDetailSaveFeedback("");
+      return;
+    }
+
+    if (target.dataset.act === "confirm-save-person-detail") {
+      const saveButton = $id("notes-detail-body")?.querySelector?.("[data-act='save-person-detail'][data-note-id]");
+      if (!saveButton) return;
+      const signature = String(saveButton.dataset.duplicateSignature || "").trim();
+      if (signature) saveButton.dataset.duplicateConfirmed = signature;
+      hideNoteDetailDuplicateWarning();
+      saveButton.click();
+      return;
+    }
+
     if (target.dataset.act === "edit-note-detail") {
       const note = state.notes.find((row) => row.id === String(target.dataset.noteId || "").trim());
       if (note) {
@@ -6729,6 +7058,29 @@ function bindUiEvents() {
 
       if (!firstName) {
         setNoteDetailSaveFeedback("El nombre es obligatorio.", "error");
+        return;
+      }
+
+      hideNoteDetailDuplicateWarning();
+      const duplicateSignature = getDuplicateCheckSignature({
+        noteId: note.id,
+        title: firstName,
+        firstName,
+        lastName,
+        phone,
+      });
+      const duplicateMatches = collectPotentialDuplicateNotes({
+        noteId: note.id,
+        title: firstName,
+        firstName,
+        lastName,
+        phone,
+      });
+      const duplicateConfirmed = target.dataset.duplicateConfirmed === duplicateSignature;
+      target.dataset.duplicateSignature = duplicateSignature;
+      if (duplicateMatches.length && !duplicateConfirmed) {
+        renderNoteDetailDuplicateWarning(duplicateMatches);
+        setNoteDetailSaveFeedback("Revisa los posibles duplicados antes de guardar.", "error");
         return;
       }
 
@@ -6776,6 +7128,7 @@ function bindUiEvents() {
       };
 
       noteDetailSaveInFlight = true;
+      delete target.dataset.duplicateConfirmed;
       setNoteDetailSaveFeedback("Guardando...");
       try {
         await updateNote(state.rootPath, note.id, nextNote);

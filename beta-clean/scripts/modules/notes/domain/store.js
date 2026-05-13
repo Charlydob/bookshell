@@ -1,9 +1,110 @@
+import { getCountryEnglishName, normalizeCountryInput } from "../../books/countries.js";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_FORMATTER = new Intl.DateTimeFormat("es-ES", {
   month: "short",
   year: "2-digit",
 });
 const folderInsightsCache = new WeakMap();
+const NATIONALITY_ALIAS_TO_COUNTRY = new Map([
+  ["espanola", "Spain"],
+  ["española", "Spain"],
+  ["espanol", "Spain"],
+  ["español", "Spain"],
+  ["spanish", "Spain"],
+  ["frances", "France"],
+  ["francés", "France"],
+  ["francesa", "France"],
+  ["french", "France"],
+  ["ingles", "United Kingdom"],
+  ["inglés", "United Kingdom"],
+  ["inglesa", "United Kingdom"],
+  ["british", "United Kingdom"],
+  ["estadounidense", "United States"],
+  ["americano", "United States"],
+  ["americana", "United States"],
+  ["american", "United States"],
+  ["mexicano", "Mexico"],
+  ["mexicana", "Mexico"],
+  ["mexican", "Mexico"],
+  ["argentino", "Argentina"],
+  ["argentina", "Argentina"],
+  ["argentine", "Argentina"],
+  ["colombiano", "Colombia"],
+  ["colombiana", "Colombia"],
+  ["colombian", "Colombia"],
+  ["brasileno", "Brazil"],
+  ["brasileño", "Brazil"],
+  ["brasilena", "Brazil"],
+  ["brasileña", "Brazil"],
+  ["brazilian", "Brazil"],
+  ["portugues", "Portugal"],
+  ["portugués", "Portugal"],
+  ["portuguesa", "Portugal"],
+  ["portuguese", "Portugal"],
+  ["italiano", "Italy"],
+  ["italiana", "Italy"],
+  ["italian", "Italy"],
+  ["aleman", "Germany"],
+  ["alemán", "Germany"],
+  ["alemana", "Germany"],
+  ["german", "Germany"],
+  ["holandes", "Netherlands"],
+  ["holandés", "Netherlands"],
+  ["holandesa", "Netherlands"],
+  ["dutch", "Netherlands"],
+  ["belga", "Belgium"],
+  ["belgian", "Belgium"],
+  ["suizo", "Switzerland"],
+  ["suiza", "Switzerland"],
+  ["swiss", "Switzerland"],
+  ["austriaco", "Austria"],
+  ["austriaca", "Austria"],
+  ["austrian", "Austria"],
+  ["irlandes", "Ireland"],
+  ["irlandés", "Ireland"],
+  ["irlandesa", "Ireland"],
+  ["irish", "Ireland"],
+  ["polaco", "Poland"],
+  ["polaca", "Poland"],
+  ["polish", "Poland"],
+  ["rumano", "Romania"],
+  ["rumana", "Romania"],
+  ["romanian", "Romania"],
+  ["ucraniano", "Ukraine"],
+  ["ucraniana", "Ukraine"],
+  ["ukrainian", "Ukraine"],
+  ["ruso", "Russia"],
+  ["rusa", "Russia"],
+  ["russian", "Russia"],
+  ["chino", "China"],
+  ["china", "China"],
+  ["chinese", "China"],
+  ["japones", "Japan"],
+  ["japonés", "Japan"],
+  ["japonesa", "Japan"],
+  ["japanese", "Japan"],
+  ["coreano", "South Korea"],
+  ["coreana", "South Korea"],
+  ["korean", "South Korea"],
+  ["indio", "India"],
+  ["india", "India"],
+  ["indian", "India"],
+  ["marroqui", "Morocco"],
+  ["marroquí", "Morocco"],
+  ["moroccan", "Morocco"],
+  ["egipcio", "Egypt"],
+  ["egipcia", "Egypt"],
+  ["egyptian", "Egypt"],
+  ["sudafricano", "South Africa"],
+  ["sudafricana", "South Africa"],
+  ["south african", "South Africa"],
+  ["australiano", "Australia"],
+  ["australiana", "Australia"],
+  ["australian", "Australia"],
+  ["canadiense", "Canada"],
+  ["canadian", "Canada"],
+]);
 
 function normalizeId(value = "") {
   return String(value || "").trim();
@@ -21,10 +122,45 @@ function normalizeNationalityKey(value = "") {
   return normalizeNoteTextValue(value).toLocaleLowerCase("es");
 }
 
+function normalizeLookupKey(value = "") {
+  return normalizeNoteTextValue(value)
+    .toLocaleLowerCase("es")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "");
+}
+
 function formatNationalityLabel(value = "") {
   const safe = normalizeNoteTextValue(value);
   if (!safe) return "";
   return safe.charAt(0).toLocaleUpperCase("es") + safe.slice(1);
+}
+
+function normalizeNationalityCountry(value = "") {
+  const safe = normalizeNoteTextValue(value);
+  if (!safe) return null;
+
+  const direct = normalizeCountryInput(safe);
+  if (direct?.code) {
+    return {
+      code: direct.code,
+      label: direct.name || safe,
+      mapName: getCountryEnglishName(direct.code) || direct.name || safe,
+      source: "country",
+    };
+  }
+
+  const aliasCountry = NATIONALITY_ALIAS_TO_COUNTRY.get(normalizeLookupKey(safe));
+  if (!aliasCountry) return null;
+
+  const fromAlias = normalizeCountryInput(aliasCountry);
+  if (!fromAlias?.code) return null;
+
+  return {
+    code: fromAlias.code,
+    label: fromAlias.name || safe,
+    mapName: getCountryEnglishName(fromAlias.code) || fromAlias.name || safe,
+    source: "alias",
+  };
 }
 
 function splitLegacyPersonName(title = "") {
@@ -457,15 +593,17 @@ function computeFolderInsights(notes = [], folderId = "") {
 
   personNotes.forEach((note) => {
     const safeNationality = normalizeNoteTextValue(note.nationality);
-    const key = normalizeNationalityKey(safeNationality) || "__missing__";
+    const country = normalizeNationalityCountry(safeNationality);
+    const key = country?.code || normalizeNationalityKey(safeNationality) || "__missing__";
     const current = nationalityUsage.get(key) || {
-      label: safeNationality ? formatNationalityLabel(safeNationality) : "Sin nacionalidad",
+      code: country?.code || "",
+      mapName: country?.mapName || "",
+      label: country?.label || (safeNationality ? formatNationalityLabel(safeNationality) : "Sin nacionalidad"),
+      rawLabel: safeNationality || "",
       count: 0,
     };
     current.count += 1;
-    if (safeNationality && current.label === current.label.toLocaleLowerCase("es")) {
-      current.label = formatNationalityLabel(safeNationality);
-    }
+    if (!current.code && safeNationality && current.label === current.label.toLocaleLowerCase("es")) current.label = formatNationalityLabel(safeNationality);
     nationalityUsage.set(key, current);
   });
 
@@ -560,8 +698,13 @@ function computeFolderInsights(notes = [], folderId = "") {
     nationalityMissingCount: personNotes.filter((note) => !normalizeNoteTextValue(note.nationality)).length,
     nationalityStats: Array.from(nationalityUsage.values())
       .map((row) => ({
+        code: row.code || "",
         label: row.label,
+        rawLabel: row.rawLabel || row.label || "",
+        mapName: row.mapName || "",
         count: row.count,
+        value: row.count,
+        mappable: Boolean(row.code),
         percentage: percentage(row.count, personNotesCount),
       }))
       .sort((a, b) => Number(b?.count || 0) - Number(a?.count || 0) || compareText(a?.label, b?.label)),

@@ -24,7 +24,6 @@ function loadWorldGeoJson() {
   return worldGeoPromise;
 }
 
-// Centros “humanos” (evita ultramar/colonias)
 const CENTER_OVERRIDES = {
   FR: [2.2, 46.2],
   US: [-98.0, 39.0],
@@ -35,17 +34,16 @@ const CENTER_OVERRIDES = {
 };
 
 const CONTINENT_ANCHORS = {
-  "Europa": [15, 54],
-  "África": [20, 5],
-  "Asia": [95, 35],
+  Europa: [15, 54],
+  África: [20, 5],
+  Asia: [95, 35],
   "América del Norte": [-105, 45],
   "América del Sur": [-60, -15],
-  "Oceanía": [145, -25],
-  "Otros": [0, 0],
+  Oceanía: [145, -25],
+  Otros: [0, 0],
 };
 
 function continentFromLonLat(lon, lat) {
-  // Heurística suficiente para tu caso (y mejor que nada sin dataset completo)
   if (lat < -10 && lon >= -90 && lon <= -30) return "América del Sur";
   if (lat >= -10 && lat <= 70 && lon >= -170 && lon <= -30) return "América del Norte";
   if (lat >= 35 && lon >= -25 && lon <= 60) return "Europa";
@@ -66,12 +64,16 @@ function featureCenterByName(echartsLib, name) {
   const coords = f?.geometry?.coordinates;
   if (!coords) return null;
 
-  let minX = 999, minY = 999, maxX = -999, maxY = -999;
+  let minX = 999;
+  let minY = 999;
+  let maxX = -999;
+  let maxY = -999;
   const walk = (a) =>
     Array.isArray(a[0])
       ? a.forEach(walk)
       : (() => {
-          const x = a[0], y = a[1];
+          const x = a[0];
+          const y = a[1];
           if (typeof x !== "number" || typeof y !== "number") return;
           minX = Math.min(minX, x);
           maxX = Math.max(maxX, x);
@@ -87,25 +89,35 @@ function featureCenterByName(echartsLib, name) {
 export async function renderCountryHeatmap(host, entries = [], options = {}) {
   if (!host) return;
 
-  if (typeof host.__geoCleanup === "function") {
-    host.__geoCleanup();
-    delete host.__geoCleanup;
-  }
-
   if (!entries || entries.length === 0) {
+    if (typeof host.__geoCleanup === "function") {
+      host.__geoCleanup();
+      delete host.__geoCleanup;
+    }
     host.innerHTML = `<div class="geo-empty">${options.emptyLabel || "Aún no hay países"}</div>`;
     return;
   }
 
   const echartsLib = await ensureEcharts();
   if (!echartsLib) {
+    if (typeof host.__geoCleanup === "function") {
+      host.__geoCleanup();
+      delete host.__geoCleanup;
+    }
     host.innerHTML = `<div class="geo-empty">No se pudo cargar la librería de mapas.</div>`;
     return;
   }
 
-  host.innerHTML = `<div class="geo-empty">Cargando mapa…</div>`;
+  if (!host.__geoChart) {
+    host.innerHTML = `<div class="geo-empty">Cargando mapa…</div>`;
+  }
+
   const geo = await loadWorldGeoJson();
   if (!geo) {
+    if (typeof host.__geoCleanup === "function") {
+      host.__geoCleanup();
+      delete host.__geoCleanup;
+    }
     host.innerHTML = `<div class="geo-empty">No se pudo cargar el mapa mundial.</div>`;
     return;
   }
@@ -118,15 +130,37 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
     label: e.label || e.code,
     rawCode: (e.code || "").toUpperCase(),
   }));
-
   const maxVal = Math.max(...data.map((d) => Number(d.value) || 0), 1);
+  const showTooltip = options.showTooltip !== false;
+  const tooltipNoun = String(options.tooltipNoun || "elementos").trim() || "elementos";
 
-  const chart = echartsLib.init(host, null, { renderer: "canvas" });
+  let chart = host.__geoChart;
+  if (!chart || chart.isDisposed?.()) {
+    host.innerHTML = "";
+    chart = echartsLib.getInstanceByDom(host) || echartsLib.init(host, null, { renderer: "canvas" });
+  }
 
   const option = {
     backgroundColor: "transparent",
-    tooltip: { show: false }, // ✅ adiós tooltip al pasar el dedo
-
+    tooltip: showTooltip ? {
+      trigger: "item",
+      confine: true,
+      appendToBody: true,
+      backgroundColor: "rgba(8, 12, 20, 0.94)",
+      borderColor: "rgba(255,255,255,0.12)",
+      borderWidth: 1,
+      textStyle: {
+        color: "#f6f9ff",
+        fontSize: 12,
+      },
+      formatter: (params = {}) => {
+        const raw = params?.data || {};
+        const label = raw.label || params?.name || "País";
+        const value = Number(raw.value || 0);
+        const suffix = value === 1 ? tooltipNoun.replace(/s$/u, "") : tooltipNoun;
+        return `${label}<br/>${value} ${suffix}`;
+      },
+    } : { show: false },
     visualMap: {
       min: 0,
       max: maxVal,
@@ -145,10 +179,9 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
       text: ["Más", "Menos"],
       textStyle: { color: "var(--txt, #fff)" },
     },
-
     geo: {
       map: "world",
-      roam: true, // ✅ zoom + drag
+      roam: true,
       scaleLimit: { min: 1, max: 6 },
       itemStyle: {
         areaColor: "rgba(255,255,255,0)",
@@ -157,9 +190,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
       },
       emphasis: { itemStyle: { areaColor: "rgba(226,184,66,0.35)" } },
     },
-
     series: [
-      // 0) Mapa
       {
         type: "map",
         map: "world",
@@ -170,8 +201,6 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
         select: { disabled: true },
         data,
       },
-
-      // 1) Línea amarilla
       {
         type: "lines",
         coordinateSystem: "geo",
@@ -181,8 +210,6 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
         data: [],
         z: 10,
       },
-
-      // 2) Etiqueta
       {
         type: "scatter",
         coordinateSystem: "geo",
@@ -212,16 +239,19 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
   };
 
   chart.setOption(option);
-
-  // ✅ arregla el “width 100px” cuando se inicializa oculto
   host.__geoChart = chart;
   requestAnimationFrame(() => chart.resize());
 
-  const ro = new ResizeObserver(() => chart.resize());
-  ro.observe(host);
+  if (!host.__geoResizeObserver) {
+    const ro = new ResizeObserver(() => host.__geoChart?.resize?.());
+    ro.observe(host);
+    host.__geoResizeObserver = ro;
+  }
 
-  const onWinResize = () => chart.resize();
-  window.addEventListener("resize", onWinResize);
+  if (!host.__geoWindowResize) {
+    host.__geoWindowResize = () => host.__geoChart?.resize?.();
+    window.addEventListener("resize", host.__geoWindowResize);
+  }
 
   let raf = 0;
   function updateCallouts() {
@@ -229,16 +259,13 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
     raf = requestAnimationFrame(() => {
       const zoom = chart.getOption()?.geo?.[0]?.zoom || 1;
       const countryMode = zoom >= 1.6;
-
       const w = chart.getWidth();
       const h = chart.getHeight();
       const margin = 20;
-
       const lines = [];
       const points = [];
 
       if (!countryMode) {
-        // Modo continentes (agrega y evita solapes)
         const agg = new Map();
 
         for (const d of data) {
@@ -250,10 +277,9 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
         }
 
         for (const [cont, value] of agg.entries()) {
-          const fromGeo = CONTINENT_ANCHORS[cont] || CONTINENT_ANCHORS["Otros"];
+          const fromGeo = CONTINENT_ANCHORS[cont] || CONTINENT_ANCHORS.Otros;
           const fromPx = chart.convertToPixel({ geoIndex: 0 }, fromGeo);
           if (!fromPx) continue;
-
           if (
             fromPx[0] < -margin || fromPx[0] > w + margin ||
             fromPx[1] < -margin || fromPx[1] > h + margin
@@ -268,7 +294,6 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
           points.push({ value: [toGeo[0], toGeo[1], value], raw: { label: cont, value } });
         }
       } else {
-        // Modo países (con filtro viewport + línea siempre pegada)
         for (const d of data) {
           if (!d.value) continue;
 
@@ -277,8 +302,6 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
 
           const fromPx = chart.convertToPixel({ geoIndex: 0 }, fromGeo);
           if (!fromPx) continue;
-
-          // ✅ si el país no está en pantalla: fuera etiqueta (adiós USA fantasma)
           if (
             fromPx[0] < -margin || fromPx[0] > w + margin ||
             fromPx[1] < -margin || fromPx[1] > h + margin
@@ -298,21 +321,31 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
       }
 
       chart.setOption({
-        series: [
-          {},              // map
-          { data: lines }, // lines
-          { data: points } // labels
-        ],
+        series: [{}, { data: lines }, { data: points }],
       });
     });
   }
 
+  if (host.__geoUpdateCallouts) {
+    chart.off("georoam", host.__geoUpdateCallouts);
+  }
   updateCallouts();
+  host.__geoUpdateCallouts = updateCallouts;
   chart.on("georoam", updateCallouts);
 
   host.__geoCleanup = () => {
-    window.removeEventListener("resize", onWinResize);
-    ro.disconnect();
+    if (host.__geoWindowResize) {
+      window.removeEventListener("resize", host.__geoWindowResize);
+      delete host.__geoWindowResize;
+    }
+    if (host.__geoResizeObserver) {
+      host.__geoResizeObserver.disconnect();
+      delete host.__geoResizeObserver;
+    }
+    if (host.__geoUpdateCallouts) {
+      chart.off("georoam", host.__geoUpdateCallouts);
+      delete host.__geoUpdateCallouts;
+    }
     try { chart.dispose(); } catch (_) {}
     delete host.__geoChart;
   };
@@ -340,4 +373,3 @@ export function renderCountryList(container, stats = [], noun = "elemento") {
     container.appendChild(row);
   });
 }
-

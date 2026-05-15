@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-04-30-rtdb-lifecycle-v2";
+const APP_VERSION = "2026-05-15-notes-v1";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 

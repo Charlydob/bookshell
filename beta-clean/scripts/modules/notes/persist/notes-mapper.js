@@ -29,6 +29,37 @@ function normalizeImageTimestamp(value = 0) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
 }
 
+function normalizeAttachmentName(value = "", fallback = "") {
+  return String(value || fallback || "").trim();
+}
+
+function normalizeAttachmentStoragePath(value = "") {
+  return String(value || "").trim();
+}
+
+function normalizeNoteAttachmentImage(value = {}, index = 0) {
+  const id = String(value?.id || `attachment_${index}`).trim();
+  const url = normalizeImageUrl(value?.url || value?.base64);
+  if (!id || !url) return null;
+  return {
+    id,
+    url,
+    storagePath: normalizeAttachmentStoragePath(value?.storagePath || value?.path),
+    name: normalizeAttachmentName(value?.name, `Imagen ${index + 1}`),
+    createdAt: Number(value?.createdAt || Date.now()),
+  };
+}
+
+function normalizeNoteAttachments(value = {}) {
+  const imagesSource = Array.isArray(value?.images)
+    ? value.images
+    : (Array.isArray(value) ? value : []);
+  const images = imagesSource
+    .map((item, index) => normalizeNoteAttachmentImage(item, index))
+    .filter(Boolean);
+  return { images };
+}
+
 function normalizePersonText(value = "") {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
@@ -273,6 +304,7 @@ export function mapNoteFromDb(id, value = {}) {
     imageUrl: normalizeImageUrl(value?.imageUrl),
     imagePath: normalizeImagePath(value?.imagePath),
     imageUpdatedAt: normalizeImageTimestamp(value?.imageUpdatedAt),
+    attachments: normalizeNoteAttachments(value?.attachments),
     tagImageKey: normalizeNoteTagImageKey(value?.tagImageKey),
     rating: normalizeNoteRating(value?.rating),
     visitsCount: normalizeNoteVisitsCount(value?.visitsCount),
@@ -306,6 +338,7 @@ export function mapNoteToDb(note = {}) {
     imageUrl: normalizeImageUrl(note?.imageUrl),
     imagePath: normalizeImagePath(note?.imagePath),
     imageUpdatedAt: normalizeImageTimestamp(note?.imageUpdatedAt),
+    attachments: normalizeNoteAttachments(note?.attachments),
     tagImageKey: normalizeNoteTagImageKey(note?.tagImageKey),
     rating: normalizeNoteRating(note?.rating),
     visitsCount: normalizeNoteVisitsCount(note?.visitsCount),

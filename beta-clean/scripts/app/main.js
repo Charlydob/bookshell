@@ -102,7 +102,7 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 });
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
-const NOTES_MODULE_VERSION = "2026-04-28-v2";
+const NOTES_MODULE_VERSION = "2026-05-15-v1";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "improvements", label: "Fix", viewId: "view-improvements" },

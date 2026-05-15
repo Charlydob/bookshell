@@ -16,6 +16,16 @@ function buildTagImageStoragePath(uid = "", tagKey = "") {
   return `notes/${safeUid}/tags/${safeTagKey}/cover`;
 }
 
+function buildNoteAttachmentStoragePath(uid = "", noteId = "", attachmentId = "") {
+  const safeUid = normalizeId(uid);
+  const safeNoteId = normalizeId(noteId);
+  const safeAttachmentId = normalizeId(attachmentId);
+  if (!safeUid || !safeNoteId || !safeAttachmentId) {
+    throw new Error("No se pudo resolver la ruta del adjunto de la nota.");
+  }
+  return `notes/${safeUid}/attachments/${safeNoteId}/${safeAttachmentId}`;
+}
+
 function isRemoteUrl(value = "") {
   return /^https?:\/\//i.test(String(value || "").trim());
 }
@@ -148,6 +158,22 @@ export async function uploadNoteTagImageAsset(uid, tagKey, file) {
   return { path: url, url };
 }
 
+export async function uploadNoteAttachmentImageAsset(uid, noteId, attachmentId, file) {
+  const safeUid = normalizeId(uid);
+  const safeNoteId = normalizeId(noteId);
+  const safeAttachmentId = normalizeId(attachmentId);
+  if (!safeUid || !safeNoteId || !safeAttachmentId) {
+    throw new Error("No se pudo identificar el adjunto de la nota.");
+  }
+  if (!(file instanceof File)) throw new Error("No se ha seleccionado ninguna imagen valida.");
+
+  const url = await uploadImageToCloudinary(file);
+  return {
+    path: isCloudinaryUrl(url) ? url : buildNoteAttachmentStoragePath(safeUid, safeNoteId, safeAttachmentId),
+    url,
+  };
+}
+
 export async function deleteNoteImageAsset(uid, noteId, path = "", imageUrl = "") {
   const safeUid = normalizeId(uid);
   const safeNoteId = normalizeId(noteId);
@@ -184,6 +210,31 @@ export async function deleteNoteTagImageAsset(uid, tagKey, path = "", imageUrl =
   const safePath = normalizedPath || buildTagImageStoragePath(safeUid, safeTagKey);
   if (isRemoteUrl(safePath)) return false;
   if (isLegacyFirebaseStoragePath(safePath) && isCloudinaryUrl(safeImageUrl)) return false;
+  if (isLocalDevHost()) return false;
+
+  const { storage, storageRef, deleteObject } = await loadFirebaseDeleteApi();
+
+  try {
+    await deleteObject(storageRef(storage, safePath));
+    return true;
+  } catch (error) {
+    if (String(error?.code || "") === "storage/object-not-found") return false;
+    if (/Failed to fetch|NetworkError|ERR_FAILED|CORS/i.test(String(error?.message || ""))) return false;
+    throw error;
+  }
+}
+
+export async function deleteNoteAttachmentImageAsset(uid, noteId, attachmentId, path = "", imageUrl = "") {
+  const safeUid = normalizeId(uid);
+  const safeNoteId = normalizeId(noteId);
+  const safeAttachmentId = normalizeId(attachmentId);
+  if (!safeUid || !safeNoteId || !safeAttachmentId) return false;
+
+  const normalizedPath = normalizeId(path);
+  const safeImageUrl = String(imageUrl || "").trim();
+  if (!normalizedPath && isCloudinaryUrl(safeImageUrl)) return false;
+  const safePath = normalizedPath || buildNoteAttachmentStoragePath(safeUid, safeNoteId, safeAttachmentId);
+  if (isRemoteUrl(safePath)) return false;
   if (isLocalDevHost()) return false;
 
   const { storage, storageRef, deleteObject } = await loadFirebaseDeleteApi();

@@ -40,14 +40,16 @@ import {
   updateFolder,
   updateNote,
   updateReminder,
-} from "./persist/notes-datasource.js?v=2026-05-12-v1";
+} from "./persist/notes-datasource.js?v=2026-05-15-v1";
 import {
+  deleteNoteAttachmentImageAsset,
   deleteNoteImageAsset,
   deleteNoteTagImageAsset,
   downscaleNoteImageFile,
+  uploadNoteAttachmentImageAsset,
   uploadNoteImageAsset,
   uploadNoteTagImageAsset,
-} from "./persist/notes-storage.js?v=2026-04-28-v2";
+} from "./persist/notes-storage.js?v=2026-05-15-v1";
 import {
   buildTagDefinitionKey,
   normalizeTagLabel,
@@ -104,6 +106,7 @@ let notePhotoObjectUrl = null;
 let notePhotoRemove = false;
 let noteSaveInFlight = false;
 let noteDetailSaveInFlight = false;
+let noteAttachmentDrafts = [];
 let noteTagImageDrafts = new Map();
 let activeNoteTagImageKey = "";
 let noteSelectedTagImageKey = "";
@@ -124,6 +127,7 @@ let activeLocationGrouping = "country";
 let activeNoteDetailId = "";
 let activeNoteDetailSourceFolderId = "";
 let notesLocationReverseAbort = null;
+let pendingReminderRemoteRestore = null;
 const noteLocationMapState = {
   map: null,
   marker: null,
@@ -1158,6 +1162,177 @@ function escapeHtml(value = "") {
     '"': "&quot;",
     "'": "&#39;",
   }[char]));
+}
+
+const EXTERNAL_LINK_PATTERN = /(?:https?:\/\/|www\.|mailto:)[^\s<>"']+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+
+function trimDetectedLinkText(value = "") {
+  let safe = String(value || "").trim();
+  while (/[),.;!?]$/.test(safe)) {
+    const lastChar = safe.slice(-1);
+    if (lastChar === ")" && ((safe.match(/\(/g) || []).length >= (safe.match(/\)/g) || []).length)) break;
+    safe = safe.slice(0, -1);
+  }
+  return safe;
+}
+
+function normalizeDetectedExternalHref(rawValue = "") {
+  const raw = trimDetectedLinkText(rawValue);
+  if (!raw) return "";
+  if (/^mailto:/i.test(raw)) {
+    const address = raw.slice(7).trim();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) ? `mailto:${address}` : "";
+  }
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(raw)) {
+    return `mailto:${raw}`;
+  }
+  return normalizeExternalUrl(raw);
+}
+
+function extractExternalLinksFromText(value = "") {
+  const source = String(value || "");
+  if (!source) return [];
+  const matches = [];
+  EXTERNAL_LINK_PATTERN.lastIndex = 0;
+  let match = null;
+  while ((match = EXTERNAL_LINK_PATTERN.exec(source))) {
+    const matchedText = String(match[0] || "");
+    const raw = trimDetectedLinkText(matchedText);
+    const offset = matchedText.length - raw.length;
+    const href = normalizeDetectedExternalHref(raw);
+    if (!raw || !href) continue;
+    matches.push({
+      type: "external",
+      raw,
+      href,
+      start: match.index,
+      end: match.index + raw.length,
+      trimOffset: offset,
+    });
+  }
+  return matches;
+}
+
+function getFriendlyExternalLinkLabel(href = "") {
+  const safeHref = String(href || "").trim();
+  if (!safeHref) return "Enlace";
+  if (/^mailto:/i.test(safeHref)) return "Correo";
+  try {
+    const url = new URL(safeHref);
+    const host = String(url.hostname || "").toLowerCase().replace(/^www\./, "");
+    const path = `${url.pathname || ""}${url.search || ""}`.toLowerCase();
+    if (host.includes("mail.google.com") || host.includes("gmail.com")) return "Correo";
+    if (host.includes("drive.google.com")) return "Drive";
+    if (host.includes("maps.google.") || host.includes("google.com") && path.includes("/maps") || host.includes("maps.app.goo.gl")) return "Mapa";
+    if (host.includes("youtube.com") || host.includes("youtu.be")) return "YouTube";
+    return host || "Enlace";
+  } catch (_) {
+    return safeHref.replace(/^mailto:/i, "") || "Enlace";
+  }
+}
+
+function escapePlainTextWithBreaks(value = "") {
+  return escapeHtml(String(value || "")).replace(/\n/g, "<br>");
+}
+
+function buildExternalLinkAnchorMarkup(link, {
+  className = "notes-detected-link",
+  displayText = "",
+} = {}) {
+  const href = String(link?.href || "").trim();
+  if (!href) return escapePlainTextWithBreaks(displayText || link?.raw || "");
+  const label = String(displayText || link?.raw || href).trim() || href;
+  return `
+    <a
+      class="${escapeHtml(className)}"
+      href="${escapeHtml(href)}"
+      target="_blank"
+      rel="noopener noreferrer"
+      data-external-link="true"
+    >${escapePlainTextWithBreaks(label)}</a>
+  `;
+}
+
+function buildSafeLinkedTextMarkup(value = "", { className = "notes-detected-link" } = {}) {
+  const source = String(value || "");
+  if (!source) return "";
+  const matches = extractExternalLinksFromText(source);
+  if (!matches.length) return escapePlainTextWithBreaks(source);
+  let cursor = 0;
+  let markup = "";
+  matches.forEach((link) => {
+    if (link.start < cursor) return;
+    markup += escapePlainTextWithBreaks(source.slice(cursor, link.start));
+    markup += buildExternalLinkAnchorMarkup(link, { className });
+    cursor = link.end;
+  });
+  markup += escapePlainTextWithBreaks(source.slice(cursor));
+  return markup;
+}
+
+function collectExternalLinksFromValues(...values) {
+  const seen = new Set();
+  const links = [];
+  values.flat().forEach((value) => {
+    extractExternalLinksFromText(value).forEach((item) => {
+      const href = String(item?.href || "").trim();
+      if (!href || seen.has(href)) return;
+      seen.add(href);
+      links.push(item);
+    });
+  });
+  return links;
+}
+
+function buildDetectedLinksListMarkup(links = [], { empty = "" } = {}) {
+  const safeLinks = Array.isArray(links) ? links.filter((item) => String(item?.href || "").trim()) : [];
+  if (!safeLinks.length) return empty;
+  return `
+    <div class="notes-links-preview">
+      ${safeLinks.map((link) => `
+        <a
+          class="notes-links-preview__item"
+          href="${escapeHtml(link.href)}"
+          target="_blank"
+          rel="noopener noreferrer"
+          data-external-link="true"
+          title="${escapeHtml(link.href)}"
+        >
+          <span class="notes-links-preview__label">${escapeHtml(getFriendlyExternalLinkLabel(link.href))}</span>
+          <span class="notes-links-preview__sep"> - </span>
+          <span class="notes-links-preview__url">${escapeHtml(link.raw || link.href)}</span>
+        </a>
+      `).join("")}
+    </div>
+  `;
+}
+
+function getNoteAttachmentImages(note = {}) {
+  return Array.isArray(note?.attachments?.images)
+    ? note.attachments.images.filter((item) => item?.id && item?.url)
+    : [];
+}
+
+function collectNoteExternalLinks(note = {}) {
+  const values = [note?.title || "", note?.content || ""];
+  if (note?.type === "link" && note?.url) values.push(note.url);
+  if (normalizeNoteKind(note?.noteKind) === "persona") {
+    values.push(note?.person?.phone || "", note?.person?.socials || "", note?.person?.address || "");
+  }
+  return collectExternalLinksFromValues(values);
+}
+
+function collectReminderExternalLinks(reminder = {}) {
+  return collectExternalLinksFromValues(reminder?.title || "", reminder?.description || "");
+}
+
+function getReminderSelectedOccurrenceDateKey(reminder = {}) {
+  if (!reminder?.targetDate) return "";
+  const selectedYear = parseDateKey(state.reminderCalendarSelectedDate || "")?.year || new Date().getFullYear();
+  return getReminderOccurrenceDateKey(
+    reminder,
+    reminder?.repeat === "yearly" ? selectedYear : null,
+  );
 }
 
 function getFolderLabelById(folderId = "") {
@@ -2659,6 +2834,34 @@ async function persistNoteTagDefinitions(tags = []) {
   }
 }
 
+function buildNoteAttachmentsMarkup(images = [], { compact = false } = {}) {
+  const safeImages = Array.isArray(images) ? images.filter((item) => item?.id && item?.url) : [];
+  if (!safeImages.length) return "";
+  return `
+    <div class="notes-attachments-preview${compact ? " is-compact" : ""}">
+      ${safeImages.map((image) => `
+        <a
+          class="notes-attachments-preview__item"
+          href="${escapeHtml(image.url)}"
+          target="_blank"
+          rel="noopener noreferrer"
+          data-external-link="true"
+          title="${escapeHtml(image.name || "Imagen adjunta")}"
+        >
+          <img
+            class="notes-attachments-preview__thumb"
+            src="${escapeHtml(image.url)}"
+            alt="${escapeHtml(image.name || "Imagen adjunta")}"
+            loading="lazy"
+            decoding="async"
+          />
+          ${compact ? "" : `<span class="notes-attachments-preview__name">${escapeHtml(image.name || "Imagen adjunta")}</span>`}
+        </a>
+      `).join("")}
+    </div>
+  `;
+}
+
 function notePreview(note) {
   if (normalizeNoteKind(note?.noteKind) === "code") return "";
   return stripWikiLinkMarkup(note.content || "");
@@ -3697,7 +3900,14 @@ function normalizeExternalUrl(rawUrl = "") {
   try {
     const value = String(rawUrl || "").trim();
     if (!value) return "";
-    const url = new URL(value.startsWith("http") ? value : `https://${value}`);
+    if (/^mailto:/i.test(value)) {
+      const address = value.slice(7).trim();
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) ? `mailto:${address}` : "";
+    }
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(value)) {
+      return `mailto:${value}`;
+    }
+    const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
     return url.toString();
   } catch (_) {
     return "";
@@ -4280,6 +4490,8 @@ function renderNoteCards(list, notes = []) {
     const noteImageUrl = isCodeNote ? "" : buildNoteImageRenderUrl(note);
     const tagPreview = resolveNoteTagPreview(note);
     const externalUrl = normalizeExternalUrl(note.url);
+    const detectedLinks = collectNoteExternalLinks(note);
+    const attachments = getNoteAttachmentImages(note);
     const linkMarkup = note.type === "link"
       ? (externalUrl
         ? `
@@ -4346,12 +4558,14 @@ function renderNoteCards(list, notes = []) {
         ${mediaMarkup}
         <div class="notes-item-content">
           <div class="${headClass}"${headAttrs}>
-            <h4 class="notes-item-title">${escapeHtml(displayTitle)}</h4>
+            <h4 class="notes-item-title">${buildSafeLinkedTextMarkup(displayTitle, { className: "notes-inline-link notes-inline-link--external" })}</h4>
             ${metaMarkup ? `<div class="notes-item-meta">${metaMarkup}</div>` : ""}
           </div>
           ${personIcons ? `<p class="notes-item-preview">${escapeHtml(personIcons)}</p>` : ""}
-          ${preview && note.type === "link" && !isCodeNote && !personIcons ? `<p class="notes-item-preview">${escapeHtml(preview)}</p>` : ""}
+          ${preview && note.type === "link" && !isCodeNote && !personIcons ? `<p class="notes-item-preview notes-item-preview-links">${buildSafeLinkedTextMarkup(preview, { className: "notes-inline-link notes-inline-link--external" })}</p>` : ""}
           ${isCodeNote ? snippetMarkup : linkMarkup}
+          ${buildDetectedLinksListMarkup(detectedLinks)}
+          ${attachments.length ? buildNoteAttachmentsMarkup(attachments, { compact: true }) : ""}
         </div>
         <div class="notes-item-actions">
           <button class="icon-btn icon-btn-large" type="button" data-act="edit-note" data-note-id="${escapeHtml(note.id)}">✏️</button>
@@ -4365,24 +4579,35 @@ function renderNoteCards(list, notes = []) {
 }
 
 function formatPlainTextMarkup(value = "") {
-  return escapeHtml(String(value || "")).replace(/\n/g, "<br>");
+  return escapePlainTextWithBreaks(value);
 }
 
 function buildNoteRichTextMarkup(note = {}) {
   const content = String(note?.content || "");
-  const links = buildResolvedWikiLinks(note);
-  if (!links.length) return formatPlainTextMarkup(content);
+  const wikiLinks = buildResolvedWikiLinks(note).map((link) => ({ ...link, type: "wiki" }));
+  const wikiRanges = wikiLinks.map((link) => [link.start, link.end]);
+  const externalLinks = extractExternalLinksFromText(content)
+    .filter((link) => !wikiRanges.some(([start, end]) => link.start < end && link.end > start))
+    .map((link) => ({ ...link, type: "external" }));
+  const tokens = [...wikiLinks, ...externalLinks].sort((a, b) => a.start - b.start);
+  if (!tokens.length) return buildSafeLinkedTextMarkup(content, { className: "notes-inline-link notes-inline-link--external" });
 
   let cursor = 0;
   let html = "";
-  links.forEach((link) => {
-    html += formatPlainTextMarkup(content.slice(cursor, link.start));
-    const target = resolveWikiLinkTarget(link);
-    const label = target ? (getNoteDisplayTitle(target) || link.label) : (link.label || "Enlace");
+  tokens.forEach((token) => {
+    if (token.start < cursor) return;
+    html += formatPlainTextMarkup(content.slice(cursor, token.start));
+    if (token.type === "external") {
+      html += buildExternalLinkAnchorMarkup(token, { className: "notes-inline-link notes-inline-link--external" });
+      cursor = token.end;
+      return;
+    }
+    const target = resolveWikiLinkTarget(token);
+    const label = target ? (getNoteDisplayTitle(target) || token.label) : (token.label || "Enlace");
     html += target
       ? `<button class="notes-inline-link" type="button" data-act="open-linked-note" data-linked-note-id="${escapeHtml(target.id)}">${escapeHtml(label)}</button>`
       : `<span class="notes-inline-link-broken" title="Nota no disponible">${escapeHtml(label)}</span>`;
-    cursor = link.end;
+    cursor = token.end;
   });
   html += formatPlainTextMarkup(content.slice(cursor));
   return html;
@@ -4552,6 +4777,8 @@ function renderNoteDetail() {
   const relations = buildNoteRelationSnapshot(note);
   const detailTitle = getNoteDisplayTitle(note) || note.title || "Sin título";
   const avatarLabel = (person.firstName || detailTitle || "P").trim().charAt(0).toUpperCase() || "P";
+  const detectedLinks = collectNoteExternalLinks(note);
+  const attachments = getNoteAttachmentImages(note);
   const detailSubtitleParts = [
     isPerson ? "Persona" : "Nota",
     note?.category || "",
@@ -4582,7 +4809,7 @@ function renderNoteDetail() {
       <div class="notes-detail-head">
         <div class="notes-detail-copy">
           <span class="notes-detail-kicker">${escapeHtml(isPerson ? "Ficha de persona" : "Detalle de nota")}</span>
-          <h3 class="notes-detail-name">${escapeHtml(detailTitle)}</h3>
+          <h3 class="notes-detail-name">${buildSafeLinkedTextMarkup(detailTitle, { className: "notes-inline-link notes-inline-link--external" })}</h3>
           <div class="notes-detail-meta">${escapeHtml(detailSubtitleParts.join(" · ") || "Sin metadatos")}</div>
           ${buildDetailChipMarkup((note?.tags || []).concat(note?.category ? [note.category] : []).filter(Boolean))}
         </div>
@@ -4624,10 +4851,32 @@ function renderNoteDetail() {
       `}
     </article>
 
-    ${note?.content ? `
+    ${false && note?.content ? `
       <article class="notes-detail-card">
         <h3 class="notes-detail-section-title">${escapeHtml(isPerson ? "Descripción" : "Contenido")}</h3>
         <div class="notes-detail-richtext">${buildNoteRichTextMarkup(note)}</div>
+      </article>
+    ` : ""}
+
+    ${note?.content ? `
+      <article class="notes-detail-card">
+        <h3 class="notes-detail-section-title">${escapeHtml(isPerson ? "DescripciÃƒÂ³n" : "Contenido")}</h3>
+        <div class="notes-detail-richtext">${buildNoteRichTextMarkup(note)}</div>
+        ${buildDetectedLinksListMarkup(detectedLinks)}
+      </article>
+    ` : ""}
+
+    ${!note?.content && detectedLinks.length ? `
+      <article class="notes-detail-card">
+        <h3 class="notes-detail-section-title">Enlaces detectados</h3>
+        ${buildDetectedLinksListMarkup(detectedLinks)}
+      </article>
+    ` : ""}
+
+    ${attachments.length ? `
+      <article class="notes-detail-card">
+        <h3 class="notes-detail-section-title">Imagenes adjuntas</h3>
+        ${buildNoteAttachmentsMarkup(attachments)}
       </article>
     ` : ""}
 
@@ -4811,8 +5060,16 @@ function getReminderComputedStatus(reminder) {
   return targetAt < Date.now() ? "vencido" : "pendiente";
 }
 
+function sortReminderChecklistItems(items = []) {
+  return [...(Array.isArray(items) ? items : [])].sort((a, b) => {
+    const doneDiff = Number(Boolean(a?.done)) - Number(Boolean(b?.done));
+    if (doneDiff !== 0) return doneDiff;
+    return Number(a?.order || 0) - Number(b?.order || 0);
+  });
+}
+
 function getReminderChecklistSummary(reminder) {
-  const items = Object.values(reminder?.checklistItems || {}).sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+  const items = sortReminderChecklistItems(Object.values(reminder?.checklistItems || {}));
   const total = items.length;
   const done = items.filter((item) => item.done).length;
   return { items, total, done };
@@ -4859,6 +5116,54 @@ function applyReminderChecklistToggle(reminderId = "", itemId = "", done = false
   };
   const checklistRows = Object.values(nextChecklistItems);
   const allDone = checklistRows.length > 0 && checklistRows.every((row) => Boolean(row?.done));
+  const nextReminder = {
+    ...currentReminder,
+    checklistItems: nextChecklistItems,
+    status: allDone ? "completado" : "pendiente",
+    completedAt: allDone ? Date.now() : 0,
+    updatedAt: Date.now(),
+  };
+  replaceReminderInState(safeReminderId, nextReminder);
+  return nextReminder;
+}
+
+function appendReminderChecklistItemLocal(reminderId = "", item = {}) {
+  const safeReminderId = String(reminderId || "").trim();
+  const safeItemId = String(item?.id || "").trim();
+  if (!safeReminderId || !safeItemId) return null;
+  const currentReminder = (state.reminders || []).find((row) => row.id === safeReminderId);
+  if (!currentReminder) return null;
+  const nextReminder = {
+    ...currentReminder,
+    checklistItems: {
+      ...(currentReminder.checklistItems || {}),
+      [safeItemId]: {
+        id: safeItemId,
+        text: String(item?.text || "").trim(),
+        done: Boolean(item?.done),
+        createdAt: Number(item?.createdAt || Date.now()),
+        completedAt: Number(item?.completedAt || 0),
+        order: Number(item?.order || Date.now()),
+      },
+    },
+    status: "pendiente",
+    completedAt: 0,
+    updatedAt: Date.now(),
+  };
+  replaceReminderInState(safeReminderId, nextReminder);
+  return nextReminder;
+}
+
+function removeReminderChecklistItemLocal(reminderId = "", itemId = "") {
+  const safeReminderId = String(reminderId || "").trim();
+  const safeItemId = String(itemId || "").trim();
+  if (!safeReminderId || !safeItemId) return null;
+  const currentReminder = (state.reminders || []).find((row) => row.id === safeReminderId);
+  if (!currentReminder?.checklistItems?.[safeItemId]) return null;
+  const nextChecklistItems = { ...(currentReminder.checklistItems || {}) };
+  delete nextChecklistItems[safeItemId];
+  const rows = Object.values(nextChecklistItems);
+  const allDone = rows.length > 0 && rows.every((row) => Boolean(row?.done));
   const nextReminder = {
     ...currentReminder,
     checklistItems: nextChecklistItems,
@@ -5026,6 +5331,65 @@ function shiftReminderCalendarMonth(delta = 0, reminders = []) {
   ensureReminderCalendarSelection(reminders);
 }
 
+function getReminderScrollState() {
+  const scrollingElement = document.scrollingElement || document.documentElement;
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const activeReminderInput = active?.matches?.("[data-checklist-input]") ? active : active?.closest?.("[data-checklist-input]");
+  return {
+    scrollTop: Number(scrollingElement?.scrollTop || 0),
+    checklistInputReminderId: String(activeReminderInput?.dataset?.checklistInput || "").trim(),
+  };
+}
+
+function restoreReminderScrollState(snapshot = null) {
+  if (!snapshot) return;
+  window.requestAnimationFrame(() => {
+    const scrollingElement = document.scrollingElement || document.documentElement;
+    if (scrollingElement) scrollingElement.scrollTop = Number(snapshot.scrollTop || 0);
+    if (snapshot.checklistInputReminderId) {
+      const input = document.querySelector(`[data-checklist-input='${CSS.escape(snapshot.checklistInputReminderId)}']`);
+      input?.focus?.({ preventScroll: true });
+    }
+  });
+}
+
+function queueReminderRemoteRestore(snapshot = null) {
+  pendingReminderRemoteRestore = snapshot || null;
+}
+
+function flushReminderRemoteRestore() {
+  if (!pendingReminderRemoteRestore) return;
+  const snapshot = pendingReminderRemoteRestore;
+  pendingReminderRemoteRestore = null;
+  restoreReminderScrollState(snapshot);
+}
+
+function getRemindersForSelectedCalendarDate(reminders = [], dateKey = state.reminderCalendarSelectedDate) {
+  const safeDateKey = parseDateKey(dateKey || "") ? String(dateKey) : "";
+  if (!safeDateKey) return Array.isArray(reminders) ? reminders : [];
+  const selectedYear = parseDateKey(safeDateKey)?.year || new Date().getFullYear();
+  return (Array.isArray(reminders) ? reminders : []).filter((reminder) => (
+    getReminderOccurrenceDateKey(reminder, reminder?.repeat === "yearly" ? selectedYear : null) === safeDateKey
+  ));
+}
+
+function selectReminderCalendarDate(dateKey = "", {
+  openCreateOnRepeatClick = false,
+  focusedReminderId = "",
+} = {}) {
+  const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : getTodayDateKey();
+  const wasSelected = safeDateKey === state.reminderCalendarSelectedDate;
+  if (wasSelected && openCreateOnRepeatClick && !focusedReminderId) {
+    openReminderModal(null, { presetDate: safeDateKey });
+    return false;
+  }
+  setReminderCalendarSelectedDate(safeDateKey, {
+    syncMonth: true,
+    focusedReminderId,
+  });
+  return true;
+}
+
 function getFilteredReminders() {
   const all = Array.isArray(state.reminders) ? state.reminders : [];
   const startToday = new Date();
@@ -5068,6 +5432,7 @@ function renderReminderCardsToMarkup(reminders = []) {
     const visibleItems = isChecklist && isExpanded ? checklist.items : [];
     const progress = checklist.total ? Math.round((checklist.done / checklist.total) * 100) : 0;
     const accentStyle = buildReminderAccentStyle(reminder);
+    const detectedLinks = collectReminderExternalLinks(reminder);
     return `
       <article class="notes-reminder-item is-${escapeHtml(computedStatus)}" data-reminder-id="${escapeHtml(reminder.id)}" style="${escapeHtml(accentStyle)}">
         <div class="notes-reminder-main">
@@ -5076,27 +5441,39 @@ function renderReminderCardsToMarkup(reminders = []) {
             <strong class="notes-reminder-title">${escapeHtml(reminder?.title || "Sin título")}</strong>
             ${isChecklist ? `<span class="notes-reminder-expand-hint">${isExpanded ? "▾" : "▸"}</span>` : ""}
           </button>
+
           <div class="notes-reminder-meta">${escapeHtml(dateLabel)} · ${escapeHtml(reminder?.type || "normal")} · ${escapeHtml(computedStatus)}</div>
+
+<div class="meta-reminder">
           ${categories.length ? `<div class="notes-reminder-categories">${categories.map((category) => `<span class="notes-reminder-chip">${escapeHtml(category)}</span>`).join("")}</div>` : ""}
+
+
           <div class="notes-reminder-countdown">${escapeHtml(isBirthday ? birthdayLead : countdown)}</div>
+
+
           ${isChecklist ? `
             <div class="notes-reminder-checklist-progress">${checklist.done}/${checklist.total} completados</div>
+
+</div>
+
             <div class="notes-reminder-progress"><span style="width:${progress}%;"></span></div>
             <div class="notes-reminder-checklist-items ${isExpanded ? "" : "hidden"}">
-              ${visibleItems.map((item) => `
+
+              <div class="notes-reminder-inline-add">
+                <input type="text" id="notes-reminder-checklist-new"   placeholder="Nuevo checkpoint..." data-checklist-input="${escapeHtml(reminder.id)}" />
+                <button class="notes-icon-action" type="button" data-act="add-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}">+</button>
+              </div>
+                            ${visibleItems.map((item) => `
                 <label class="notes-reminder-check-item ${item.done ? "is-done" : ""}" data-act="toggle-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}" data-item-id="${escapeHtml(item.id)}">
                   <input type="checkbox" ${item.done ? "checked" : ""} />
                   <span>${escapeHtml(item.text)}</span>
                   <button class="notes-icon-action notes-checklist-delete-inline" type="button" data-act="delete-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}" data-item-id="${escapeHtml(item.id)}">×</button>
                 </label>
               `).join("")}
-              <div class="notes-reminder-inline-add">
-                <input type="text" id="notes-reminder-checklist-new"   placeholder="Nuevo checkpoint..." data-checklist-input="${escapeHtml(reminder.id)}" />
-                <button class="notes-icon-action" type="button" data-act="add-checklist-item" data-reminder-id="${escapeHtml(reminder.id)}">+</button>
-              </div>
             </div>
           ` : ""}
         </div>
+
         <div class="notes-item-actions notes-reminder-actions">
           <button class="notes-icon-action" type="button" data-act="edit-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✏️</button>
           <button class="notes-icon-action" type="button" data-act="complete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✅</button>
@@ -5138,7 +5515,7 @@ function buildReminderCalendarPanelMarkup(dateKey = "", reminders = []) {
             const categories = Array.isArray(reminder?.categories) ? reminder.categories : [];
             const timeLabel = buildReminderDayTimeLabel(reminder, dateKey);
             return `
-              <article class="notes-reminders-calendar-panel__item ${reminder?.status === 'completado' ? 'reminder--done' : ''} is-${escapeHtml(computedStatus)}" style="${escapeHtml(accentStyle)}">
+              <article class="notes-reminders-calendar-panel__item ${reminder?.status === 'completado' ? 'reminder--done' : ''} is-${escapeHtml(computedStatus)}" data-reminder-id="${escapeHtml(reminder.id)}" style="${escapeHtml(accentStyle)}">
                 <button
                   class="notes-reminders-calendar-panel__itemMain"
                   type="button"
@@ -5229,6 +5606,7 @@ function renderReminderCalendarView(reminders = []) {
   `;
 
   panel.innerHTML = buildReminderCalendarPanelMarkup(selectedDateKey, selectedItems);
+  enhanceRenderedReminderContent(panel, selectedItems);
 
   const focusReminderId = String(state.reminderCalendarFocusedReminderId || "").trim();
   if (focusReminderId) {
@@ -5244,6 +5622,64 @@ function renderReminderCalendarView(reminders = []) {
       state.reminderCalendarFocusedReminderId = "";
     });
   }
+}
+
+function enhanceRenderedReminderContent(root, reminders = []) {
+  if (!(root instanceof HTMLElement)) return;
+  const reminderMap = new Map((Array.isArray(reminders) ? reminders : []).map((reminder) => [String(reminder?.id || "").trim(), reminder]));
+  root.querySelectorAll(".notes-reminder-item[data-reminder-id], .notes-reminders-calendar-panel__item[data-reminder-id]").forEach((node) => {
+    const reminderId = String(node.dataset.reminderId || "").trim();
+    const reminder = reminderMap.get(reminderId);
+    if (!reminder) return;
+
+    const titleRow = node.querySelector(".notes-reminder-title-row");
+    if (titleRow instanceof HTMLElement) {
+      const safeRow = document.createElement("div");
+      safeRow.className = titleRow.className;
+      safeRow.innerHTML = `
+        <span class="notes-reminder-emoji">${escapeHtml(reminder?.emoji || "Ã¢ÂÂ°")}</span>
+        <strong class="notes-reminder-title">${buildSafeLinkedTextMarkup(reminder?.title || "Sin titulo", { className: "notes-inline-link notes-inline-link--external" })}</strong>
+        ${reminder?.type === "checklist"
+          ? `<button class="notes-reminder-expand-hint" type="button" data-act="toggle-checklist-expand" data-reminder-id="${escapeHtml(reminder.id)}" aria-expanded="${reminderExpandedChecklist.has(reminder.id) ? "true" : "false"}">${reminderExpandedChecklist.has(reminder.id) ? "⬆️" : "⬇️"}</button>`
+          : ""}`;
+      titleRow.replaceWith(safeRow);
+    }
+
+    const panelMain = node.querySelector(".notes-reminders-calendar-panel__itemMain");
+    if (panelMain instanceof HTMLElement) {
+      const safeMain = document.createElement("div");
+      safeMain.className = panelMain.className;
+      safeMain.dataset.act = "edit-reminder";
+      safeMain.dataset.reminderId = reminder.id;
+      safeMain.dataset.calendarReminderItem = "true";
+      safeMain.tabIndex = 0;
+      safeMain.role = "button";
+      safeMain.innerHTML = `
+        <span class="notes-reminders-calendar-panel__itemEmoji">${escapeHtml(reminder?.emoji || "Ã¢ÂÂ°")}</span>
+        <span class="notes-reminders-calendar-panel__itemCopy">
+          <strong>${buildSafeLinkedTextMarkup(reminder?.title || "Sin titulo", { className: "notes-inline-link notes-inline-link--external" })}</strong>
+          <span>${escapeHtml(`${buildReminderDayTimeLabel(reminder, state.reminderCalendarSelectedDate)} Ã‚Â· ${getReminderComputedStatus(reminder)}`)}</span>
+        </span>
+      `;
+      panelMain.replaceWith(safeMain);
+    }
+
+    node.querySelector(".notes-reminder-description")?.remove();
+    node.querySelector(".notes-links-preview")?.remove();
+
+    const descriptionMarkup = reminder?.description
+      ? `<div class="notes-reminder-description">${buildSafeLinkedTextMarkup(reminder.description, { className: "notes-inline-link notes-inline-link--external" })}</div>`
+      : "";
+    const linksMarkup = buildDetectedLinksListMarkup(collectReminderExternalLinks(reminder));
+    const host = node.querySelector(".notes-reminder-countdown, .notes-reminders-calendar-panel__itemTags, .notes-reminders-calendar-panel__itemActions");
+    if (!host || (!descriptionMarkup && !linksMarkup)) return;
+
+    const temp = document.createElement("div");
+    temp.innerHTML = `${descriptionMarkup}${linksMarkup}`;
+    Array.from(temp.children).forEach((child) => {
+      host.parentNode?.insertBefore(child, host);
+    });
+  });
 }
 
 function renderReminderViewSwitch() {
@@ -5394,8 +5830,9 @@ function renderRemindersPanel() {
   const filtered = getFilteredReminders();
   ensureReminderCalendarSelection(filtered);
   renderReminderCalendarView(filtered);
-  const active = filtered.filter((item) => getReminderComputedStatus(item) === "pendiente");
-  const history = filtered.filter((item) => getReminderComputedStatus(item) !== "pendiente");
+  const selectedDayItems = getRemindersForSelectedCalendarDate(filtered);
+  const active = selectedDayItems.filter((item) => getReminderComputedStatus(item) === "pendiente");
+  const history = selectedDayItems.filter((item) => getReminderComputedStatus(item) !== "pendiente");
   const activeGroups = buildGroupedReminders(active);
   const historyGroups = buildGroupedReminders(history);
   list.innerHTML = activeGroups.map((group) => `
@@ -5410,7 +5847,12 @@ function renderRemindersPanel() {
   toggle.textContent = state.reminderCollapsedHistory
     ? `Mostrar completados y vencidos (${history.length})`
     : `Ocultar completados y vencidos (${history.length})`;
-  empty.classList.toggle("hidden", active.length > 0 || history.length > 0);
+  empty.classList.toggle("hidden", active.length > 0 || history.length > 0 || filtered.length > 0);
+  empty.textContent = filtered.length > 0
+    ? "No hay recordatorios para el dia seleccionado."
+    : "No hay recordatorios todavia.";
+  enhanceRenderedReminderContent(list, active);
+  enhanceRenderedReminderContent(historyList, history);
 }
 
 function renderRootSectionSwitch() {
@@ -6009,6 +6451,104 @@ function clearNotePhotoObjectUrl() {
   notePhotoObjectUrl = null;
 }
 
+function createNoteAttachmentDraftId() {
+  return `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeAttachmentDraftsFromNote(note = {}) {
+  return getNoteAttachmentImages(note).map((image, index) => ({
+    id: String(image?.id || `attachment_${index}`).trim(),
+    name: String(image?.name || `Imagen ${index + 1}`).trim() || `Imagen ${index + 1}`,
+    url: String(image?.url || "").trim(),
+    storagePath: String(image?.storagePath || "").trim(),
+    createdAt: Number(image?.createdAt || Date.now()),
+    file: null,
+    previewUrl: "",
+    remove: false,
+  }));
+}
+
+function revokeNoteAttachmentDraftPreview(draft = {}) {
+  const previewUrl = String(draft?.previewUrl || "").trim();
+  if (!previewUrl) return;
+  try { URL.revokeObjectURL(previewUrl); } catch (_) {}
+  draft.previewUrl = "";
+}
+
+function clearNoteAttachmentDrafts() {
+  noteAttachmentDrafts.forEach((draft) => revokeNoteAttachmentDraftPreview(draft));
+  noteAttachmentDrafts = [];
+}
+
+function getActiveNoteAttachmentDrafts() {
+  return noteAttachmentDrafts.filter((draft) => !draft?.remove);
+}
+
+function setNoteAttachmentsStatus(message = "", tone = "") {
+  const status = $id("notes-note-attachments-status");
+  if (!status) return;
+  status.textContent = String(message || "").trim();
+  if (tone) status.dataset.tone = tone;
+  else delete status.dataset.tone;
+}
+
+function renderNoteAttachmentEditor() {
+  const list = $id("notes-note-attachments-list");
+  const empty = $id("notes-note-attachments-empty");
+  if (!list || !empty) return;
+  const drafts = getActiveNoteAttachmentDrafts();
+  empty.classList.toggle("hidden", drafts.length > 0);
+  list.innerHTML = drafts.map((draft) => {
+    const previewUrl = String(draft.previewUrl || draft.url || "").trim();
+    const subtitle = draft.file ? "Nueva imagen lista para guardarse." : "Adjunto guardado.";
+    return `
+      <article class="notes-attachment-draft" data-attachment-id="${escapeHtml(draft.id)}">
+        <button
+          class="notes-attachment-draft__thumb"
+          type="button"
+          data-act="preview-note-attachment-draft"
+          data-attachment-id="${escapeHtml(draft.id)}"
+          aria-label="${escapeHtml(draft.name || "Imagen adjunta")}"
+        >
+          <img src="${escapeHtml(previewUrl)}" alt="${escapeHtml(draft.name || "Imagen adjunta")}" loading="lazy" decoding="async" />
+        </button>
+        <div class="notes-attachment-draft__copy">
+          <strong>${escapeHtml(draft.name || "Imagen adjunta")}</strong>
+          <span>${escapeHtml(subtitle)}</span>
+        </div>
+        <button
+          class="notes-icon-action"
+          type="button"
+          data-act="remove-note-attachment-draft"
+          data-attachment-id="${escapeHtml(draft.id)}"
+          aria-label="Quitar adjunto"
+        >Ã—</button>
+      </article>
+    `;
+  }).join("");
+}
+
+function openNoteAttachmentsPicker() {
+  const input = $id("notes-note-attachments-file");
+  if (!input) return;
+  input.value = "";
+  input.click();
+}
+
+function openNoteAttachmentDraftPreview(attachmentId = "") {
+  const draft = noteAttachmentDrafts.find((item) => item.id === String(attachmentId || "").trim() && !item.remove);
+  const href = String(draft?.previewUrl || draft?.url || "").trim();
+  if (!href) return;
+  if (/^(blob:|data:)/i.test(href)) {
+    const popup = window.open(href, "_blank", "noopener,noreferrer");
+    if (popup) {
+      try { popup.opener = null; } catch (_) {}
+    }
+    return;
+  }
+  openExternalUrl(href);
+}
+
 function openNoteImagePicker(mode = "gallery") {
   const input = $id("notes-note-image-file");
   if (!input) return;
@@ -6020,6 +6560,7 @@ function openNoteImagePicker(mode = "gallery") {
 
 function closeNoteModal() {
   clearNotePhotoObjectUrl();
+  clearNoteAttachmentDrafts();
   clearNoteTagImageDrafts();
   clearLocationSuggestionList();
   closeLocationMapModal();
@@ -6033,8 +6574,10 @@ function closeNoteModal() {
   noteLinkDraftReferences = [];
   notePhotoRemove = false;
   if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
+  if ($id("notes-note-attachments-file")) $id("notes-note-attachments-file").value = "";
   if ($id("notes-note-tag-image-file")) $id("notes-note-tag-image-file").value = "";
   setNotePhotoStatus("");
+  setNoteAttachmentsStatus("");
   closeModal("notes-note-modal-backdrop");
 }
 
@@ -6051,14 +6594,18 @@ function openNoteModal(note = null, options = {}) {
 
   notePhotoRemove = false;
   clearNotePhotoObjectUrl();
+  clearNoteAttachmentDrafts();
   clearNoteTagImageDrafts();
   clearNoteLinkSuggestionList();
   noteLinkDraftReferences = [];
+  noteAttachmentDrafts = normalizeAttachmentDraftsFromNote(note);
   noteSelectedTagImageKey = buildTagDefinitionKey(note?.tagImageKey);
   if ($id("notes-note-image-file")) $id("notes-note-image-file").value = "";
+  if ($id("notes-note-attachments-file")) $id("notes-note-attachments-file").value = "";
   if ($id("notes-note-tag-image-file")) $id("notes-note-tag-image-file").value = "";
   setNotePhotoPreview(buildNoteImageRenderUrl(note));
   setNotePhotoStatus("");
+  setNoteAttachmentsStatus("");
 
   $id("notes-note-id").value = note?.id || "";
   $id("notes-note-folder-id").value = folderId || "";
@@ -6112,6 +6659,7 @@ function openNoteModal(note = null, options = {}) {
   $id("notes-note-form-error").textContent = "";
   $id("notes-note-modal-title").textContent = note ? "Editar nota" : "Nueva nota";
   updateNoteRatingPreview();
+  renderNoteAttachmentEditor();
   renderNoteTagImageEditor();
   openModal("notes-note-modal-backdrop");
   syncNoteModalCodeAssist();
@@ -6196,7 +6744,10 @@ function renderReminderChecklistDrafts() {
   `).join("");
 }
 
-function openReminderModal(reminder = null) {
+function openReminderModal(reminder = null, options = {}) {
+  const presetDate = parseDateKey(options?.presetDate || "")
+    ? String(options.presetDate || "")
+    : (parseDateKey(state.reminderCalendarSelectedDate || "") ? state.reminderCalendarSelectedDate : getTodayDateKey());
   reminderDraftAlerts = Array.isArray(reminder?.remindBefore) ? [...reminder.remindBefore] : [];
   reminderDraftCategories = Array.isArray(reminder?.categories) ? [String(reminder.categories[0] || "").trim()].filter(Boolean) : [];
   reminderDraftChecklistItems = { ...(reminder?.checklistItems || {}) };
@@ -6205,7 +6756,7 @@ function openReminderModal(reminder = null) {
   $id("notes-reminder-description").value = reminder?.description || "";
   $id("notes-reminder-emoji").value = reminder?.emoji || "⏰";
   $id("notes-reminder-type").value = reminder?.type || "normal";
-  $id("notes-reminder-date").value = reminder?.targetDate || "";
+  $id("notes-reminder-date").value = reminder?.targetDate || presetDate || "";
   $id("notes-reminder-time").value = reminder?.targetTime || "";
   $id("notes-reminder-color").value = normalizeReminderColor(reminder?.color);
   $id("notes-reminder-is-birthday").checked = reminder?.type === "cumpleaños";
@@ -6405,6 +6956,13 @@ async function handleNoteDelete(note) {
       console.warn("[notes] la nota se borró, pero no se pudo limpiar la imagen", error);
     }
   }
+  for (const attachment of getNoteAttachmentImages(note)) {
+    try {
+      await deleteNoteAttachmentImageAsset(state.uid, note.id, attachment.id, attachment.storagePath, attachment.url);
+    } catch (error) {
+      console.warn("[notes] la nota se borro, pero no se pudo limpiar un adjunto", error);
+    }
+  }
 }
 
 function bindFolderModalEvents() {
@@ -6489,6 +7047,7 @@ function bindFolderModalEvents() {
 function bindNoteModalEvents() {
   const isLinkInput = $id("notes-note-is-link");
   const imageInput = $id("notes-note-image-file");
+  const attachmentsInput = $id("notes-note-attachments-file");
   const tagImageInput = $id("notes-note-tag-image-file");
   const tagsTextInput = $id("notes-note-tags");
   const ratingSelect = $id("notes-note-rating");
@@ -6637,6 +7196,30 @@ function bindNoteModalEvents() {
     $id("notes-note-form-error").textContent = "";
   });
 
+  $id("notes-note-attachments-add")?.addEventListener("click", () => {
+    openNoteAttachmentsPicker();
+  });
+
+  attachmentsInput?.addEventListener("change", (event) => {
+    const files = Array.from(event.target?.files || []).filter((file) => String(file?.type || "").startsWith("image/"));
+    if (!files.length) return;
+    files.forEach((file) => {
+      noteAttachmentDrafts.push({
+        id: createNoteAttachmentDraftId(),
+        name: String(file.name || "Imagen adjunta").trim() || "Imagen adjunta",
+        url: "",
+        storagePath: "",
+        createdAt: Date.now(),
+        file,
+        previewUrl: URL.createObjectURL(file),
+        remove: false,
+      });
+    });
+    renderNoteAttachmentEditor();
+    setNoteAttachmentsStatus(pluralize(files.length, "Imagen lista para guardarse.", "Imagenes listas para guardarse."));
+    $id("notes-note-form-error").textContent = "";
+  });
+
   tagImageInput?.addEventListener("change", (event) => {
     const file = event.target?.files?.[0] || null;
     const safeTagKey = buildTagDefinitionKey(activeNoteTagImageKey);
@@ -6763,8 +7346,12 @@ function bindNoteModalEvents() {
     const current = state.notes.find((row) => row.id === id) || null;
     let noteId = id;
     const selectedFile = imageInput?.files?.[0] || null;
+    const removedAttachmentDrafts = noteAttachmentDrafts.filter((draft) => draft?.remove);
+    const newAttachmentDrafts = noteAttachmentDrafts.filter((draft) => !draft?.remove && draft?.file instanceof File);
+    const keptAttachmentDrafts = noteAttachmentDrafts.filter((draft) => !draft?.remove && !(draft?.file instanceof File));
     const hasTagImageChanges = Array.from(noteTagImageDrafts.values()).some((draft) => draft?.file instanceof File || draft?.remove);
     let uploadedImagePath = "";
+    const uploadedAttachmentPaths = [];
 
     errorField.textContent = "";
     hideNoteDuplicateWarning();
@@ -6845,6 +7432,15 @@ function bindNoteModalEvents() {
       imageUrl: current?.imageUrl || "",
       imagePath: current?.imagePath || "",
       imageUpdatedAt: Number(current?.imageUpdatedAt || 0),
+      attachments: {
+        images: keptAttachmentDrafts.map((draft) => ({
+          id: draft.id,
+          url: draft.url,
+          storagePath: draft.storagePath,
+          name: draft.name,
+          createdAt: Number(draft.createdAt || Date.now()),
+        })),
+      },
       tagImageKey: "",
       location: {
         ...normalizeLocationAddress({
@@ -6910,6 +7506,33 @@ function bindNoteModalEvents() {
         setNotePhotoStatus("Foto subida.");
       }
 
+      for (const draft of newAttachmentDrafts) {
+        setNoteAttachmentsStatus(`Subiendo ${draft.name || "imagen"}...`);
+        const optimizedFile = await downscaleNoteImageFile(draft.file);
+        const upload = await uploadNoteAttachmentImageAsset(state.uid, noteId, draft.id, optimizedFile);
+        uploadedAttachmentPaths.push({ id: draft.id, path: upload.path, url: upload.url });
+        payload.attachments.images.push({
+          id: draft.id,
+          url: upload.url,
+          storagePath: upload.path,
+          name: draft.name,
+          createdAt: Number(draft.createdAt || Date.now()),
+        });
+      }
+
+      if (removedAttachmentDrafts.length) {
+        setNoteAttachmentsStatus("Quitando adjuntos...", "warning");
+        for (const draft of removedAttachmentDrafts) {
+          try {
+            await deleteNoteAttachmentImageAsset(state.uid, noteId, draft.id, draft.storagePath, draft.url);
+          } catch (error) {
+            console.warn("[notes] no se pudo borrar un adjunto de la nota", error);
+          }
+        }
+      }
+
+      if (newAttachmentDrafts.length) setNoteAttachmentsStatus("Adjuntos guardados.");
+
       await persistNoteTagDefinitions(tags);
 
       if (id) {
@@ -6937,14 +7560,22 @@ function bindNoteModalEvents() {
       renderShell();
     } catch (error) {
       console.warn("[notes] no se pudo guardar la nota", error);
-      errorField.textContent = (selectedFile || hasTagImageChanges)
+      errorField.textContent = (selectedFile || newAttachmentDrafts.length || hasTagImageChanges)
         ? "No se ha podido subir alguna imagen o guardar la nota."
         : "No se ha podido guardar la nota.";
       if (selectedFile) setNotePhotoStatus("Ha fallado la subida de la foto.", "error");
+      if (newAttachmentDrafts.length) setNoteAttachmentsStatus("Ha fallado la subida de algun adjunto.", "error");
       if (!id && uploadedImagePath) {
         try {
           await deleteNoteImageAsset(state.uid, noteId, uploadedImagePath, payload.imageUrl);
         } catch (_) {}
+      }
+      if (!id && uploadedAttachmentPaths.length) {
+        for (const uploaded of uploadedAttachmentPaths) {
+          try {
+            await deleteNoteAttachmentImageAsset(state.uid, noteId, uploaded.id, uploaded.path, uploaded.url);
+          } catch (_) {}
+        }
       }
     } finally {
       noteSaveInFlight = false;
@@ -6985,6 +7616,24 @@ function bindNoteModalEvents() {
     event.preventDefault();
     event.stopPropagation();
     selectNoteLinkSuggestion(target.dataset.noteId || "");
+  });
+  $id("notes-note-attachments-list")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act][data-attachment-id]");
+    if (!target) return;
+    const attachmentId = String(target.dataset.attachmentId || "").trim();
+    if (!attachmentId) return;
+    if (target.dataset.act === "preview-note-attachment-draft") {
+      openNoteAttachmentDraftPreview(attachmentId);
+      return;
+    }
+    if (target.dataset.act === "remove-note-attachment-draft") {
+      const draft = noteAttachmentDrafts.find((item) => item.id === attachmentId);
+      if (!draft) return;
+      draft.remove = true;
+      revokeNoteAttachmentDraftPreview(draft);
+      renderNoteAttachmentEditor();
+      setNoteAttachmentsStatus("Adjunto marcado para quitarse.", "warning");
+    }
   });
   $id("notes-note-tag-images-list")?.addEventListener("click", (event) => {
     const actionTarget = event.target.closest("[data-act][data-tag-key]");
@@ -7084,6 +7733,11 @@ function bindUiEvents() {
     groupPanel.classList.toggle("hidden", nextGroupHidden);
   });
   $id("notes-reminders-calendar-view")?.addEventListener("click", async (event) => {
+    const externalLink = event.target.closest?.("a[data-external-link='true']");
+    if (externalLink) {
+      event.stopPropagation();
+      return;
+    }
     const target = event.target.closest("[data-act]");
     if (!target) return;
     const action = String(target.dataset.act || "").trim();
@@ -7093,15 +7747,18 @@ function bindUiEvents() {
       return;
     }
     if (action === "select-reminder-calendar-day") {
-      setReminderCalendarSelectedDate(target.dataset.dateKey || "", { syncMonth: true });
+      const changed = selectReminderCalendarDate(target.dataset.dateKey || "", {
+        openCreateOnRepeatClick: true,
+      });
+      if (!changed) return;
       renderRemindersPanel();
       return;
     }
     if (action === "focus-reminder-calendar-item") {
-      setReminderCalendarSelectedDate(target.dataset.dateKey || "", {
-        syncMonth: true,
+      const changed = selectReminderCalendarDate(target.dataset.dateKey || "", {
         focusedReminderId: target.dataset.reminderId || "",
       });
+      if (!changed) return;
       renderRemindersPanel();
       return;
     }
@@ -7339,6 +7996,11 @@ function bindUiEvents() {
   });
 
   $id("notes-detail-body")?.addEventListener("click", async (event) => {
+    const externalLink = event.target.closest?.("a[data-external-link='true']");
+    if (externalLink) {
+      event.stopPropagation();
+      return;
+    }
     const target = event.target.closest("[data-act]");
     if (!target) return;
 
@@ -7529,6 +8191,11 @@ function bindUiEvents() {
   });
 
   $id("notes-cards-list")?.addEventListener("click", async (event) => {
+    const externalLink = event.target.closest?.("a[data-external-link='true']");
+    if (externalLink) {
+      event.stopPropagation();
+      return;
+    }
     const target = event.target.closest("[data-act]");
     if (!target) {
       const card = event.target.closest(".notes-item-card[data-note-id]");
@@ -7683,6 +8350,11 @@ function bindUiEvents() {
   });
 
   $id("notes-reminders-list")?.addEventListener("click", async (event) => {
+    const externalLink = event.target.closest?.("a[data-external-link='true']");
+    if (externalLink) {
+      event.stopPropagation();
+      return;
+    }
     const target = event.target.closest("[data-act][data-reminder-id]");
     if (!target) return;
     const reminder = state.reminders.find((row) => row.id === String(target.dataset.reminderId || "").trim());
@@ -7698,6 +8370,7 @@ function bindUiEvents() {
       const toggleTarget = event.target.closest('[data-act="toggle-checklist-item"]');
       if (!toggleTarget) return;
       event.preventDefault();
+      const snapshot = getReminderScrollState();
       const itemId = String(toggleTarget.dataset.itemId || "").trim();
       const item = reminder?.checklistItems?.[itemId];
       if (!item) return;
@@ -7712,7 +8385,9 @@ function bindUiEvents() {
         paintReminderChecklistToggle(toggleTarget, Boolean(item.done));
         return;
       }
+      queueReminderRemoteRestore(snapshot);
       renderRemindersPanel();
+      restoreReminderScrollState(snapshot);
       queueReminderChecklistTogglePersist(reminder.id, itemId, nextReminder, previousReminder, version).catch(() => {});
       return;
     }
@@ -7721,26 +8396,37 @@ function bindUiEvents() {
       const text = String(input?.value || "").trim();
       if (!text) return;
       const itemId = `cli_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      const order = Date.now();
-      await patchReminderChecklistItem(state.rootPath, reminder.id, itemId, {
-        id: itemId, text, done: false, createdAt: Date.now(), completedAt: 0, order,
+      const now = Date.now();
+      const snapshot = getReminderScrollState();
+      const nextReminder = appendReminderChecklistItemLocal(reminder.id, {
+        id: itemId,
+        text,
+        done: false,
+        createdAt: now,
+        completedAt: 0,
+        order: now,
       });
+      queueReminderRemoteRestore(snapshot);
       if (input) input.value = "";
+      renderRemindersPanel();
+      restoreReminderScrollState(snapshot);
+      if (!nextReminder) return;
+      await patchReminderChecklistItem(state.rootPath, reminder.id, itemId, {
+        id: itemId, text, done: false, createdAt: now, completedAt: 0, order: now,
+      });
+      await updateReminder(state.rootPath, reminder.id, nextReminder);
       return;
     }
     if (target.dataset.act === "delete-checklist-item") {
+      const snapshot = getReminderScrollState();
       const itemId = String(target.dataset.itemId || "").trim();
       if (!itemId) return;
-      const updatedItems = { ...(reminder.checklistItems || {}) };
-      delete updatedItems[itemId];
-      const rows = Object.values(updatedItems);
-      const allDone = rows.length > 0 && rows.every((row) => row.done);
-      await updateReminder(state.rootPath, reminder.id, {
-        ...reminder,
-        checklistItems: updatedItems,
-        status: allDone ? "completado" : "pendiente",
-        completedAt: allDone ? Date.now() : 0,
-      });
+      const nextReminder = removeReminderChecklistItemLocal(reminder.id, itemId);
+      queueReminderRemoteRestore(snapshot);
+      renderRemindersPanel();
+      restoreReminderScrollState(snapshot);
+      if (!nextReminder) return;
+      await updateReminder(state.rootPath, reminder.id, nextReminder);
       return;
     }
     if (target.dataset.act === "delete-reminder") {
@@ -7750,6 +8436,11 @@ function bindUiEvents() {
     }
   });
   $id("notes-reminders-history-list")?.addEventListener("click", async (event) => {
+    const externalLink = event.target.closest?.("a[data-external-link='true']");
+    if (externalLink) {
+      event.stopPropagation();
+      return;
+    }
     const target = event.target.closest("[data-act][data-reminder-id]");
     if (!target) return;
     const reminder = state.reminders.find((row) => row.id === String(target.dataset.reminderId || "").trim());
@@ -7975,6 +8666,7 @@ function subscribeData(uid) {
       }
 
       renderShell();
+      flushReminderRemoteRestore();
       renderNoteTagImageEditor();
       runReminderChecks();
       emitNotesData("remote:notes");

@@ -15,7 +15,7 @@ import {
   mapReminderToDb,
   mapSnapshotToDomain,
   mapTagDefinitionToDb,
-} from "./notes-mapper.js?v=2026-05-12-v1";
+} from "./notes-mapper.js?v=2026-05-15-v1";
 
 function resolveRootPath(uidParam = "") {
   const explicitAuthUid = String(uidParam || "").trim();

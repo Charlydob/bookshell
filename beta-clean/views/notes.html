@@ -478,6 +478,17 @@
           <input id="notes-note-url" type="url" placeholder="https://..." />
         </label>
 
+        <div class="field notes-attachments-field">
+          <div class="notes-attachments-field__head">
+            <span class="field-label">Imagenes adjuntas</span>
+            <button class="btn ghost btn-compact" id="notes-note-attachments-add" type="button">Anadir</button>
+          </div>
+          <div class="notes-attachments-status" id="notes-note-attachments-status"></div>
+          <div class="notes-attachments-empty" id="notes-note-attachments-empty">Sin adjuntos internos.</div>
+          <div class="notes-attachments-list" id="notes-note-attachments-list"></div>
+          <input id="notes-note-attachments-file" type="file" accept="image/*" multiple hidden />
+        </div>
+
         <div class="field notes-photo-field">
           <div class="notes-photo-wrap" id="notes-note-photo-wrap">
             <div class="notes-photo-preview-wrap">

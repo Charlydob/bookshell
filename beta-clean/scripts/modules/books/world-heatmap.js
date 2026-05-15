@@ -206,7 +206,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
         coordinateSystem: "geo",
         silent: true,
         symbol: ["none", "none"],
-        lineStyle: { color: "rgba(245,230,166,0.95)", width: 1 },
+        lineStyle: { color: "rgba(245,230,166,0.95)", width: 1, height: 3},
         data: [],
         z: 10,
       },
@@ -225,11 +225,11 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
             return `${name}\n${val}`;
           },
           color: "rgba(255,247,209,0.95)",
-          fontSize: 11,
+          fontSize: 8,
           fontWeight: 700,
           padding: [4, 7],
           borderRadius: 10,
-          backgroundColor: "rgba(10,12,18,0.65)",
+          backgroundColor: "rgba(10, 12, 18, 0.26)",
         },
         labelLayout: { hideOverlap: true, moveOverlap: "shiftY" },
         data: [],
@@ -286,7 +286,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
           ) continue;
 
           const dir = fromPx[0] < w * 0.5 ? 1 : -1;
-          const toPx = [fromPx[0] + dir * 44, fromPx[1] - 18];
+          const toPx = [fromPx[0] + dir * 24, fromPx[1] - 14];
           const toGeo = chart.convertFromPixel({ geoIndex: 0 }, toPx);
           if (!toGeo) continue;
 
@@ -308,7 +308,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
           ) continue;
 
           const dir = fromPx[0] < w * 0.5 ? 1 : -1;
-          const toPx = [fromPx[0] + dir * 44, fromPx[1] - 18];
+          const toPx = [fromPx[0] + dir * 24, fromPx[1] - 14];
           const toGeo = chart.convertFromPixel({ geoIndex: 0 }, toPx);
           if (!toGeo) continue;
 

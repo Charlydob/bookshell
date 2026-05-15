@@ -3917,7 +3917,249 @@ font-size: 10px;
   box-shadow:
     0 0 12px rgba(110,231,255,.08);
 }
+/* #region prueba estilo tarjetas de recordatorios con checkbox */
 
+/* #region REMINDERS · CHECKLIST CARDS */
+
+.notes-reminder-item {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 12% 0%, var(--notes-reminder-accent-soft), transparent 38%),
+    linear-gradient(145deg, rgba(255,255,255,.095), rgba(255,255,255,.035));
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow:
+    0 18px 42px rgba(0,0,0,.28),
+    inset 0 1px 0 rgba(255,255,255,.12);
+  backdrop-filter: blur(18px);
+}
+
+.notes-reminder-item::before {
+  content: "";
+  position: absolute;
+  inset: 12px auto 12px 0;
+  width: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to bottom, var(--notes-reminder-accent), transparent);
+  box-shadow: 0 0 20px var(--notes-reminder-accent-strong);
+}
+
+.notes-reminder-main {
+  min-width: 0;
+}
+
+.notes-reminder-title-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.notes-reminder-emoji {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 14px;
+  background: var(--notes-reminder-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--notes-reminder-accent-strong);
+}
+
+.notes-reminder-title {
+  font-size: 1rem;
+  letter-spacing: -.02em;
+  color: rgba(255,255,255,.96);
+}
+
+.notes-reminder-expand-hint {
+  opacity: .65;
+  font-size: .85rem;
+}
+
+.notes-reminder-meta {
+  margin-top: 6px;
+  font-size: .74rem;
+  color: rgba(255,255,255,.55);
+}
+
+.notes-reminder-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.notes-reminder-chip,
+.notes-reminder-countdown,
+.notes-reminder-checklist-progress {
+  width: max-content;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.notes-reminder-chip {
+  color: rgba(255,255,255,.82);
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.1);
+}
+
+.notes-reminder-countdown {
+  margin-top: 9px;
+  color: var(--notes-reminder-accent);
+  background: var(--notes-reminder-accent-soft);
+}
+
+.notes-reminder-checklist-progress {
+  margin-top: 12px;
+  color: rgba(255,255,255,.72);
+  background: rgba(255,255,255,.06);
+}
+
+.notes-reminder-progress {
+  height: 7px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+}
+
+.notes-reminder-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--notes-reminder-accent), rgba(255,255,255,.75));
+  box-shadow: 0 0 18px var(--notes-reminder-accent-strong);
+}
+
+.notes-reminder-checklist-items {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.notes-reminder-check-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  padding: 8px 9px;
+  color: rgba(255,255,255,.86);
+  transition: transform .16s ease, background .16s ease, border-color .16s ease;
+}
+
+.notes-reminder-check-item:active {
+  transform: scale(.985);
+}
+
+.notes-reminder-check-item input {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,.28);
+  background: rgba(0,0,0,.22);
+}
+
+.notes-reminder-check-item input:checked {
+  background: linear-gradient(135deg, #00ff1c, rgb(84 109 89 / 75%));
+  border-color: transparent;
+}
+
+.notes-reminder-check-item input:checked::after {
+  content: "✓";
+  display: block;
+  color: #071016;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+  line-height: 18px;
+}
+
+.notes-reminder-check-item span {
+  font-size: .84rem;
+  line-height: 1.25;
+}
+
+.notes-reminder-check-item.is-done {
+  opacity: .58;
+}
+
+.notes-reminder-check-item.is-done span {
+  text-decoration: line-through;
+}
+
+.notes-checklist-delete-inline {
+  opacity: .35;
+}
+
+.notes-reminder-check-item:hover .notes-checklist-delete-inline {
+  opacity: 1;
+}
+
+.notes-reminder-inline-add {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 8px;
+  border-radius: 16px;
+  background: rgba(0,0,0,.18);
+  border: 1px dashed rgba(255,255,255,.14);
+}
+
+.notes-reminder-inline-add input {
+  min-width: 0;
+  border: 0;
+  outline: none;
+  border-radius: 12px;
+  padding: 9px 10px;
+  color: rgba(255,255,255,.92);
+  background: rgba(255,255,255,.07);
+}
+
+.notes-reminder-actions {
+  display: grid;
+  grid-template-columns: 30px 30px 30px;
+  align-content: start;
+  gap: 7px;
+}
+
+.notes-icon-action {
+  display: grid;
+  place-items: center;
+  min-width: 32px;
+  height: 32px;
+  border: 0px solid rgba(255,255,255,.1);
+  border-radius: 13px;
+  color: rgba(255,255,255,.9);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+}
+
+.notes-icon-action:active {
+  transform: scale(.94);
+}
+
+
+/* #endregion */
+
+/* #endregion prueba estilo tarjetas de recordatorios con checkbox */
 /* #endregion */
 
 /* #region ICON BUTTONS */
@@ -3926,7 +4168,6 @@ font-size: 10px;
 .notes-icon-action{
   border:none;
   border-radius:14px;
-  background:rgba(255,255,255,.06);
   color:#edf4ff;
   backdrop-filter:blur(12px);
   transition:.18s ease;
@@ -3988,10 +4229,8 @@ font-size: 10px;
 }
 
 .notes-reminder-progress span{
-  background:
-    linear-gradient(90deg,
-      var(--notes-reminder-accent),
-      white);
+  background: linear-gradient(
+91deg, #44ff00, #a1d59b);
   box-shadow:
     0 0 18px var(--notes-reminder-accent);
 }

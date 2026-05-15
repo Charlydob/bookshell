@@ -98,6 +98,8 @@ const state = {
   reminderCalendarMonthKey: getCurrentMonthKey(),
   reminderCalendarSelectedDate: getTodayDateKey(),
   reminderCalendarFocusedReminderId: "",
+  reminderActiveFilterMode: "allPending",
+  reminderActiveFilterDate: "",
 };
 let unbindAuth = null;
 let unbindData = null;
@@ -142,6 +144,7 @@ const REMINDER_TYPES = ["normal", "cumpleaños", "tarea", "evento", "trámite", 
 const REMINDER_STATUSES = ["pendiente", "completado", "vencido"];
 const REMINDER_RANGES = ["all", "today", "7d", "30d", "overdue"];
 const REMINDER_GROUP_BY = ["none", "category", "type", "date", "status"];
+const REMINDER_ACTIVE_FILTER_MODES = ["allPending", "day"];
 const SNIPPET_PREVIEW_PLACEHOLDER = '<div class="demo-target">Demo</div>';
 const CSS_PROPERTY_SUGGESTIONS = Object.freeze([
   "background",
@@ -241,6 +244,12 @@ function normalizeReminderMultiSelection(items = [], allowed = []) {
 
 function normalizeReminderView(value = "") {
   return String(value || "").trim() === "calendar" ? "calendar" : "list";
+}
+
+function normalizeReminderActiveFilterMode(value = "") {
+  return REMINDER_ACTIVE_FILTER_MODES.includes(String(value || "").trim())
+    ? String(value || "").trim()
+    : "allPending";
 }
 
 function loadReminderViewPreference() {
@@ -5320,6 +5329,33 @@ function setReminderCalendarSelectedDate(dateKey = "", {
   state.reminderCalendarFocusedReminderId = String(focusedReminderId || "").trim();
 }
 
+function clearReminderActiveFilter({
+  preserveSelection = true,
+} = {}) {
+  state.reminderActiveFilterMode = "allPending";
+  state.reminderActiveFilterDate = "";
+  if (!preserveSelection) {
+    state.reminderCalendarFocusedReminderId = "";
+  }
+}
+
+function setReminderActiveDayFilter(dateKey = "", {
+  focusedReminderId = "",
+} = {}) {
+  const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : getTodayDateKey();
+  setReminderCalendarSelectedDate(safeDateKey, {
+    syncMonth: true,
+    focusedReminderId,
+  });
+  state.reminderActiveFilterMode = "day";
+  state.reminderActiveFilterDate = safeDateKey;
+}
+
+function getActiveReminderFilterDateKey() {
+  if (normalizeReminderActiveFilterMode(state.reminderActiveFilterMode) !== "day") return "";
+  return parseDateKey(state.reminderActiveFilterDate || "") ? state.reminderActiveFilterDate : "";
+}
+
 function shiftReminderCalendarMonth(delta = 0, reminders = []) {
   const nextMonthKey = addMonthsToMonthKey(state.reminderCalendarMonthKey, delta);
   const selected = parseDateKey(state.reminderCalendarSelectedDate || "");
@@ -5379,15 +5415,36 @@ function selectReminderCalendarDate(dateKey = "", {
 } = {}) {
   const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : getTodayDateKey();
   const wasSelected = safeDateKey === state.reminderCalendarSelectedDate;
-  if (wasSelected && openCreateOnRepeatClick && !focusedReminderId) {
+  const isActiveDayFilter = safeDateKey === getActiveReminderFilterDateKey();
+  if (wasSelected && isActiveDayFilter && openCreateOnRepeatClick && !focusedReminderId) {
     openReminderModal(null, { presetDate: safeDateKey });
     return false;
   }
-  setReminderCalendarSelectedDate(safeDateKey, {
-    syncMonth: true,
-    focusedReminderId,
-  });
+  setReminderActiveDayFilter(safeDateKey, { focusedReminderId });
   return true;
+}
+
+function getReminderListState(reminders = []) {
+  const safeReminders = Array.isArray(reminders) ? reminders : [];
+  const dayFilterDateKey = getActiveReminderFilterDateKey();
+  const hasExplicitDayFilter = Boolean(dayFilterDateKey);
+  const scopedReminders = hasExplicitDayFilter
+    ? getRemindersForSelectedCalendarDate(safeReminders, dayFilterDateKey)
+    : safeReminders;
+  return {
+    hasExplicitDayFilter,
+    dayFilterDateKey,
+    scopedReminders,
+    active: scopedReminders.filter((item) => getReminderComputedStatus(item) === "pendiente"),
+    history: scopedReminders.filter((item) => getReminderComputedStatus(item) !== "pendiente"),
+  };
+}
+
+function shouldResetReminderFilterToAllPending(nextReminders = []) {
+  const dayFilterDateKey = getActiveReminderFilterDateKey();
+  if (!dayFilterDateKey) return false;
+  return !getRemindersForSelectedCalendarDate(nextReminders, dayFilterDateKey)
+    .some((item) => getReminderComputedStatus(item) === "pendiente");
 }
 
 function getFilteredReminders() {
@@ -5830,9 +5887,9 @@ function renderRemindersPanel() {
   const filtered = getFilteredReminders();
   ensureReminderCalendarSelection(filtered);
   renderReminderCalendarView(filtered);
-  const selectedDayItems = getRemindersForSelectedCalendarDate(filtered);
-  const active = selectedDayItems.filter((item) => getReminderComputedStatus(item) === "pendiente");
-  const history = selectedDayItems.filter((item) => getReminderComputedStatus(item) !== "pendiente");
+  const reminderListState = getReminderListState(filtered);
+  const active = reminderListState.active;
+  const history = reminderListState.history;
   const activeGroups = buildGroupedReminders(active);
   const historyGroups = buildGroupedReminders(history);
   list.innerHTML = activeGroups.map((group) => `
@@ -5847,10 +5904,11 @@ function renderRemindersPanel() {
   toggle.textContent = state.reminderCollapsedHistory
     ? `Mostrar completados y vencidos (${history.length})`
     : `Ocultar completados y vencidos (${history.length})`;
-  empty.classList.toggle("hidden", active.length > 0 || history.length > 0 || filtered.length > 0);
-  empty.textContent = filtered.length > 0
+  const hasVisibleItems = active.length > 0 || (!state.reminderCollapsedHistory && history.length > 0);
+  empty.classList.toggle("hidden", hasVisibleItems);
+  empty.textContent = reminderListState.hasExplicitDayFilter
     ? "No hay recordatorios para el dia seleccionado."
-    : "No hay recordatorios todavia.";
+    : (filtered.length > 0 ? "No hay recordatorios pendientes ahora mismo." : "No hay recordatorios todavia.");
   enhanceRenderedReminderContent(list, active);
   enhanceRenderedReminderContent(historyList, history);
 }
@@ -6779,11 +6837,20 @@ async function handleReminderPrimaryAction(action = "", reminder = null) {
     return true;
   }
   if (action === "complete-reminder") {
-    await updateReminder(state.rootPath, reminder.id, { ...reminder, status: "completado", completedAt: Date.now() });
+    const nextReminder = { ...reminder, status: "completado", completedAt: Date.now() };
+    const nextReminders = (state.reminders || []).map((item) => (item.id === reminder.id ? nextReminder : item));
+    if (shouldResetReminderFilterToAllPending(nextReminders)) {
+      clearReminderActiveFilter();
+    }
+    await updateReminder(state.rootPath, reminder.id, nextReminder);
     return true;
   }
   if (action === "delete-reminder") {
     if (window.confirm(`Â¿Eliminar recordatorio "${reminder.title}"?`)) {
+      const nextReminders = (state.reminders || []).filter((item) => item.id !== reminder.id);
+      if (shouldResetReminderFilterToAllPending(nextReminders)) {
+        clearReminderActiveFilter();
+      }
       await deleteReminder(state.rootPath, reminder.id);
     }
     return true;
@@ -7716,6 +7783,7 @@ function bindUiEvents() {
     if (state.rootSection !== "notes") {
       activeNoteDetailId = "";
       setCurrentFolder("");
+      clearReminderActiveFilter();
     }
     renderShell();
     runReminderChecks();
@@ -7743,6 +7811,7 @@ function bindUiEvents() {
     const action = String(target.dataset.act || "").trim();
     if (action === "shift-reminders-calendar") {
       shiftReminderCalendarMonth(Number(target.dataset.monthShift || 0), getFilteredReminders());
+      clearReminderActiveFilter();
       renderRemindersPanel();
       return;
     }
@@ -7786,6 +7855,7 @@ function bindUiEvents() {
     if (input.name === "reminder-visible-range") {
       state.reminderFilters.range = normalizeReminderRange(input.value || "all");
     }
+    clearReminderActiveFilter();
     renderRemindersPanel();
     try { await persistReminderPreferences(); } catch (_) {}
   });
@@ -8753,6 +8823,8 @@ export function destroy() {
   state.reminderCalendarMonthKey = getCurrentMonthKey();
   state.reminderCalendarSelectedDate = getTodayDateKey();
   state.reminderCalendarFocusedReminderId = "";
+  state.reminderActiveFilterMode = "allPending";
+  state.reminderActiveFilterDate = "";
   state.folderView = "main";
   state._reminderPrefsApplied = false;
   setCurrentFolder("");

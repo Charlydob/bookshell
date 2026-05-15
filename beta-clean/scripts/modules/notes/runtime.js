@@ -92,6 +92,7 @@ const REMINDER_COLOR_PALETTE = Object.freeze([
 const DEFAULT_REMINDER_COLOR = REMINDER_COLOR_PALETTE[0];
 const REMINDER_VIEW_STORAGE_KEY = "bookshell-notes-reminders-view:v1";
 const REMINDER_CALENDAR_MAX_DOTS = 3;
+const REMINDER_CALENDAR_DEBUG = true;
 const state = {
   ...createInitialNotesState(),
   reminderView: loadReminderViewPreference(),
@@ -264,6 +265,11 @@ function saveReminderViewPreference(value = "") {
   try {
     window.localStorage?.setItem(REMINDER_VIEW_STORAGE_KEY, normalizeReminderView(value));
   } catch (_) {}
+}
+
+function logReminderCalendarDebug(label = "", payload = {}) {
+  if (!REMINDER_CALENDAR_DEBUG || typeof console === "undefined" || typeof console.log !== "function") return;
+  console.log(label, payload);
 }
 
 function normalizeReminderColor(value = "") {
@@ -5424,6 +5430,34 @@ function selectReminderCalendarDate(dateKey = "", {
   return true;
 }
 
+function handleReminderCalendarDaySelection(dateKey = "", {
+  target = null,
+  dayEl = null,
+  focusedReminderId = "",
+  openCreateOnRepeatClick = false,
+} = {}) {
+  const safeDateKey = parseDateKey(dateKey) ? String(dateKey) : "";
+  if (!safeDateKey) return false;
+  if (dayEl?.dataset?.calendarDisabled === "true" || dayEl?.getAttribute?.("aria-disabled") === "true") {
+    return false;
+  }
+  const previousSelectedDay = state.reminderCalendarSelectedDate;
+  const previousFilterMode = normalizeReminderActiveFilterMode(state.reminderActiveFilterMode);
+  const changed = selectReminderCalendarDate(safeDateKey, {
+    openCreateOnRepeatClick,
+    focusedReminderId,
+  });
+  logReminderCalendarDebug("[reminders:calendar:click]", {
+    target,
+    dayEl,
+    date: safeDateKey,
+    previousSelectedDay,
+    nextSelectedDay: changed ? safeDateKey : previousSelectedDay,
+    filterMode: changed ? normalizeReminderActiveFilterMode(state.reminderActiveFilterMode) : previousFilterMode,
+  });
+  return changed;
+}
+
 function getReminderListState(reminders = []) {
   const safeReminders = Array.isArray(reminders) ? reminders : [];
   const dayFilterDateKey = getActiveReminderFilterDateKey();
@@ -5612,6 +5646,12 @@ function renderReminderCalendarView(reminders = []) {
   const panel = $id("notes-reminders-calendar-panel");
   if (!title || !grid || !panel) return;
 
+  logReminderCalendarDebug("[reminders:calendar:render:start]", {
+    monthKey: state.reminderCalendarMonthKey,
+    selectedDay: state.reminderCalendarSelectedDate,
+    filterMode: normalizeReminderActiveFilterMode(state.reminderActiveFilterMode),
+    total: Array.isArray(reminders) ? reminders.length : 0,
+  });
   ensureReminderCalendarSelection(reminders);
   const cells = buildReminderCalendarCells(state.reminderCalendarMonthKey);
   const remindersByDate = buildReminderCalendarMap(reminders, cells);
@@ -5636,7 +5676,7 @@ function renderReminderCalendarView(reminders = []) {
       ].filter(Boolean).join(" ");
 
       return `
-        <div class="${classes}" data-date-key="${escapeHtml(cell.dateKey)}">
+        <div class="${classes}" data-date-key="${escapeHtml(cell.dateKey)}" data-calendar-day="true">
           <button class="notes-reminders-calendar__dayButton" type="button" data-act="select-reminder-calendar-day" data-date-key="${escapeHtml(cell.dateKey)}" aria-pressed="${cell.dateKey === selectedDateKey ? "true" : "false"}">
             <span class="notes-reminders-calendar__dayNumber">${escapeHtml(String(cell.dayNumber))}</span>
           </button>
@@ -5664,6 +5704,12 @@ function renderReminderCalendarView(reminders = []) {
 
   panel.innerHTML = buildReminderCalendarPanelMarkup(selectedDateKey, selectedItems);
   enhanceRenderedReminderContent(panel, selectedItems);
+  logReminderCalendarDebug("[reminders:calendar:render:done]", {
+    monthKey: state.reminderCalendarMonthKey,
+    selectedDay: selectedDateKey,
+    filterMode: normalizeReminderActiveFilterMode(state.reminderActiveFilterMode),
+    visibleOnSelectedDay: selectedItems.length,
+  });
 
   const focusReminderId = String(state.reminderCalendarFocusedReminderId || "").trim();
   if (focusReminderId) {
@@ -5890,6 +5936,12 @@ function renderRemindersPanel() {
   const reminderListState = getReminderListState(filtered);
   const active = reminderListState.active;
   const history = reminderListState.history;
+  logReminderCalendarDebug("[reminders:list:filter]", {
+    mode: normalizeReminderActiveFilterMode(state.reminderActiveFilterMode),
+    selectedDay: getActiveReminderFilterDateKey() || state.reminderCalendarSelectedDate,
+    total: filtered.length,
+    visible: reminderListState.scopedReminders.length,
+  });
   const activeGroups = buildGroupedReminders(active);
   const historyGroups = buildGroupedReminders(history);
   list.innerHTML = activeGroups.map((group) => `
@@ -7800,13 +7852,25 @@ function bindUiEvents() {
     showPanel.classList.toggle("hidden", nextShowHidden);
     groupPanel.classList.toggle("hidden", nextGroupHidden);
   });
-  $id("notes-reminders-calendar-view")?.addEventListener("click", async (event) => {
+  $id("notes-reminders-calendar-shell")?.addEventListener("click", async (event) => {
     const externalLink = event.target.closest?.("a[data-external-link='true']");
     if (externalLink) {
       event.stopPropagation();
       return;
     }
     const target = event.target.closest("[data-act]");
+    const dayEl = event.target.closest?.(".notes-reminders-calendar__day");
+    const dayDateKey = String(dayEl?.dataset?.dateKey || target?.dataset?.dateKey || "").trim();
+    if (dayEl && target?.dataset?.act !== "focus-reminder-calendar-item" && target?.dataset?.act !== "shift-reminders-calendar") {
+      const changed = handleReminderCalendarDaySelection(dayDateKey, {
+        target,
+        dayEl,
+        openCreateOnRepeatClick: true,
+      });
+      if (!changed) return;
+      renderRemindersPanel();
+      return;
+    }
     if (!target) return;
     const action = String(target.dataset.act || "").trim();
     if (action === "shift-reminders-calendar") {
@@ -7815,24 +7879,27 @@ function bindUiEvents() {
       renderRemindersPanel();
       return;
     }
-    if (action === "select-reminder-calendar-day") {
-      const changed = selectReminderCalendarDate(target.dataset.dateKey || "", {
-        openCreateOnRepeatClick: true,
-      });
-      if (!changed) return;
-      renderRemindersPanel();
-      return;
-    }
     if (action === "focus-reminder-calendar-item") {
-      const changed = selectReminderCalendarDate(target.dataset.dateKey || "", {
+      const changed = handleReminderCalendarDaySelection(dayDateKey, {
+        target,
+        dayEl,
         focusedReminderId: target.dataset.reminderId || "",
       });
       if (!changed) return;
       renderRemindersPanel();
       return;
     }
+  });
+  $id("notes-reminders-calendar-panel")?.addEventListener("click", async (event) => {
+    const externalLink = event.target.closest?.("a[data-external-link='true']");
+    if (externalLink) {
+      event.stopPropagation();
+      return;
+    }
+    const target = event.target.closest("[data-act]");
+    if (!target) return;
     const reminder = state.reminders.find((row) => row.id === String(target.dataset.reminderId || "").trim());
-    if (await handleReminderPrimaryAction(action, reminder)) return;
+    if (await handleReminderPrimaryAction(String(target.dataset.act || "").trim(), reminder)) return;
   });
   $id("notes-reminders-show-panel")?.addEventListener("change", async (event) => {
     const input = event.target;

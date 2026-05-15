@@ -3116,6 +3116,7 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(10, 15, 24, 0.72);
+  cursor: pointer;
   display: grid;
   align-content: start;
   gap: 4px;
@@ -4611,6 +4612,7 @@ font-size: 10px;
 
 .notes-reminders-calendar__day{
   border-radius:18px;
+  cursor:pointer;
   transition:.18s ease;
 }
 

@@ -30,6 +30,7 @@ let HABIT_ACTIVE_SESSIONS_PATH = null;
 let HABIT_CHECKS_PATH = null;
 let HABIT_SESSIONS_PATH = null;
 let HABIT_COUNTS_PATH = null;
+let HABIT_TIMELINE_POINTS_PATH = null;
 let HABIT_GROUPS_PATH = null;
 let HABIT_PREFS_PATH = null;
 let HABIT_COMPARE_SETTINGS_PATH = null;
@@ -105,6 +106,7 @@ function setUserPaths(uid) {
   HABIT_CHECKS_PATH = `${HABITS_ROOT}/habitChecks`;
   HABIT_SESSIONS_PATH = `${HABITS_ROOT}/habitSessions`;
   HABIT_COUNTS_PATH = `${HABITS_ROOT}/habitCounts`;
+  HABIT_TIMELINE_POINTS_PATH = `${HABITS_ROOT}/habitTimelinePoints`;
   HABIT_GROUPS_PATH = `${HABITS_ROOT}/habitGroups`;
   HABIT_PREFS_PATH = `${HABITS_ROOT}/habitPrefs`;
   HABIT_COMPARE_SETTINGS_PATH = `${HABITS_ROOT}/habitsCompareSettings`;
@@ -167,6 +169,7 @@ let habitSessions = {}; // { habitId: { dateKey: totalSec } }
 let habitSessionTimeline = {}; // { habitId: [{startTs,endTs,durationSec,dateKey,source}] }
 let habitSessionTimelineCoverage = {}; // { habitId: Set<dateKey> } days already backed by timestamped sessions
 let habitCounts = {}; // { habitId: { dateKey: number } }
+let habitTimelinePoints = {}; // { habitId: { dateKey: [{ id, habitId, dateKey, kind, ts, quantity }] } }
 let habitGroups = {}; // { groupId: { id, name, createdAt } }
 let habitPrefs = { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
 let habitUI = { quickCounters: [] };
@@ -534,9 +537,138 @@ function recordScheduleTimelinePointEvent({ habitId, dateKey, kind = "count", qu
   persistScheduleTimelinePointEvents();
 }
 
+function normalizeHabitTimelinePointEntry(raw = null, fallback = {}) {
+  if (!raw || typeof raw !== "object") return null;
+  const habitId = String(raw.habitId || fallback.habitId || "").trim();
+  const dateKey = String(raw.dateKey || fallback.dateKey || "").trim();
+  const kind = raw.kind === "check" ? "check" : "count";
+  const ts = Number(raw.ts);
+  const quantity = Math.max(1, Math.round(Number(raw.quantity) || 1));
+  if (!habitId || !dateKey || !Number.isFinite(ts) || ts <= 0) return null;
+  const id = String(
+    raw.id
+    || raw.eventId
+    || createOfflinePushId("habit-timeline-point")
+    || `habit-point-${habitId}-${dateKey}-${Math.round(ts)}-${quantity}`
+  ).trim();
+  if (!id) return null;
+  return {
+    id,
+    habitId,
+    dateKey,
+    kind,
+    ts: Math.round(ts),
+    quantity
+  };
+}
+
+function normalizeHabitTimelinePointsStore(raw = {}) {
+  const normalized = {};
+  Object.entries(raw || {}).forEach(([habitId, byDate]) => {
+    if (!byDate || typeof byDate !== "object") return;
+    const dayMap = {};
+    Object.entries(byDate).forEach(([dateKey, entriesRaw]) => {
+      const source = Array.isArray(entriesRaw)
+        ? entriesRaw
+        : (entriesRaw && typeof entriesRaw === "object" ? Object.values(entriesRaw) : []);
+      const entries = source
+        .map((entry) => normalizeHabitTimelinePointEntry(entry, { habitId, dateKey }))
+        .filter(Boolean)
+        .sort((a, b) => a.ts - b.ts || String(a.id).localeCompare(String(b.id)));
+      if (entries.length) dayMap[dateKey] = entries;
+    });
+    if (Object.keys(dayMap).length) normalized[habitId] = dayMap;
+  });
+  return normalized;
+}
+
+function getHabitTimelinePointEntries(habitId, dateKey, options = {}) {
+  const safeHabitId = String(habitId || "").trim();
+  const safeDateKey = String(dateKey || "").trim();
+  if (!safeHabitId || !safeDateKey) return [];
+  const kind = String(options?.kind || "").trim();
+  const entries = Array.isArray(habitTimelinePoints?.[safeHabitId]?.[safeDateKey])
+    ? habitTimelinePoints[safeHabitId][safeDateKey]
+    : [];
+  return entries
+    .filter((entry) => !kind || entry.kind === kind)
+    .slice()
+    .sort((a, b) => a.ts - b.ts || String(a.id).localeCompare(String(b.id)));
+}
+
+function persistHabitTimelinePointEntries(habitId, dateKey, entries = []) {
+  if (!habitId || !dateKey || !HABIT_TIMELINE_POINTS_PATH) return;
+  const payload = Array.isArray(entries) && entries.length ? entries : null;
+  void writeRtdbWithOfflineQueue({
+    uid: currentUid,
+    module: "habits",
+    entityType: "habitTimelinePoints",
+    actionType: "set-timeline-points",
+    firebasePath: `${HABIT_TIMELINE_POINTS_PATH}/${habitId}/${dateKey}`,
+    payload,
+    writeType: "set",
+    dedupeKey: `habit-timeline-points:${habitId}:${dateKey}`,
+    metadata: { habitId, dateKey },
+  }).then((result) => reportQueuedWriteError("No se pudo guardar la timeline horaria del contador", result));
+}
+
+function replaceHabitTimelinePointEntries(habitId, dateKey, entries = [], { persist = true } = {}) {
+  const safeHabitId = String(habitId || "").trim();
+  const safeDateKey = String(dateKey || "").trim();
+  if (!safeHabitId || !safeDateKey) return [];
+  const normalizedEntries = (Array.isArray(entries) ? entries : [])
+    .map((entry) => normalizeHabitTimelinePointEntry(entry, { habitId: safeHabitId, dateKey: safeDateKey }))
+    .filter(Boolean)
+    .sort((a, b) => a.ts - b.ts || String(a.id).localeCompare(String(b.id)));
+  if (!habitTimelinePoints[safeHabitId] || typeof habitTimelinePoints[safeHabitId] !== "object") {
+    habitTimelinePoints[safeHabitId] = {};
+  }
+  if (normalizedEntries.length) habitTimelinePoints[safeHabitId][safeDateKey] = normalizedEntries;
+  else delete habitTimelinePoints[safeHabitId][safeDateKey];
+  if (!Object.keys(habitTimelinePoints[safeHabitId] || {}).length) delete habitTimelinePoints[safeHabitId];
+  saveCache();
+  if (persist) persistHabitTimelinePointEntries(safeHabitId, safeDateKey, normalizedEntries);
+  return normalizedEntries;
+}
+
+function addHabitTimelinePointEntry({ habitId, dateKey, kind = "count", quantity = 1, ts = Date.now() } = {}) {
+  const entry = normalizeHabitTimelinePointEntry({ habitId, dateKey, kind, quantity, ts });
+  if (!entry) return null;
+  const entries = getHabitTimelinePointEntries(entry.habitId, entry.dateKey);
+  replaceHabitTimelinePointEntries(entry.habitId, entry.dateKey, [...entries, entry]);
+  return entry;
+}
+
+function removeHabitTimelinePointQuantity({ habitId, dateKey, kind = "count", quantity = 1 } = {}) {
+  const remainingToRemove = Math.max(0, Math.round(Number(quantity) || 0));
+  if (!remainingToRemove) return 0;
+  const currentEntries = getHabitTimelinePointEntries(habitId, dateKey);
+  if (!currentEntries.length) return 0;
+  let left = remainingToRemove;
+  const nextEntries = currentEntries.slice();
+  for (let index = nextEntries.length - 1; index >= 0 && left > 0; index -= 1) {
+    const entry = nextEntries[index];
+    if (!entry || entry.kind !== kind) continue;
+    if (entry.quantity > left) {
+      nextEntries[index] = { ...entry, quantity: entry.quantity - left };
+      left = 0;
+      break;
+    }
+    left -= entry.quantity;
+    nextEntries.splice(index, 1);
+  }
+  if (left === remainingToRemove) return 0;
+  replaceHabitTimelinePointEntries(habitId, dateKey, nextEntries);
+  return remainingToRemove - left;
+}
+
 function buildScheduleTimelinePointSegments(dateKey = todayKey()) {
-  return scheduleTimelinePointEvents
-    .filter((event) => event.dateKey === dateKey && isScheduleTimelineHabitVisible(event.habitId))
+  const persistedCountEvents = activeHabits()
+    .flatMap((habit) => getHabitTimelinePointEntries(habit.id, dateKey, { kind: "count" }));
+  const transientCheckEvents = scheduleTimelinePointEvents
+    .filter((event) => event.kind === "check" && event.dateKey === dateKey);
+  return [...persistedCountEvents, ...transientCheckEvents]
+    .filter((event) => isScheduleTimelineHabitVisible(event.habitId))
     .map((event, index) => {
       const habit = habits?.[event.habitId] || null;
       if (!habit || habit.archived) return null;
@@ -783,6 +915,56 @@ function buildWorkDayPayload(minutes, shift, quickAddCounts = null) {
     payload.quickAddCounts = safeQuickAddCounts;
   }
   return payload;
+}
+
+function buildHabitSessionTimelineEntryKey(habitId, session = {}) {
+  const bounds = parseSessionBounds(session);
+  if (!bounds) return "";
+  const safeHabitId = String(habitId || session?.habitId || "").trim();
+  const sessionId = String(session?.sessionId || session?.id || "").trim();
+  return [safeHabitId, sessionId || "session", Math.round(bounds.startTs), Math.round(bounds.endTs)].join("|");
+}
+
+function markHabitSessionCoverageForBounds(coverageStore, habitId, session = {}, dayKeyHint = "") {
+  const safeHabitId = String(habitId || session?.habitId || "").trim();
+  if (!safeHabitId) return;
+  const bounds = parseSessionBounds(session);
+  if (!coverageStore[safeHabitId]) coverageStore[safeHabitId] = new Set();
+  if (bounds) {
+    const split = splitSessionByDay(bounds.startTs, bounds.endTs);
+    if (split?.size) {
+      split.forEach((_, dateKey) => coverageStore[safeHabitId].add(dateKey));
+      return;
+    }
+  }
+  if (dayKeyHint) coverageStore[safeHabitId].add(dayKeyHint);
+}
+
+function upsertHabitSessionTimelineEntryLocal(habitId, session = {}, dayKeyHint = "") {
+  const normalizedSession = normalizeStoredHabitSessionEntry({
+    ...(session || {}),
+    habitId,
+    dateKey: dayKeyHint || session?.dateKey
+  });
+  if (!normalizedSession || !habitId) return null;
+  const dedupeKey = buildHabitSessionTimelineEntryKey(habitId, normalizedSession);
+  if (!habitSessionTimeline[habitId]) habitSessionTimeline[habitId] = [];
+  const existingIndex = habitSessionTimeline[habitId].findIndex((entry) => buildHabitSessionTimelineEntryKey(habitId, entry) === dedupeKey);
+  if (existingIndex >= 0) {
+    habitSessionTimeline[habitId][existingIndex] = {
+      ...habitSessionTimeline[habitId][existingIndex],
+      ...normalizedSession,
+      source: normalizedSession.source || habitSessionTimeline[habitId][existingIndex]?.source || "ts"
+    };
+  } else {
+    habitSessionTimeline[habitId].push({
+      habitId,
+      ...normalizedSession,
+      source: normalizedSession.source || "ts"
+    });
+  }
+  markHabitSessionCoverageForBounds(habitSessionTimelineCoverage, habitId, normalizedSession, dayKeyHint);
+  return normalizedSession;
 }
 
 function normalizeStoredHabitSessionEntry(session = {}) {
@@ -2823,6 +3005,7 @@ function normalizeSessionsStore(raw, persistRemote = false) {
   const totals = {};
   const timeline = {};
   const coverage = {};
+  const timelineSeen = {};
   let changed = false;
 
   const add = (habitId, dateKey, sec) => {
@@ -2839,16 +3022,17 @@ function normalizeSessionsStore(raw, persistRemote = false) {
       dateKey: dayKeyHint || session?.dateKey
     });
     if (!normalizedSession || !habitId) return;
+    const dedupeKey = buildHabitSessionTimelineEntryKey(habitId, normalizedSession);
+    if (!timelineSeen[habitId]) timelineSeen[habitId] = new Set();
+    markHabitSessionCoverageForBounds(coverage, habitId, normalizedSession, dayKeyHint);
+    if (dedupeKey && timelineSeen[habitId].has(dedupeKey)) return;
+    timelineSeen[habitId].add(dedupeKey);
     if (!timeline[habitId]) timeline[habitId] = [];
     timeline[habitId].push({
       habitId,
       ...normalizedSession,
       source: normalizedSession.source || "ts"
     });
-    if (dayKeyHint) {
-      if (!coverage[habitId]) coverage[habitId] = new Set();
-      coverage[habitId].add(dayKeyHint);
-    }
   };
 
   Object.entries(raw || {}).forEach(([k, v]) => {
@@ -3048,11 +3232,10 @@ function addHabitTimeSec(habitId, dateKey, secToAdd, options = {}) {
         dateKey: localDayKey,
         source: String(options?.source || "live").trim() || "live"
       };
-      prevSessions.push(nextSession);
-      if (!habitSessionTimeline[habitId]) habitSessionTimeline[habitId] = [];
-      habitSessionTimeline[habitId].push({ habitId, ...nextSession, dateKey, source: nextSession.source || "live" });
-      if (!habitSessionTimelineCoverage[habitId]) habitSessionTimelineCoverage[habitId] = new Set();
-      habitSessionTimelineCoverage[habitId].add(dateKey);
+      if (localDayKey === dateKey) {
+        prevSessions.push(nextSession);
+      }
+      upsertHabitSessionTimelineEntryLocal(habitId, nextSession, localDayKey);
     }
     const payload = prevSessions.length
       ? buildHabitTimeDayPayload(nextSec, { sessions: prevSessions, quickAddCounts: nextQuickAddCounts })
@@ -3628,6 +3811,7 @@ function buildHabitsCachePayload() {
     habitChecks,
     habitSessions,
     habitCounts,
+    habitTimelinePoints,
     habitGroups,
     habitPrefs,
     habitUI,
@@ -3643,6 +3827,7 @@ function applyHabitsCachePayload(raw = {}, { persistNormalized = false } = {}) {
   habitChecks = parsed.habitChecks || {};
   habitSessions = parsed.habitSessions || {};
   habitCounts = parsed.habitCounts || {};
+  habitTimelinePoints = normalizeHabitTimelinePointsStore(parsed.habitTimelinePoints || {});
   habitGroups = parsed.habitGroups || {};
   habitPrefs = parsed.habitPrefs || { pinCount: "", pinTime: "", quickSessions: [], analyticsUnit: "auto" };
   if (!Array.isArray(habitPrefs.quickSessions)) habitPrefs.quickSessions = [];
@@ -4598,6 +4783,7 @@ function getSessionsForHabitDate(habitId, dateKey) {
   const dayStartTs = day ? new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0).getTime() : Number.NaN;
   const dayEndTs = day ? new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1, 0, 0, 0, 0).getTime() : Number.NaN;
   const detailed = Array.isArray(habitSessionTimeline?.[habitId]) ? habitSessionTimeline[habitId] : [];
+  const seen = new Set();
   const timed = detailed
     .map((session) => {
       const bounds = parseSessionBounds(session);
@@ -4620,7 +4806,13 @@ function getSessionsForHabitDate(habitId, dateKey) {
         source: session.source || "ts"
       };
     })
-    .filter(Boolean)
+    .filter((session) => {
+      if (!session) return false;
+      const dedupeKey = buildHabitSessionTimelineEntryKey(habitId, session);
+      if (!dedupeKey || seen.has(dedupeKey)) return false;
+      seen.add(dedupeKey);
+      return true;
+    })
     .sort((a, b) => a.startTs - b.startTs);
   if (timed.length) return timed;
   const sec = getHabitTotalSecForDate(habitId, dateKey);
@@ -4699,7 +4891,7 @@ function countActiveDaysInRange(start, end) {
     if (!habit || habit.archived) return;
     Object.keys(entries || {}).forEach((key) => {
       const parsed = parseDateKey(key);
-      if (parsed && isDateInRange(parsed, start, end) && Number(entries[key]) > 0) dates.add(key);
+      if (parsed && isDateInRange(parsed, start, end) && getHabitCount(habitId, key) > 0) dates.add(key);
     });
   });
 
@@ -4726,7 +4918,7 @@ function collectHabitActivityDatesSet(habit) {
 
   const counts = habitCounts[habit.id] || {};
   Object.keys(counts).forEach((key) => {
-    if (Number(counts[key]) > 0) dates.add(key);
+    if (getHabitCount(habit.id, key) > 0) dates.add(key);
   });
 
   const byDate = habitSessions?.[habit.id];
@@ -5192,6 +5384,8 @@ const $habitEntryCheckWrap = document.getElementById("habit-entry-check-wrap");
 const $habitEntryCheck = document.getElementById("habit-entry-check");
 const $habitEntryCountWrap = document.getElementById("habit-entry-count-wrap");
 const $habitEntryCount = document.getElementById("habit-entry-count");
+const $habitEntryCountTimeWrap = document.getElementById("habit-entry-count-time-wrap");
+const $habitEntryCountTime = document.getElementById("habit-entry-count-time");
 const $habitEntryCountMinus = document.getElementById("habit-entry-count-minus");
 const $habitEntryCountPlus = document.getElementById("habit-entry-count-plus");
 const $habitEntrySessions = document.getElementById("habit-entry-sessions");
@@ -5333,11 +5527,33 @@ function persistHabitCheckLegacy(habitId, dateKey, value) {
 }
 function getHabitCount(habitId, dateKey) {
   const raw = habitCounts?.[habitId]?.[dateKey];
-  const n = Number(raw);
+  const n = Number(raw?.total ?? raw);
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-function setHabitCount(habitId, dateKey, value) {
+function resolveHabitCountEntryTimestamp(dateKey, timeValue = "") {
+  const safeDateKey = String(dateKey || "").trim();
+  const safeTime = normalizeWorkScheduleTimeValue(timeValue || "", "");
+  if (safeTime) {
+    const manualTs = buildManualSessionTimestamp(safeDateKey, safeTime);
+    if (Number.isFinite(manualTs)) return manualTs;
+  }
+  if (safeDateKey === todayKey()) return Date.now();
+  const day = parseDateKey(safeDateKey);
+  if (!day) return Date.now();
+  const now = new Date();
+  return new Date(
+    day.getFullYear(),
+    day.getMonth(),
+    day.getDate(),
+    now.getHours(),
+    now.getMinutes(),
+    now.getSeconds(),
+    now.getMilliseconds()
+  ).getTime();
+}
+
+function setHabitCount(habitId, dateKey, value, options = {}) {
   if (!habitId || !dateKey) return;
   const habit = habits[habitId];
   if (!habit || habit.archived) return;
@@ -5365,7 +5581,22 @@ function setHabitCount(habitId, dateKey, value) {
 
   persistHabitCount(habitId, dateKey, safe > 0 ? safe : null);
   if (safe > prev) {
-    recordScheduleTimelinePointEvent({ habitId, dateKey, kind: "count", quantity: safe - prev });
+    addHabitTimelinePointEntry({
+      habitId,
+      dateKey,
+      kind: "count",
+      quantity: safe - prev,
+      ts: Number.isFinite(Number(options?.ts))
+        ? Math.round(Number(options.ts))
+        : resolveHabitCountEntryTimestamp(dateKey, options?.timeValue || "")
+    });
+  } else if (safe < prev) {
+    removeHabitTimelinePointQuantity({
+      habitId,
+      dateKey,
+      kind: "count",
+      quantity: prev - safe
+    });
   }
   invalidateDominantCache(dateKey);
   if (dateKey === todayKey()) {
@@ -5375,9 +5606,9 @@ function setHabitCount(habitId, dateKey, value) {
   schedulePersistDayUsage(dateKey, "count-update");
 }
 
-function adjustHabitCount(habitId, dateKey, delta) {
+function adjustHabitCount(habitId, dateKey, delta, options = {}) {
   const current = getHabitCount(habitId, dateKey);
-  setHabitCount(habitId, dateKey, current + Number(delta || 0));
+  setHabitCount(habitId, dateKey, current + Number(delta || 0), options);
 }
 
 function persistHabitCountLegacy(habitId, dateKey, value) {
@@ -8532,7 +8763,7 @@ function hasAnyHistoryDataInRange(start, end) {
     const counts = habitCounts[habit.id] || {};
     if (Object.keys(counts).some((key) => {
       const parsed = parseDateKey(key);
-      return parsed && isDateInRange(parsed, start, end) && Number(counts[key]) > 0;
+      return parsed && isDateInRange(parsed, start, end) && getHabitCount(habit.id, key) > 0;
     })) return true;
     const byDate = habitSessions?.[habit.id];
     if (byDate && typeof byDate === "object") {
@@ -9128,6 +9359,7 @@ function buildActiveScheduleTimelineSessions(dateKey = todayKey()) {
 }
 
 function buildScheduleTimelineRealtimeSegments(dateKey = todayKey()) {
+  const seen = new Set();
   return buildScheduleTimelineRows(dateKey)
     .map((row, index) => {
       const bounds = parseSessionBounds(row);
@@ -9163,7 +9395,19 @@ function buildScheduleTimelineRealtimeSegments(dateKey = todayKey()) {
         isRegistered: !!row.isRegistered
       };
     })
-    .filter(Boolean)
+    .filter((segment) => {
+      if (!segment) return false;
+      const dedupeKey = [
+        segment.habitId || "",
+        Math.round(Number(segment.startTs) || 0),
+        Math.round(Number(segment.endTs) || 0),
+        segment.sourceKind || "",
+        String(segment.title || "")
+      ].join("|");
+      if (seen.has(dedupeKey)) return false;
+      seen.add(dedupeKey);
+      return true;
+    })
     .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin || a.title.localeCompare(b.title));
 }
 
@@ -11585,7 +11829,7 @@ function countsForHabitRange(habit, start, end) {
   Object.entries(byDate).forEach(([dateKey, count]) => {
     const parsed = parseDateKey(dateKey);
     if (parsed && isDateInRange(parsed, start, end)) {
-      total += Number(count) || 0;
+      total += getHabitCount(habit.id, dateKey);
     }
   });
   return total;
@@ -11605,7 +11849,7 @@ function collectHabitActiveDates(habit, start, end) {
   const counts = habitCounts[habit.id] || {};
   Object.keys(counts).forEach((key) => {
     const parsed = parseDateKey(key);
-    if (parsed && isDateInRange(parsed, start, end) && Number(counts[key]) > 0) dates.add(key);
+    if (parsed && isDateInRange(parsed, start, end) && getHabitCount(habit.id, key) > 0) dates.add(key);
   });
 
   const byDate = habitSessions?.[habit.id];
@@ -11649,7 +11893,7 @@ function countActiveDaysInYear(year = new Date().getFullYear()) {
     if (!habit || habit.archived) return;
     Object.keys(entries || {}).forEach((key) => {
       const parsed = parseDateKey(key);
-      if (parsed && isDateInRange(parsed, start, end) && Number(entries[key]) > 0) dates.add(key);
+      if (parsed && isDateInRange(parsed, start, end) && getHabitCount(habitId, key) > 0) dates.add(key);
     });
   });
 
@@ -11679,7 +11923,7 @@ function countActiveDaysTotal() {
     const habit = habits[habitId];
     if (!habit || habit.archived) return;
     Object.keys(entries || {}).forEach((key) => {
-      if (Number(entries[key]) > 0) dates.add(key);
+      if (getHabitCount(habitId, key) > 0) dates.add(key);
     });
   });
 
@@ -12084,7 +12328,7 @@ function countForHabitRangeV2(habit, start, end) {
   const store = habitCounts[habit.id] || {};
   let total = 0;
   Object.keys(store).forEach((key) => {
-    if (key >= startKey && key <= endKey) total += Number(store[key]) || 0;
+    if (key >= startKey && key <= endKey) total += getHabitCount(habit.id, key);
   });
   return total;
 }
@@ -12824,41 +13068,7 @@ window.toggleQuickCounters = toggleQuickCounters;
 
 function incrementCounterHabitLegacy(habitId) {
   if (!habitId) return;
-
-  const habit = habits[habitId];
-  if (!habit || habit.archived) return;
-
-  const dateKey = todayKey();
-  const current = getHabitCount(habitId, dateKey);
-  const next = current + 1;
-
-  if (!habitCounts[habitId]) habitCounts[habitId] = {};
-  habitCounts[habitId][dateKey] = next;
-  saveCache();
-
-  updateQuickCounterTileState(habitId, next, { animate: true });
-
-  const per = Math.round(Number(habit.countUnitMinutes) || 0);
-  if ((habit.goal || "check") === "count" && per > 0) {
-    const curTotal = getHabitTotalSecForDate(habitId, dateKey);
-    const prevSec = Math.round(current * per * 60);
-    const baseSec = Math.max(0, curTotal - prevSec);
-    const nextSec = baseSec + Math.round(next * per * 60);
-    setHabitTimeSec(habitId, dateKey, nextSec);
-  }
-
-  invalidateDominantCache(dateKey);
-  renderHabitsPreservingTodayUI();
-
-  const path = `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}`;
-  runTransaction(ref(db, path), (val) => {
-    const n = Number(val);
-    const base = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
-    return base + 1;
-  }).catch((err) => {
-    console.warn("No se pudo incrementar contador", err);
-  });
-
+  adjustHabitCount(habitId, todayKey(), 1, { ts: Date.now() });
   globalThis.playClickSound?.();
 }
 
@@ -14049,6 +14259,7 @@ function openEntryModal(habitId, dateKey = todayKey()) {
   if (!$habitEntryModal) return;
   populateEntryHabitSelect(habitId);
   if ($habitEntryDate) $habitEntryDate.value = dateKey || todayKey();
+  if ($habitEntryCountTime) $habitEntryCountTime.value = "";
   refreshEntryModal();
   $habitEntryModal.classList.remove("hidden");
   syncHabitModalOpenState();
@@ -14056,6 +14267,7 @@ function openEntryModal(habitId, dateKey = todayKey()) {
 
 function closeEntryModal() {
   $habitEntryModal?.classList.add("hidden");
+  if ($habitEntryCountTime) $habitEntryCountTime.value = "";
   syncHabitModalOpenState();
 }
 
@@ -14068,6 +14280,7 @@ function refreshEntryModal() {
 
   if ($habitEntryCheckWrap) $habitEntryCheckWrap.style.display = goal === "count" ? "none" : "block";
   if ($habitEntryCountWrap) $habitEntryCountWrap.style.display = goal === "count" ? "block" : "none";
+  if ($habitEntryCountTimeWrap) $habitEntryCountTimeWrap.style.display = goal === "count" ? "block" : "none";
 
   if ($habitEntryCheck) {
     $habitEntryCheck.checked = !!(habitChecks?.[habitId]?.[dateKey]);
@@ -14426,7 +14639,7 @@ function handleEntrySubmit(e) {
 
   if (goal === "count") {
     const n = Number($habitEntryCount?.value || 0);
-    setHabitCount(habitId, dateKey, n);
+    setHabitCount(habitId, dateKey, n, { timeValue: $habitEntryCountTime?.value || "" });
   } else {
     const checked = !!$habitEntryCheck?.checked;
     const wasChecked = !!habitChecks?.[habitId]?.[dateKey];
@@ -14465,7 +14678,7 @@ function habitDateKeys(habitId) {
 function habitDailyRow(habit, date) {
   const rawLog = habit?.log?.[date];
   const type = habitType(habit);
-  const count = Number(habitCounts[habit.id]?.[date] || 0);
+  const count = getHabitCount(habit.id, date);
   const done = habitChecks[habit.id]?.[date] ? 1 : 0;
   const minutes = type === "time"
     ? Math.max(0, Math.round(typeof rawLog === "number" ? rawLog / 60 : Number(rawLog?.min || rawLog?.totalSec / 60 || 0)))
@@ -15079,7 +15292,7 @@ function bindEvents() {
     e.preventDefault();
     const habitId = $habitEntryHabit?.value;
     const dateKey = $habitEntryDate?.value || todayKey();
-    if (habitId) adjustHabitCount(habitId, dateKey, +1);
+    if (habitId) adjustHabitCount(habitId, dateKey, +1, { timeValue: $habitEntryCountTime?.value || "" });
     refreshEntryModal();
   });
 
@@ -15221,6 +15434,13 @@ function listenRemoteLegacy() {
     saveCache();
     rerender();
     emitHabitsData("remote:counts");
+  });
+
+  bindRemote(HABIT_TIMELINE_POINTS_PATH, (snap) => {
+    habitTimelinePoints = normalizeHabitTimelinePointsStore(snap.val() || {});
+    saveCache();
+    rerender();
+    emitHabitsData("remote:timeline-points");
   });
 
   bindRemote(HABIT_ACTIVE_SESSIONS_PATH, (snap) => {
@@ -15452,7 +15672,7 @@ function removeHabitRemote(habitId) {
 
 function incrementCounterHabit(habitId) {
   if (!habitId) return;
-  adjustHabitCount(habitId, todayKey(), 1);
+  adjustHabitCount(habitId, todayKey(), 1, { ts: Date.now() });
   globalThis.playClickSound?.();
 }
 
@@ -15773,6 +15993,14 @@ function listenRemote() {
     saveCache();
     rerender();
     emitHabitsData("remote:counts");
+  });
+
+  bindRemote(HABIT_TIMELINE_POINTS_PATH, (snap) => {
+    const raw = applyQueuedHabitRemoteValue(HABIT_TIMELINE_POINTS_PATH, snap.val() || {}) || {};
+    habitTimelinePoints = normalizeHabitTimelinePointsStore(raw);
+    saveCache();
+    rerender();
+    emitHabitsData("remote:timeline-points");
   });
 
   bindRemote(HABIT_ACTIVE_SESSIONS_PATH, (snap) => {

@@ -271,6 +271,7 @@ let hasRenderedTodayOnce = false;
 let habitTodayCustomGroupsOpen = {};
 const scheduleTimelineAverageCache = new Map();
 let scheduleTimelinePointEvents = loadScheduleTimelinePointEvents();
+const scheduleTimelineScrollOffsets = new Map();
 
 const DEBUG_HABITS_SYNC = (() => {
   try {
@@ -9889,6 +9890,7 @@ function renderScheduleTimelineSegmentsHtmlV2(segments = [], options = {}) {
 
 function renderScheduleTimelinePanelHtml({
   panelKey = "panel",
+  dateKey = "",
   title = "Timeline",
   subtitle = "",
   controlsHtml = "",
@@ -9900,7 +9902,8 @@ function renderScheduleTimelinePanelHtml({
   hasSegments = false
 } = {}) {
   const canvasWidth = SCHEDULE_HORIZONTAL_HOUR_WIDTH_PX * 24;
-  return `<section class="habits-history-section habit-horizontalTimeline" data-role="schedule-horizontal-panel" data-panel-key="${escapeHtml(panelKey)}">
+  const safeDateKey = String(dateKey || "").trim();
+  return `<section class="habits-history-section habit-horizontalTimeline" data-role="schedule-horizontal-panel" data-panel-key="${escapeHtml(panelKey)}"${safeDateKey ? ` data-date-key="${escapeHtml(safeDateKey)}"` : ""}>
     <div class="habit-horizontalTimeline__header">
       <div class="titulo-habitos">
         <div class="habits-history-section-title">${escapeHtml(title)}</div>
@@ -9955,6 +9958,7 @@ function renderScheduleTimelineOverviewHtml(dateKey = todayKey()) {
     : (averageSegments.length ? "No hay sesiones reales en este día." : "Sin sesiones ni patrón habitual para este día.");
   return renderScheduleTimelinePanelHtml({
     panelKey: "day",
+    dateKey,
     title: "Timeline del día",
     subtitle,
     controlsHtml: renderScheduleTimelineFilterHtml(),
@@ -9982,6 +9986,7 @@ function renderScheduleTimelineWeeklyAverageHtml(dateKey = todayKey()) {
     : "Todavía no hay días suficientes en la ventana de cálculo";
   return renderScheduleTimelinePanelHtml({
     panelKey: "average",
+    dateKey,
     title: `Promedio semanal · ${WORK_SCHEDULE_DOW_FULL_LABELS[scheduleTimelineAverageDow] || "Día"}`,
     subtitle,
     controlsHtml: `<div class="habit-horizontalTimeline__dowTabs">${renderScheduleTimelineDowTabs(scheduleTimelineAverageDow)}</div>`,
@@ -10047,6 +10052,7 @@ function renderScheduleTimelineOverviewHtmlV2(dateKey = todayKey()) {
     : "Sin sesiones ni puntos con hora precisa para este día.";
   return renderScheduleTimelinePanelHtml({
     panelKey: "day",
+    dateKey,
     title: "Timeline del día",
     subtitle,
     controlsHtml: renderScheduleTimelineControlsHtml(),
@@ -10072,6 +10078,7 @@ function renderScheduleTimelineWeeklyAverageHtmlV2(dateKey = todayKey()) {
     : "Todavía no hay días suficientes en la ventana de cálculo";
   return renderScheduleTimelinePanelHtml({
     panelKey: "average",
+    dateKey,
     title: `Promedio semanal · ${WORK_SCHEDULE_DOW_FULL_LABELS[selectedDow] || "Día"}`,
     subtitle,
     controlsHtml: `<div class="habit-horizontalTimeline__dowTabs">${renderScheduleTimelineDowTabs(selectedDow)}</div>`,
@@ -10117,6 +10124,51 @@ function activateScheduleHorizontalTimelineSegmentV2(button) {
   detail.innerHTML = `<strong>${escapeHtml(name)}</strong><span>${escapeHtml(summaryParts.join(" · "))}</span>${extra ? `<span>${escapeHtml(extra)}</span>` : ""}`;
 }
 
+function isScheduleTimelineDateToday(dateKey = "") {
+  const safeDateKey = String(dateKey || "").trim();
+  return !!safeDateKey && safeDateKey === todayKey();
+}
+
+function clampScheduleTimelineScrollLeft(scroller, value = 0) {
+  const maxScroll = Math.max(0, Number(scroller?.scrollWidth || 0) - Number(scroller?.clientWidth || 0));
+  return Math.max(0, Math.min(maxScroll, Number(value || 0)));
+}
+
+function saveScheduleTimelineScrollOffset(dateKey = "", scrollLeft = 0) {
+  const safeDateKey = String(dateKey || "").trim();
+  if (!safeDateKey) return;
+  scheduleTimelineScrollOffsets.set(safeDateKey, Math.max(0, Number(scrollLeft || 0)));
+}
+
+function restoreScheduleHorizontalTimelineScroll(root = $habitScheduleView, { force = false } = {}) {
+  const panel = root?.querySelector?.('[data-role="schedule-horizontal-panel"][data-panel-key="day"]');
+  const scroller = panel?.querySelector?.(".habit-horizontalTimeline__scroller");
+  const canvas = panel?.querySelector?.(".habit-horizontalTimeline__canvas");
+  const dateKey = String(panel?.getAttribute("data-date-key") || scheduleTimelineDateKey || "").trim();
+  if (!panel || !scroller || !canvas || !dateKey) return;
+  window.requestAnimationFrame(() => {
+    const savedScrollLeft = scheduleTimelineScrollOffsets.get(dateKey);
+    let nextScrollLeft = null;
+    if (Number.isFinite(savedScrollLeft)) {
+      nextScrollLeft = savedScrollLeft;
+    } else if (force || isScheduleTimelineDateToday(dateKey)) {
+      const now = new Date();
+      const minutesNow = (now.getHours() * 60) + now.getMinutes();
+      const ratio = minutesNow / 1440;
+      const contentWidth = Math.max(Number(canvas.scrollWidth || 0), Number(scroller.scrollWidth || 0));
+      nextScrollLeft = (contentWidth * ratio) - (Number(scroller.clientWidth || 0) / 2);
+    }
+    if (!Number.isFinite(nextScrollLeft)) return;
+    scroller.dataset.timelineAutoScrolling = "1";
+    const clampedScrollLeft = clampScheduleTimelineScrollLeft(scroller, nextScrollLeft);
+    scroller.scrollLeft = clampedScrollLeft;
+    saveScheduleTimelineScrollOffset(dateKey, clampedScrollLeft);
+    window.requestAnimationFrame(() => {
+      delete scroller.dataset.timelineAutoScrolling;
+    });
+  });
+}
+
 function bindScheduleHorizontalTimelineEvents(root = $habitScheduleView) {
   root?.querySelectorAll?.('[data-role="schedule-timeline-habit-toggle"]').forEach((input) => {
     input.addEventListener("change", () => {
@@ -10155,6 +10207,16 @@ function bindScheduleHorizontalTimelineEvents(root = $habitScheduleView) {
     const firstSegment = panel.querySelector('[data-role="schedule-horizontal-segment"]:not(.is-average)') || panel.querySelector('[data-role="schedule-horizontal-segment"]');
     if (firstSegment) activateScheduleHorizontalTimelineSegmentV2(firstSegment);
   });
+  const dayPanel = root?.querySelector?.('[data-role="schedule-horizontal-panel"][data-panel-key="day"]');
+  const dayScroller = dayPanel?.querySelector?.(".habit-horizontalTimeline__scroller");
+  const dayDateKey = String(dayPanel?.getAttribute("data-date-key") || scheduleTimelineDateKey || "").trim();
+  if (dayScroller && dayDateKey) {
+    dayScroller.addEventListener("scroll", () => {
+      if (dayScroller.dataset.timelineAutoScrolling === "1") return;
+      saveScheduleTimelineScrollOffset(dayDateKey, dayScroller.scrollLeft);
+    }, { passive: true });
+  }
+  restoreScheduleHorizontalTimelineScroll(root);
 }
 
 function renderScheduleDayTimelineHtml(dateKey = todayKey()) {

@@ -5297,7 +5297,7 @@ function paintReminderChecklistToggle(toggleTarget, done = false) {
   if (input) input.checked = Boolean(done);
 }
 
-function queueReminderChecklistTogglePersist(reminderId = "", itemId = "", nextReminder = null, previousReminder = null, version = 0) {
+function queueReminderChecklistTogglePersist(reminderId = "", itemId = "", nextReminder = null, previousReminder = null, version = 0, scrollSnapshot = null) {
   const safeReminderId = String(reminderId || "").trim();
   const safeItemId = String(itemId || "").trim();
   if (!safeReminderId || !safeItemId || !nextReminder) return Promise.resolve();
@@ -5311,7 +5311,9 @@ function queueReminderChecklistTogglePersist(reminderId = "", itemId = "", nextR
     } catch (error) {
       if (reminderChecklistToggleVersion.get(key) === version && previousReminder) {
         replaceReminderInState(safeReminderId, previousReminder);
+        queueReminderRemoteRestore(scrollSnapshot);
         renderRemindersPanel();
+        restoreReminderScrollState(scrollSnapshot);
         enqueueReminderToast({ message: "No se pudo guardar el cambio del checklist." });
       }
       throw error;
@@ -5472,13 +5474,65 @@ function shiftReminderCalendarMonth(delta = 0, reminders = []) {
   ensureReminderCalendarSelection(reminders);
 }
 
-function getReminderScrollState() {
+function getReminderChecklistScrollContainer({
+  reminderId = "",
+  itemId = "",
+  target = null,
+} = {}) {
+  const safeReminderId = String(reminderId || "").trim();
+  const safeItemId = String(itemId || "").trim();
+  const directContainer = target?.closest?.(".notes-reminder-checklist-items");
+  if (directContainer) return directContainer;
+  if (safeReminderId && safeItemId) {
+    const item = document.querySelector(
+      `[data-act="toggle-checklist-item"][data-reminder-id="${CSS.escape(safeReminderId)}"][data-item-id="${CSS.escape(safeItemId)}"]`
+    );
+    const container = item?.closest?.(".notes-reminder-checklist-items");
+    if (container) return container;
+  }
+  if (safeReminderId) {
+    return document.querySelector(
+      `[data-reminder-id="${CSS.escape(safeReminderId)}"] .notes-reminder-checklist-items`
+    );
+  }
+  return null;
+}
+
+function getReminderScrollState({
+  reminderId = "",
+  itemId = "",
+  target = null,
+  logToggle = false,
+} = {}) {
   const scrollingElement = document.scrollingElement || document.documentElement;
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const activeReminderInput = active?.matches?.("[data-checklist-input]") ? active : active?.closest?.("[data-checklist-input]");
+  const activeChecklistToggle = active?.closest?.('[data-act="toggle-checklist-item"]');
+  const safeReminderId = String(
+    reminderId
+    || target?.dataset?.reminderId
+    || activeChecklistToggle?.dataset?.reminderId
+    || activeReminderInput?.dataset?.checklistInput
+    || ""
+  ).trim();
+  const safeItemId = String(
+    itemId
+    || target?.dataset?.itemId
+    || activeChecklistToggle?.dataset?.itemId
+    || ""
+  ).trim();
+  const checklistContainer = getReminderChecklistScrollContainer({
+    reminderId: safeReminderId,
+    itemId: safeItemId,
+    target,
+  });
   return {
     scrollTop: Number(scrollingElement?.scrollTop || 0),
+    checklistScrollTop: Number(checklistContainer?.scrollTop || 0),
+    reminderId: safeReminderId,
+    itemId: safeItemId,
     checklistInputReminderId: String(activeReminderInput?.dataset?.checklistInput || "").trim(),
+    logToggle: Boolean(logToggle),
   };
 }
 
@@ -5487,9 +5541,30 @@ function restoreReminderScrollState(snapshot = null) {
   window.requestAnimationFrame(() => {
     const scrollingElement = document.scrollingElement || document.documentElement;
     if (scrollingElement) scrollingElement.scrollTop = Number(snapshot.scrollTop || 0);
+    const checklistContainer = getReminderChecklistScrollContainer({
+      reminderId: snapshot.reminderId,
+      itemId: snapshot.itemId,
+    });
+    if (checklistContainer) {
+      checklistContainer.scrollTop = Number(snapshot.checklistScrollTop || 0);
+    }
+    if (snapshot.reminderId && snapshot.itemId) {
+      const checkbox = document.querySelector(
+        `[data-act="toggle-checklist-item"][data-reminder-id="${CSS.escape(snapshot.reminderId)}"][data-item-id="${CSS.escape(snapshot.itemId)}"] input[type="checkbox"]`
+      );
+      checkbox?.focus?.({ preventScroll: true });
+    }
     if (snapshot.checklistInputReminderId) {
       const input = document.querySelector(`[data-checklist-input='${CSS.escape(snapshot.checklistInputReminderId)}']`);
       input?.focus?.({ preventScroll: true });
+    }
+    if (snapshot.logToggle) {
+      console.log("[notes:checklist:toggle]", {
+        reminderId: snapshot.reminderId,
+        itemId: snapshot.itemId,
+        beforeScrollTop: Number(snapshot.checklistScrollTop || 0),
+        afterScrollTop: Number(checklistContainer?.scrollTop || 0),
+      });
     }
   });
 }
@@ -8644,8 +8719,13 @@ function bindUiEvents() {
       const toggleTarget = event.target.closest('[data-act="toggle-checklist-item"]');
       if (!toggleTarget) return;
       event.preventDefault();
-      const snapshot = getReminderScrollState();
       const itemId = String(toggleTarget.dataset.itemId || "").trim();
+      const snapshot = getReminderScrollState({
+        reminderId: reminder.id,
+        itemId,
+        target: toggleTarget,
+        logToggle: true,
+      });
       const item = reminder?.checklistItems?.[itemId];
       if (!item) return;
       const key = `${reminder.id}:${itemId}`;
@@ -8662,7 +8742,7 @@ function bindUiEvents() {
       queueReminderRemoteRestore(snapshot);
       renderRemindersPanel();
       restoreReminderScrollState(snapshot);
-      queueReminderChecklistTogglePersist(reminder.id, itemId, nextReminder, previousReminder, version).catch(() => {});
+      queueReminderChecklistTogglePersist(reminder.id, itemId, nextReminder, previousReminder, version, snapshot).catch(() => {});
       return;
     }
     if (target.dataset.act === "add-checklist-item") {
@@ -8671,7 +8751,7 @@ function bindUiEvents() {
       if (!text) return;
       const itemId = `cli_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       const now = Date.now();
-      const snapshot = getReminderScrollState();
+      const snapshot = getReminderScrollState({ reminderId: reminder.id, target: input });
       const nextReminder = appendReminderChecklistItemLocal(reminder.id, {
         id: itemId,
         text,
@@ -8692,8 +8772,12 @@ function bindUiEvents() {
       return;
     }
     if (target.dataset.act === "delete-checklist-item") {
-      const snapshot = getReminderScrollState();
       const itemId = String(target.dataset.itemId || "").trim();
+      const snapshot = getReminderScrollState({
+        reminderId: reminder.id,
+        itemId,
+        target,
+      });
       if (!itemId) return;
       const nextReminder = removeReminderChecklistItemLocal(reminder.id, itemId);
       queueReminderRemoteRestore(snapshot);

@@ -1330,6 +1330,11 @@
   font-weight: 700;
 }
 
+.notes-duplicate-warning-copytext{
+  margin: 0 0 8px;
+  opacity: .9;
+}
+
 .notes-duplicate-warning-list{
   display: grid;
   gap: 6px;

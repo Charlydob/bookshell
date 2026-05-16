@@ -1592,10 +1592,50 @@ function normalizeDuplicatePhoneValue(value = "") {
   return `+${cleaned.slice(1).replace(/\+/g, "")}`;
 }
 
+function tokenizeDuplicateTitleValue(value = "") {
+  return Array.from(new Set(
+    normalizeDuplicateTitleValue(value)
+      .split(/[^a-z0-9]+/i)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 3),
+  ));
+}
+
+function isPotentialDuplicateTitlePair(left = "", right = "") {
+  const safeLeft = normalizeDuplicateTitleValue(left);
+  const safeRight = normalizeDuplicateTitleValue(right);
+  if (!safeLeft || !safeRight || safeLeft === safeRight) return false;
+
+  const shorter = safeLeft.length <= safeRight.length ? safeLeft : safeRight;
+  const longer = shorter === safeLeft ? safeRight : safeLeft;
+  if (shorter.length >= 5 && longer.includes(shorter)) return true;
+
+  const leftTokens = tokenizeDuplicateTitleValue(safeLeft);
+  const rightTokens = tokenizeDuplicateTitleValue(safeRight);
+  if (!leftTokens.length || !rightTokens.length) return false;
+  const sharedTokens = leftTokens.filter((token) => rightTokens.includes(token));
+  if (sharedTokens.length >= 2) return true;
+  if (sharedTokens.length === 1 && sharedTokens[0].length >= 6) return true;
+  return false;
+}
+
+function getPrimaryDuplicateTitleForNote(note = {}) {
+  const person = getNotePersonFields(note);
+  const fullPersonName = normalizeNoteTextValue([person.firstName, person.lastName].filter(Boolean).join(" "));
+  return normalizeDuplicateTitleValue(
+    fullPersonName
+    || getNoteDisplayTitle(note)
+    || note?.title
+    || note?.name
+    || person.firstName,
+  );
+}
+
 function getDuplicateTitleCandidatesForNote(note = {}) {
   const person = getNotePersonFields(note);
   const fullPersonName = normalizeNoteTextValue([person.firstName, person.lastName].filter(Boolean).join(" "));
   return Array.from(new Set([
+    getPrimaryDuplicateTitleForNote(note),
     note?.title,
     note?.name,
     getNoteDisplayTitle(note),
@@ -1619,6 +1659,34 @@ function getDuplicateTitleCandidatesForDraft({
   ].map((value) => normalizeDuplicateTitleValue(value)).filter(Boolean)));
 }
 
+function getPrimaryDuplicateTitleForDraft({
+  title = "",
+  firstName = "",
+  lastName = "",
+} = {}) {
+  const normalizedFirstName = normalizeNoteTextValue(firstName);
+  const normalizedLastName = normalizeNoteTextValue(lastName);
+  const fullPersonName = normalizeNoteTextValue([normalizedFirstName, normalizedLastName].filter(Boolean).join(" "));
+  return normalizeDuplicateTitleValue(fullPersonName || title || normalizedFirstName);
+}
+
+function summarizeDuplicateMatchReasons(match = {}) {
+  const reasons = Array.isArray(match?.reasons) ? match.reasons : [];
+  const hasExactTitle = reasons.includes("exact-title");
+  const hasSimilarTitle = reasons.includes("similar-title");
+  const hasPhone = reasons.includes("phone");
+  return {
+    level: hasExactTitle ? "exact" : "possible",
+    hasExactTitle,
+    hasSimilarTitle,
+    hasPhone,
+  };
+}
+
+function matchesSomeExactDuplicateTitle(matches = []) {
+  return (Array.isArray(matches) ? matches : []).some((match) => summarizeDuplicateMatchReasons(match).hasExactTitle);
+}
+
 function collectPotentialDuplicateNotes({
   noteId = "",
   title = "",
@@ -1628,6 +1696,7 @@ function collectPotentialDuplicateNotes({
 } = {}) {
   const safeNoteId = String(noteId || "").trim();
   const titleCandidates = getDuplicateTitleCandidatesForDraft({ title, firstName, lastName });
+  const primaryTitle = getPrimaryDuplicateTitleForDraft({ title, firstName, lastName });
   const phoneCandidate = normalizeDuplicatePhoneValue(phone);
   const matches = [];
 
@@ -1635,8 +1704,21 @@ function collectPotentialDuplicateNotes({
     if (!note?.id || note.id === safeNoteId) return;
     const reasons = [];
     const existingTitleCandidates = getDuplicateTitleCandidatesForNote(note);
-    if (titleCandidates.length && titleCandidates.some((candidate) => existingTitleCandidates.includes(candidate))) {
-      reasons.push("title");
+    const existingPrimaryTitle = getPrimaryDuplicateTitleForNote(note);
+    const hasExactTitle = Boolean(
+      primaryTitle
+      && existingPrimaryTitle
+      && primaryTitle === existingPrimaryTitle,
+    );
+    const hasSimilarTitle = !hasExactTitle && Boolean(
+      primaryTitle
+      && existingTitleCandidates.some((candidate) => isPotentialDuplicateTitlePair(primaryTitle, candidate))
+      || titleCandidates.some((candidate) => isPotentialDuplicateTitlePair(candidate, existingPrimaryTitle)),
+    );
+    if (hasExactTitle) {
+      reasons.push("exact-title");
+    } else if (hasSimilarTitle) {
+      reasons.push("similar-title");
     }
     const existingPhone = normalizeDuplicatePhoneValue(note?.person?.phone || note?.phone || "");
     if (phoneCandidate && existingPhone && existingPhone === phoneCandidate) {
@@ -1669,7 +1751,8 @@ function getDuplicateCheckSignature({
 
 function formatDuplicateReasons(reasons = []) {
   const labels = [];
-  if (reasons.includes("title")) labels.push("titulo");
+  if (reasons.includes("exact-title")) labels.push("nombre exacto");
+  if (reasons.includes("similar-title")) labels.push("nombre parecido");
   if (reasons.includes("phone")) labels.push("telefono");
   return labels.join(" y ");
 }
@@ -1677,10 +1760,14 @@ function formatDuplicateReasons(reasons = []) {
 function buildDuplicateWarningMarkup(matches = [], options = {}) {
   const safeMatches = Array.isArray(matches) ? matches : [];
   const title = String(options.title || "").trim() || "Posible duplicado";
+  const message = String(options.message || "").trim();
   const continueAction = String(options.continueAction || "").trim();
   const dismissAction = String(options.dismissAction || "").trim();
+  const continueLabel = String(options.continueLabel || "").trim() || "Guardar igualmente";
+  const dismissLabel = String(options.dismissLabel || "").trim() || "Seguir editando";
   return `
     <p class="notes-duplicate-warning-title">${escapeHtml(title)}</p>
+    ${message ? `<p class="notes-duplicate-warning-copytext">${escapeHtml(message)}</p>` : ""}
     <div class="notes-duplicate-warning-list">
       ${safeMatches.map((match) => `
         <div class="notes-duplicate-warning-item">
@@ -1693,8 +1780,8 @@ function buildDuplicateWarningMarkup(matches = [], options = {}) {
       `).join("")}
     </div>
     <div class="notes-duplicate-warning-actions">
-      <button class="btn primary btn-compact" type="button" data-act="${escapeHtml(continueAction)}">Guardar igualmente</button>
-      <button class="btn ghost btn-compact" type="button" data-act="${escapeHtml(dismissAction)}">Seguir editando</button>
+      <button class="btn primary btn-compact" type="button" data-act="${escapeHtml(continueAction)}">${escapeHtml(continueLabel)}</button>
+      <button class="btn ghost btn-compact" type="button" data-act="${escapeHtml(dismissAction)}">${escapeHtml(dismissLabel)}</button>
     </div>
   `;
 }
@@ -1709,10 +1796,16 @@ function hideNoteDuplicateWarning() {
 function renderNoteDuplicateWarning(matches = []) {
   const warning = $id("notes-note-duplicate-warning");
   if (!warning) return;
+  const hasExactTitle = matches.some((match) => summarizeDuplicateMatchReasons(match).hasExactTitle);
   warning.innerHTML = buildDuplicateWarningMarkup(matches, {
-    title: matches.length > 1 ? "Posibles duplicados detectados" : "Posible duplicado detectado",
+    title: hasExactTitle ? "Ya existe una nota con este nombre." : "Puede que esta nota ya exista.",
+    message: hasExactTitle
+      ? "Puedes editar el nombre o guardar igualmente si es intencional."
+      : "Estas coincidencias se parecen bastante. Anade un apellido o un detalle si quieres distinguirla mejor.",
     continueAction: "confirm-note-duplicate-save",
     dismissAction: "dismiss-note-duplicate-warning",
+    continueLabel: "Guardar de todas formas",
+    dismissLabel: hasExactTitle ? "Editar nombre" : "Anadir apellido/detalle",
   });
   warning.classList.remove("hidden");
 }
@@ -1727,10 +1820,16 @@ function hideNoteDetailDuplicateWarning() {
 function renderNoteDetailDuplicateWarning(matches = []) {
   const warning = $id("notes-detail-duplicate-warning");
   if (!warning) return;
+  const hasExactTitle = matches.some((match) => summarizeDuplicateMatchReasons(match).hasExactTitle);
   warning.innerHTML = buildDuplicateWarningMarkup(matches, {
-    title: matches.length > 1 ? "Posibles duplicados detectados" : "Posible duplicado detectado",
+    title: hasExactTitle ? "Ya existe una nota con este nombre." : "Puede que esta nota ya exista.",
+    message: hasExactTitle
+      ? "Puedes ajustar el nombre antes de guardar o continuar igualmente."
+      : "Estas coincidencias parecen relacionadas. Anade un detalle para distinguirla si hace falta.",
     continueAction: "confirm-save-person-detail",
     dismissAction: "dismiss-note-detail-duplicate-warning",
+    continueLabel: "Guardar de todas formas",
+    dismissLabel: hasExactTitle ? "Editar nombre" : "Anadir apellido/detalle",
   });
   warning.classList.remove("hidden");
 }
@@ -5761,7 +5860,7 @@ function enhanceRenderedReminderContent(root, reminders = []) {
         <span class="notes-reminders-calendar-panel__itemEmoji">${escapeHtml(reminder?.emoji || "Ã¢ÂÂ°")}</span>
         <span class="notes-reminders-calendar-panel__itemCopy">
           <strong>${buildSafeLinkedTextMarkup(reminder?.title || "Sin titulo", { className: "notes-inline-link notes-inline-link--external" })}</strong>
-          <span>${escapeHtml(`${buildReminderDayTimeLabel(reminder, state.reminderCalendarSelectedDate)} Ã‚Â· ${getReminderComputedStatus(reminder)}`)}</span>
+          <span>${escapeHtml(`${buildReminderDayTimeLabel(reminder, state.reminderCalendarSelectedDate)} · ${getReminderComputedStatus(reminder)}`)}</span>
         </span>
       `;
       panelMain.replaceWith(safeMain);
@@ -6678,7 +6777,7 @@ function closeNoteModal() {
   hideNoteDuplicateWarning();
   const noteForm = $id("notes-note-form");
   if (noteForm) {
-    delete noteForm.dataset.duplicateConfirmed;
+    delete noteForm.dataset.duplicateOverride;
     delete noteForm.dataset.duplicateSignature;
   }
   noteLinkDraftReferences = [];
@@ -6763,7 +6862,7 @@ function openNoteModal(note = null, options = {}) {
   hideNoteDuplicateWarning();
   const noteForm = $id("notes-note-form");
   if (noteForm) {
-    delete noteForm.dataset.duplicateConfirmed;
+    delete noteForm.dataset.duplicateOverride;
     delete noteForm.dataset.duplicateSignature;
   }
   $id("notes-note-form-error").textContent = "";
@@ -7524,11 +7623,31 @@ function bindNoteModalEvents() {
       lastName: duplicateLastName,
       phone: duplicatePhone,
     });
-    const duplicateConfirmed = noteForm?.dataset?.duplicateConfirmed === duplicateSignature;
-    if (duplicateMatches.length && !duplicateConfirmed) {
+    const duplicateOverride = noteForm?.dataset?.duplicateOverride === "true";
+    if (noteForm) {
+      delete noteForm.dataset.duplicateOverride;
+    }
+    if (duplicateMatches.length && !duplicateOverride) {
       if (noteForm) noteForm.dataset.duplicateSignature = duplicateSignature;
+      console.warn("[notes:duplicate:blocked]", {
+        noteId: id || noteId,
+        folderId,
+        duplicateSignature,
+        matches: duplicateMatches,
+      });
       renderNoteDuplicateWarning(duplicateMatches);
+      errorField.textContent = matchesSomeExactDuplicateTitle(duplicateMatches)
+        ? "Ya existe una nota con este nombre."
+        : "Puede que esta nota ya exista.";
       return;
+    }
+    if (duplicateMatches.length && duplicateOverride) {
+      console.warn("[notes:duplicate:override]", {
+        noteId: id || noteId,
+        folderId,
+        duplicateSignature,
+        matches: duplicateMatches,
+      });
     }
 
     const payload = {
@@ -7715,15 +7834,14 @@ function bindNoteModalEvents() {
     }
     const noteForm = $id("notes-note-form");
     if (target.dataset.act === "confirm-note-duplicate-save") {
-      const signature = String(noteForm?.dataset?.duplicateSignature || "").trim();
-      if (noteForm && signature) noteForm.dataset.duplicateConfirmed = signature;
+      if (noteForm) noteForm.dataset.duplicateOverride = "true";
       hideNoteDuplicateWarning();
       noteForm?.requestSubmit?.();
       return;
     }
     if (target.dataset.act === "dismiss-note-duplicate-warning") {
       if (noteForm) {
-        delete noteForm.dataset.duplicateConfirmed;
+        delete noteForm.dataset.duplicateOverride;
         delete noteForm.dataset.duplicateSignature;
       }
       hideNoteDuplicateWarning();
@@ -8147,7 +8265,7 @@ function bindUiEvents() {
     }
 
     if (target.dataset.act === "dismiss-note-detail-duplicate-warning") {
-      delete target.dataset.duplicateConfirmed;
+      delete target.dataset.duplicateOverride;
       hideNoteDetailDuplicateWarning();
       setNoteDetailSaveFeedback("");
       return;
@@ -8156,8 +8274,7 @@ function bindUiEvents() {
     if (target.dataset.act === "confirm-save-person-detail") {
       const saveButton = $id("notes-detail-body")?.querySelector?.("[data-act='save-person-detail'][data-note-id]");
       if (!saveButton) return;
-      const signature = String(saveButton.dataset.duplicateSignature || "").trim();
-      if (signature) saveButton.dataset.duplicateConfirmed = signature;
+      saveButton.dataset.duplicateOverride = "true";
       hideNoteDetailDuplicateWarning();
       saveButton.click();
       return;
@@ -8220,12 +8337,32 @@ function bindUiEvents() {
         lastName,
         phone,
       });
-      const duplicateConfirmed = target.dataset.duplicateConfirmed === duplicateSignature;
+      const duplicateOverride = target.dataset.duplicateOverride === "true";
+      delete target.dataset.duplicateOverride;
       target.dataset.duplicateSignature = duplicateSignature;
-      if (duplicateMatches.length && !duplicateConfirmed) {
+      if (duplicateMatches.length && !duplicateOverride) {
+        console.warn("[notes:duplicate:blocked]", {
+          noteId: note.id,
+          duplicateSignature,
+          matches: duplicateMatches,
+          source: "person-detail",
+        });
         renderNoteDetailDuplicateWarning(duplicateMatches);
-        setNoteDetailSaveFeedback("Revisa los posibles duplicados antes de guardar.", "error");
+        setNoteDetailSaveFeedback(
+          matchesSomeExactDuplicateTitle(duplicateMatches)
+            ? "Ya existe una nota con este nombre."
+            : "Puede que esta nota ya exista.",
+          "error",
+        );
         return;
+      }
+      if (duplicateMatches.length && duplicateOverride) {
+        console.warn("[notes:duplicate:override]", {
+          noteId: note.id,
+          duplicateSignature,
+          matches: duplicateMatches,
+          source: "person-detail",
+        });
       }
 
       const currentTitle = normalizeNoteTextValue(note?.title || note?.name || "");
@@ -8272,7 +8409,7 @@ function bindUiEvents() {
       };
 
       noteDetailSaveInFlight = true;
-      delete target.dataset.duplicateConfirmed;
+      delete target.dataset.duplicateOverride;
       setNoteDetailSaveFeedback("Guardando...");
       try {
         await updateNote(state.rootPath, note.id, nextNote);

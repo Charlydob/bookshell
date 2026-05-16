@@ -91,11 +91,13 @@ const REMINDER_COLOR_PALETTE = Object.freeze([
 ]);
 const DEFAULT_REMINDER_COLOR = REMINDER_COLOR_PALETTE[0];
 const REMINDER_VIEW_STORAGE_KEY = "bookshell-notes-reminders-view:v1";
+const REMINDER_COUNTDOWN_MODE_STORAGE_KEY = "bookshell-notes-reminders-countdown-mode:v1";
 const REMINDER_CALENDAR_MAX_DOTS = 3;
 const REMINDER_CALENDAR_DEBUG = true;
 const state = {
   ...createInitialNotesState(),
   reminderView: loadReminderViewPreference(),
+  reminderCountdownMode: loadReminderCountdownModePreference(),
   reminderCalendarMonthKey: getCurrentMonthKey(),
   reminderCalendarSelectedDate: getTodayDateKey(),
   reminderCalendarFocusedReminderId: "",
@@ -247,6 +249,10 @@ function normalizeReminderView(value = "") {
   return String(value || "").trim() === "calendar" ? "calendar" : "list";
 }
 
+function normalizeReminderCountdownMode(value = "") {
+  return String(value || "").trim() === "precise" ? "precise" : "compact";
+}
+
 function normalizeReminderActiveFilterMode(value = "") {
   return REMINDER_ACTIVE_FILTER_MODES.includes(String(value || "").trim())
     ? String(value || "").trim()
@@ -264,6 +270,23 @@ function loadReminderViewPreference() {
 function saveReminderViewPreference(value = "") {
   try {
     window.localStorage?.setItem(REMINDER_VIEW_STORAGE_KEY, normalizeReminderView(value));
+  } catch (_) {}
+}
+
+function loadReminderCountdownModePreference() {
+  try {
+    return normalizeReminderCountdownMode(window.localStorage?.getItem(REMINDER_COUNTDOWN_MODE_STORAGE_KEY) || "compact");
+  } catch (_) {
+    return "compact";
+  }
+}
+
+function saveReminderCountdownModePreference(value = "") {
+  try {
+    window.localStorage?.setItem(
+      REMINDER_COUNTDOWN_MODE_STORAGE_KEY,
+      normalizeReminderCountdownMode(value)
+    );
   } catch (_) {}
 }
 
@@ -5167,6 +5190,80 @@ function buildReminderCountdown(reminder) {
   return `Venció hace ${Math.max(1, minutes)} minuto${minutes === 1 ? "" : "s"}`;
 }
 
+function formatReminderDurationParts(totalMinutes = 0) {
+  const safeMinutes = Math.max(0, Math.floor(Number(totalMinutes) || 0));
+  const hours = Math.floor(safeMinutes / 60);
+  const minutes = safeMinutes % 60;
+  return `${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m`;
+}
+
+function formatReminderCountdown(reminder, mode = "compact") {
+  const safeMode = normalizeReminderCountdownMode(mode);
+  const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
+  if (!targetAt) return "sin fecha";
+  const now = Date.now();
+  const diffMs = targetAt - now;
+  const absMs = Math.abs(diffMs);
+  const totalMinutes = Math.floor(absMs / (60 * 1000));
+  if (safeMode === "precise") {
+    const preciseLabel = formatReminderDurationParts(totalMinutes);
+    return diffMs < 0 ? `vencido hace ${preciseLabel}` : preciseLabel;
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const targetDate = new Date(targetAt);
+  targetDate.setHours(0, 0, 0, 0);
+  const dayDiff = Math.round((targetDate.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+  if (diffMs < 0) {
+    if (dayDiff === 0) return "vencido hoy";
+    if (dayDiff === -1) return "vencido ayer";
+    return `vencido hace ${Math.abs(dayDiff)} días`;
+  }
+  if (dayDiff === 0) return "hoy";
+  if (dayDiff === 1) return "mañana";
+  return `faltan ${dayDiff} días`;
+}
+
+function updateReminderCountdownElement(element, reminderLookup = null) {
+  if (!(element instanceof HTMLElement)) return;
+  const reminderId = String(element.dataset.reminderId || "").trim();
+  if (!reminderId) return;
+  const reminder = reminderLookup instanceof Map
+    ? reminderLookup.get(reminderId)
+    : (state.reminders || []).find((row) => row.id === reminderId);
+  if (!reminder) return;
+  const mode = normalizeReminderCountdownMode(state.reminderCountdownMode);
+  element.textContent = formatReminderCountdown(reminder, mode);
+  element.dataset.countdownMode = mode;
+  element.setAttribute("title", mode === "compact" ? "Click para ver el tiempo exacto" : "Click para ver el formato resumido");
+}
+
+function refreshReminderCountdownElements(root = document) {
+  if (!root?.querySelectorAll) return;
+  const reminderLookup = new Map((state.reminders || []).map((reminder) => [reminder.id, reminder]));
+  root.querySelectorAll(".notes-reminder-countdown[data-reminder-id]").forEach((element) => {
+    updateReminderCountdownElement(element, reminderLookup);
+  });
+}
+
+function toggleReminderCountdownMode() {
+  state.reminderCountdownMode = normalizeReminderCountdownMode(
+    state.reminderCountdownMode === "compact" ? "precise" : "compact"
+  );
+  saveReminderCountdownModePreference(state.reminderCountdownMode);
+  refreshReminderCountdownElements($id("notes-reminders-list"));
+  refreshReminderCountdownElements($id("notes-reminders-history-list"));
+}
+
+function handleReminderCountdownClick(event) {
+  const countdown = event.target.closest?.(".notes-reminder-countdown[data-reminder-id]");
+  if (!countdown) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  toggleReminderCountdownMode();
+  return true;
+}
+
 function getReminderComputedStatus(reminder) {
   if (reminder?.status === "completado") return "completado";
   const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
@@ -5685,11 +5782,7 @@ function renderReminderCardsToMarkup(reminders = []) {
   return reminders.map((reminder) => {
     const computedStatus = getReminderComputedStatus(reminder);
     const dateLabel = formatReminderDateTime(reminder);
-    const countdown = buildReminderCountdown(reminder);
-    const isBirthday = reminder?.type === "cumpleaños";
-    const birthdayLead = isBirthday
-      ? `🎂 ${countdown === "Es hoy" ? `Hoy es el cumpleaños de ${reminder.title || "alguien"}` : `${countdown.replace("Faltan", "Quedan")} para el cumpleaños de ${reminder.title || "alguien"}`}`
-      : countdown;
+    const countdown = formatReminderCountdown(reminder, state.reminderCountdownMode);
     const categories = Array.isArray(reminder?.categories) ? reminder.categories : [];
     const checklist = getReminderChecklistSummary(reminder);
     const isChecklist = reminder?.type === "checklist";
@@ -5713,7 +5806,7 @@ function renderReminderCardsToMarkup(reminders = []) {
           ${categories.length ? `<div class="notes-reminder-categories">${categories.map((category) => `<span class="notes-reminder-chip">${escapeHtml(category)}</span>`).join("")}</div>` : ""}
 
 
-          <div class="notes-reminder-countdown">${escapeHtml(isBirthday ? birthdayLead : countdown)}</div>
+          <div class="notes-reminder-countdown" data-reminder-id="${escapeHtml(reminder.id)}" data-countdown-mode="${escapeHtml(normalizeReminderCountdownMode(state.reminderCountdownMode))}">${escapeHtml(countdown)}</div>
 
 
           ${isChecklist ? `
@@ -6137,6 +6230,8 @@ function renderRemindersPanel() {
     : (filtered.length > 0 ? "No hay recordatorios pendientes ahora mismo." : "No hay recordatorios todavia.");
   enhanceRenderedReminderContent(list, active);
   enhanceRenderedReminderContent(historyList, history);
+  refreshReminderCountdownElements(list);
+  refreshReminderCountdownElements(historyList);
 }
 
 function renderRootSectionSwitch() {
@@ -7175,6 +7270,8 @@ function getReminderNotificationItems() {
 
 function runReminderChecks() {
   console.info('[reminders:global-check]', { total: (state.reminders || []).length });
+  refreshReminderCountdownElements($id("notes-reminders-list"));
+  refreshReminderCountdownElements($id("notes-reminders-history-list"));
   const now = Date.now();
   for (const reminder of state.reminders || []) {
     if (getReminderComputedStatus(reminder) !== "pendiente") continue;
@@ -8699,6 +8796,7 @@ function bindUiEvents() {
   });
 
   $id("notes-reminders-list")?.addEventListener("click", async (event) => {
+    if (handleReminderCountdownClick(event)) return;
     const externalLink = event.target.closest?.("a[data-external-link='true']");
     if (externalLink) {
       event.stopPropagation();
@@ -8794,6 +8892,7 @@ function bindUiEvents() {
     }
   });
   $id("notes-reminders-history-list")?.addEventListener("click", async (event) => {
+    if (handleReminderCountdownClick(event)) return;
     const externalLink = event.target.closest?.("a[data-external-link='true']");
     if (externalLink) {
       event.stopPropagation();
@@ -9108,6 +9207,7 @@ export function destroy() {
   state.reminderGroupBy = "none";
   state.reminderCollapsedHistory = true;
   state.reminderView = loadReminderViewPreference();
+  state.reminderCountdownMode = loadReminderCountdownModePreference();
   state.reminderCalendarMonthKey = getCurrentMonthKey();
   state.reminderCalendarSelectedDate = getTodayDateKey();
   state.reminderCalendarFocusedReminderId = "";

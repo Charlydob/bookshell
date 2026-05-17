@@ -568,3 +568,8 @@
 #view-world .world-rating button{height:30px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:var(--w-txt)}
 #view-world .world-rating button.active{background:rgba(111,107,255,.8)}
 #view-world .world-country-row{padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:12px}
+
+#view-world .world-scope{display:flex;gap:8px;flex-wrap:wrap}
+#view-world .world-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#view-world .world-item .actions{display:flex;gap:6px;flex-wrap:wrap}
+#view-world .world-item .btn{height:30px;padding:0 10px;border-radius:10px;font-size:12px}

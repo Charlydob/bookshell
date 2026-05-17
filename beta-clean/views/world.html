@@ -3,20 +3,26 @@
     <div class="world-kpi"><div class="label">Países visitados</div><div class="value" id="world-countries">0</div></div>
     <div class="world-kpi"><div class="label">Ciudades/lugares</div><div class="value" id="world-places">0</div></div>
     <div class="world-kpi"><div class="label">Locales valorados</div><div class="value" id="world-rated-locals">0</div></div>
+    <div class="world-kpi"><div class="label">Categorías</div><div class="value" id="world-categories">0</div></div>
   </div>
   <div class="world-controls">
     <button class="btn" id="world-mark-current" type="button">📍 Guardar ubicación actual</button>
     <label class="btn primary" for="world-add-toggle">+ Añadir</label>
   </div>
+  <div class="world-scope" id="world-scope"></div>
+  <div class="world-filters">
+    <select id="world-filter-category"><option value="">Todas categorías</option></select>
+    <select id="world-filter-rating"><option value="">Todas valoraciones</option><option value="8">8+ ⭐</option><option value="5">5+ ⭐</option></select>
+  </div>
 </div>
 <div class="world-map-wrap"><div id="world-map"></div></div>
 <div class="world-bottom">
   <details class="world-card" open>
-    <summary class="world-summary"><h3>Países visitados</h3><span class="world-count" id="world-country-count">0</span></summary>
+    <summary class="world-summary"><h3 id="world-list-title">Países visitados</h3><span class="world-count" id="world-country-count">0</span></summary>
     <div class="world-list" id="world-country-list"></div>
   </details>
   <details class="world-card" open>
-    <summary class="world-summary"><h3>Locales visitados</h3><span class="world-count" id="world-locals-count">0</span></summary>
+    <summary class="world-summary"><h3>Lugares guardados</h3><span class="world-count" id="world-locals-count">0</span></summary>
     <div class="world-list" id="world-locals-list"></div>
   </details>
 </div>
@@ -28,9 +34,10 @@
     <div class="world-modal-header"><div class="title">Añadir lugar</div><label class="btn" for="world-add-toggle">Cerrar</label></div>
     <div class="world-modal-grid">
       <input autocomplete="off" id="world-place-q" placeholder="Buscar Burger King, farmacia, baño…" />
-      <div id="world-mini-map"></div>
       <div class="world-list" id="world-place-results"></div>
       <div class="world-rating" id="world-rating"></div>
+      <input autocomplete="off" id="world-place-city" placeholder="Ciudad/pueblo" />
+      <input autocomplete="off" id="world-place-category" placeholder="Categoría" />
       <input autocomplete="off" id="world-note" placeholder="Nota opcional" />
       <div class="world-modal-actions"><button class="btn primary" id="world-place-save" type="button">Guardar</button></div>
     </div>

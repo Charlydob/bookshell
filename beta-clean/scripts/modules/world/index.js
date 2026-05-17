@@ -76,7 +76,27 @@ function normalizeRecord(v) {
     folder: String(v?.folder || ""),
     source: String(v?.source || "record"),
     displayName: String(v?.displayName || ""),
+    category: String(v?.category || v?.folder || ""),
+    rating: Number.isFinite(Number(v?.rating)) ? Math.max(0, Math.min(10, Number(v.rating))) : null,
+    address: String(v?.address || ""),
+    visitDate: String(v?.visitDate || v?.startDate || v?.dateKey || ""),
+    origin: String(v?.origin || "manual"),
   };
+}
+function detectPlaceCategory(name = "", folder = "") {
+  const hay = `${name} ${folder}`.toLowerCase();
+  const rules = [
+    { key: "comida-rapida", emoji: "🍔", tests: ["burger king", "mcdonald", "kfc", "hamburg"] },
+    { key: "farmacias", emoji: "💊", tests: ["farmacia", "pharmacy"] },
+    { key: "banos", emoji: "🚻", tests: ["baño", "bano", "wc", "toilet"] },
+    { key: "supermercados", emoji: "🛒", tests: ["supermercado", "market"] },
+    { key: "hoteles", emoji: "🏨", tests: ["hotel", "hostal"] },
+    { key: "restauracion", emoji: "☕", tests: ["restaurante", "cafeter", "bar"] },
+    { key: "turismo", emoji: "🏛️", tests: ["museo", "parque", "monumento"] },
+  ];
+  const hit = rules.find((rule) => rule.tests.some((token) => hay.includes(token)));
+  console.debug("[world:category:detect]", { name, folder, category: hit?.key || "otros" });
+  return hit || { key: "otros", emoji: "📍" };
 }
 
 function normalizeWorldPayload(raw) {
@@ -235,11 +255,13 @@ export async function init() {
   const $countryTitle = $id("world-country-title"), $countryGrid = $id("world-country-detail-grid"), $subdivisionList = $id("world-subdivision-list");
   const $addKind = $id("world-kind"), $addQuery = $id("world-place-q"), $addSubdiv = $id("world-place-subdivision"), $addCity = $id("world-place-city"), $addStart = $id("world-date-start"), $addEnd = $id("world-date-end"), $addNote = $id("world-note"), $addStatus = $id("world-record-status"), $addEmoji = $id("world-pin-emoji"), $addFolder = $id("world-pin-folder"), $addResults = $id("world-place-results"), $addSave = $id("world-place-save"), $addDelete = $id("world-place-delete"), $addToggle = $id("world-add-toggle"), $markCurrent = $id("world-mark-current");
   const $scope = $id("world-view-scope");
+  const $addAddress = $id("world-place-address"), $addOrigin = $id("world-place-origin"), $addVisitDate = $id("world-visit-date"), $addRating = $id("world-place-rating");
   const $tabs = [...document.querySelectorAll("#view-world .world-window-tab")];
   const $panels = [...document.querySelectorAll("#view-world .world-window-panel")];
   const $sheet = $id("world-map-sheet"), $sheetTitle = $id("world-map-sheet-title"), $sheetState = $id("world-map-sheet-state"), $sheetActions = $id("world-map-sheet-actions"), $sheetClose = $id("world-map-sheet-close");
 
   let state = { visits: parseJson(LS_VISITS, []), watch: parseJson(LS_WATCH, {}), customPins: [], areaVisits: [], timelineEntries: [] };
+  console.debug("[world:init]");
   let pendingPick = null;
   const nav = { stack: [{ type: "world" }] };
 
@@ -432,7 +454,7 @@ export async function init() {
       records.forEach((record) => {
         const selection = getLeafletSelectionForRecord(record);
         const marker = leaflet.circleMarker([Number(record.lat), Number(record.lon)], {
-          radius: record.kind === "pin" ? 7.5 : 6.5,
+          radius: record.kind === "pin" ? 4 : 3.5,
           color: "rgba(255,255,255,.92)",
           weight: 1.5,
           fillColor: statusColor(record.status),
@@ -445,6 +467,7 @@ export async function init() {
         points.push({ lat: Number(record.lat), lng: Number(record.lon) });
       });
 
+      console.debug("[world:map:markers:render]", { count: points.length, view: activeView?.type || "world" });
       setLeafletViewForPoints(map, points, {
         defaultCenter: DEFAULT_MAP_CENTER_SPAIN,
         defaultZoom: DEFAULT_MAP_ZOOM_SPAIN,
@@ -521,6 +544,7 @@ export async function init() {
 
   async function renderCountryView(view, tree) {
     const code = iso2(view.countryCode);
+    console.debug("[world:country:open]", { code });
     const node = tree.get(code);
     const countryName = getCountryEnglishName(code) || code;
     const geo = await fetchSubdivGeoJSON(code);
@@ -556,6 +580,7 @@ export async function init() {
 
   async function renderSubdivisionView(view, tree) {
     const code = iso2(view.countryCode);
+    console.debug("[world:city:open]", { code, subdivision: view.subdivision });
     const subName = String(view.subdivision || "");
     const cNode = tree.get(code);
     const subRows = (cNode?.records || []).filter((r) => r.subdivision && subdivisionKey(code, r.subdivision) === subdivisionKey(code, subName));
@@ -589,6 +614,10 @@ export async function init() {
     $addStatus.value = rec?.status || "visited";
     $addEmoji.value = rec?.emoji || "";
     $addFolder.value = rec?.folder || "";
+    if ($addAddress) $addAddress.value = rec?.address || "";
+    if ($addOrigin) $addOrigin.value = rec?.origin || "manual";
+    if ($addVisitDate) $addVisitDate.value = rec?.visitDate || rec?.startDate || "";
+    if ($addRating) $addRating.value = Number.isFinite(rec?.rating) ? String(rec.rating) : "";
     pendingPick = rec ? { code: rec.countryCode, name: rec.placeName, lon: rec.lon, lat: rec.lat } : null;
     $addDelete.style.display = "inline-flex";
     $addToggle.checked = true;
@@ -598,6 +627,7 @@ export async function init() {
     const mode = $filter.value || "total";
     const stat = $statusFilter.value || "all";
     const filtered = filterByStatus(filterByTime(state.visits, mode), stat);
+    console.debug("[world:places:load]", { count: filtered.length, mode, status: stat });
     const tree = groupTree();
     const active = currentView();
 
@@ -746,6 +776,7 @@ export async function init() {
   $addSave.addEventListener("click", async () => {
     const kind = $addKind.value;
     const now = Date.now();
+    const detected = detectPlaceCategory($addQuery.value.trim(), $addFolder.value.trim());
     const rec = normalizeRecord({
       id: worldState.editId || `${now}_${Math.random().toString(16).slice(2)}`,
       ts: now,
@@ -761,8 +792,13 @@ export async function init() {
       placeName: $addQuery.value.trim(),
       lat: Number.isFinite(Number(pendingPick?.lat)) ? Number(pendingPick.lat) : null,
       lon: Number.isFinite(Number(pendingPick?.lon)) ? Number(pendingPick.lon) : null,
-      emoji: $addEmoji.value.trim(),
+      emoji: $addEmoji.value.trim() || detected.emoji,
       folder: $addFolder.value.trim(),
+      category: $addFolder.value.trim() || detected.key,
+      rating: Number($addRating?.value),
+      address: $addAddress?.value?.trim() || "",
+      visitDate: $addVisitDate?.value || $addStart.value || todayKey(),
+      origin: $addOrigin?.value || "manual",
     });
     if (!rec.countryCode && kind !== "pin") return;
 
@@ -772,6 +808,7 @@ export async function init() {
     else { upsert(state.visits); upsert(state.timelineEntries); }
 
     persist();
+    console.debug("[world:place:save]", { id: rec.id, countryCode: rec.countryCode, city: rec.city, category: rec.category, rating: rec.rating });
     worldState.editId = null;
     $addDelete.style.display = "none";
     $addToggle.checked = false;
@@ -833,7 +870,9 @@ export async function init() {
       $addKind.value = "pin";
       pendingPick = { code: "", name: "Ubicación actual", lat: pos.coords.latitude, lon: pos.coords.longitude };
       $addQuery.value = "Ubicación actual";
+      if ($addOrigin) $addOrigin.value = "current_location";
       $addToggle.checked = true;
+      console.debug("[world:location:current:save]", { lat: pos.coords.latitude, lon: pos.coords.longitude });
     }, () => {});
   }, evtOpts);
 

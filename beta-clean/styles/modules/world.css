@@ -573,3 +573,8 @@
 #view-world .world-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 #view-world .world-item .actions{display:flex;gap:6px;flex-wrap:wrap}
 #view-world .world-item .btn{height:30px;padding:0 10px;border-radius:10px;font-size:12px}
+#view-world .world-modal{z-index:30}
+#view-world #world-mini-map{min-height:220px;height:220px;position:relative;z-index:1;display:block}
+#view-world #world-mini-map .leaflet-container{width:100%;height:100%}
+#view-world .world-rating button{font-size:18px;line-height:1}
+#view-world .world-rating button.active{background:rgba(111,107,255,.9);color:#fff}

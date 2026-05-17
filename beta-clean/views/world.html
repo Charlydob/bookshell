@@ -146,6 +146,19 @@
           <input autocomplete="off" id="world-pin-emoji" maxlength="3" placeholder="Emoji (opcional)" />
           <input autocomplete="off" id="world-pin-folder" placeholder="Carpeta/categoría (opcional)" />
         </div>
+        <div class="world-modal-grid world-modal-grid-2">
+          <input autocomplete="off" id="world-place-address" placeholder="Dirección (opcional)" />
+          <select id="world-place-origin">
+            <option value="manual">manual</option>
+            <option value="current_location">ubicación actual</option>
+            <option selected value="search">búsqueda</option>
+            <option value="imported">importado</option>
+          </select>
+        </div>
+        <div class="world-modal-grid world-modal-grid-2">
+          <input id="world-visit-date" type="date" />
+          <input id="world-place-rating" max="10" min="0" placeholder="Valoración 0-10 (ej: 7.5)" step="0.5" type="number" />
+        </div>
         <input autocomplete="off" id="world-note" placeholder="Nota (opcional)" />
       </div>
       <div class="world-modal-section">

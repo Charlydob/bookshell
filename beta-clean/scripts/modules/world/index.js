@@ -20,6 +20,8 @@ const flag = (cc = "") => { const s = String(cc || "").trim().toUpperCase(); ret
 function showToast(text = "Guardado") { const el = $id("world-feedback"); if (!el) return; el.textContent = text; el.classList.add("show"); clearTimeout(state.toastTimer); state.toastTimer = setTimeout(() => el.classList.remove("show"), 1700); }
 function closeAddModal(){ $id("world-add-toggle").checked = false; }
 function resetWorldAddModalState(){ state.selectedGeo = null; state.selectedPlace = null; state.selectedGeoIndex = -1; state.selectedPlaceIndex = -1; state.geoResults = []; state.placeResults = []; state.geoRating = 0; state.placeRating = 0; state.editing = null; ["world-geo-q","world-geo-note","world-place-q","world-place-note","world-form-name","world-form-emoji","world-form-category","world-form-country","world-form-region","world-form-city"].forEach((k)=>{ const el=$id(k); if (el) el.value=""; }); $id("world-place-radius").value = "1000"; $id("world-geo-results").innerHTML = ""; $id("world-place-results").innerHTML = ""; renderRatings(); renderPlaceResults(); }
+function clearGeoPanelState(){ state.selectedGeo = null; state.selectedGeoIndex = -1; state.geoResults = []; state.geoRating = 0; ["world-geo-q","world-geo-note","world-form-name","world-form-emoji","world-form-category","world-form-country","world-form-region","world-form-city"].forEach((k)=>{ const el = $id(k); if (el) el.value = ""; }); const geoResults = $id("world-geo-results"); if (geoResults) geoResults.innerHTML = ""; }
+function clearLocalPanelState(){ state.selectedPlace = null; state.selectedPlaceIndex = -1; state.placeResults = []; state.placeRating = 0; ["world-place-q","world-place-note"].forEach((k)=>{ const el = $id(k); if (el) el.value = ""; }); $id("world-place-radius").value = "1000"; const placeResults = $id("world-place-results"); if (placeResults) placeResults.innerHTML = ""; renderPlaceResults(); }
 
 function normalizeCountryFromAddress(address = {}) {
   const rawCode = String(address?.country_code || "").trim().toUpperCase();
@@ -34,7 +36,15 @@ function normalizeCountryFromAddress(address = {}) {
 
 function renderGeoAddMode(){ $id("world-geo-mode").hidden = false; $id("world-place-mode").hidden = true; }
 function renderLocalAddMode(){ $id("world-place-mode").hidden = false; $id("world-geo-mode").hidden = true; initMiniMap(); }
-function setAddMode(mode){ state.addMode = mode; $id("world-add-mode-geo").classList.toggle("active", mode === "geo"); $id("world-add-mode-place").classList.toggle("active", mode === "place"); if (mode === "geo") renderGeoAddMode(); else renderLocalAddMode(); }
+function setAddMode(mode){
+  const prev = state.addMode;
+  state.addMode = mode;
+  $id("world-add-mode-geo").classList.toggle("active", mode === "geo");
+  $id("world-add-mode-place").classList.toggle("active", mode === "place");
+  if (mode === "geo") { if (prev === "place") clearLocalPanelState(); renderGeoAddMode(); }
+  else { if (prev === "geo") clearGeoPanelState(); renderLocalAddMode(); }
+  renderRatings();
+}
 
 function ratingFromPointer(el, clientX){ const rect = el.getBoundingClientRect(); return Math.max(0, Math.min(10, ((clientX - rect.left) / Math.max(rect.width, 1)) * 10)); }
 function renderRating(elId, value){ const el = $id(elId); if(!el) return; el.setAttribute("aria-valuenow", String(value.toFixed(1))); el.innerHTML = `<div class="world-rating-track"><div class="world-rating-fill" style="width:${(value/10)*100}%"></div><div class="world-rating-text">${stars10(value)} ${value.toFixed(1)}/10</div></div>`; }
@@ -49,7 +59,15 @@ function renderMiniMapMarkers(){ if (!state.miniMap || !window.L) return; state.
 function renderMap(){ if(!window.L) return; const host = $id("world-map"); if(!host) return; if(!state.map) state.map = createLeafletMap(host, { center:[state.userCenter.lat, state.userCenter.lon], zoom:13 }); state.markers.forEach((m)=>m.remove()); state.markers.clear(); const L = window.L; [...state.geography, ...state.places].forEach((r)=>{ if(!Number.isFinite(r.lat)||!Number.isFinite(r.lon)) return; const marker = L.circleMarker([r.lat,r.lon], { radius:r.kind==="places"?8:6, color:"#fff", weight:1, fillColor:r.kind==="places"?"#ffc86b":"#61d1ff", fillOpacity:0.95 }).addTo(state.map); marker.bindPopup(buildPopup(r)); state.markers.set(r.id, marker); }); }
 function setWindow(mode){ state.activeWindow = mode; document.querySelectorAll("#view-world .world-tab").forEach((b)=>b.classList.toggle("active", b.dataset.window===mode)); document.querySelectorAll("#view-world [data-window-panel]").forEach((p)=>p.classList.toggle("active", p.dataset.windowPanel===mode)); invalidateLeafletMap(state.map, 60); }
 
-function renderGeoList(){ const groups = state.geography.reduce((acc, r) => { const key = r.countryCode || r.country || "XX"; acc[key] = acc[key] || { country:r.country, countryCode:r.countryCode, rows:[] }; acc[key].rows.push(r); return acc; }, {}); const html = Object.values(groups).map((g)=>`<details open><summary><strong>${flag(g.countryCode)} ${g.country || getCountryEnglishName(g.countryCode) || ""}</strong> · ${g.rows.length}</summary>${g.rows.map((r)=>`<div class="world-rich-item"><div><div>${stars10(r.rating || 0)} ${(r.rating ?? 0).toFixed(1)}/10</div><small>• ${r.name || r.city}</small></div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="geography:${r.id}">✏️</button><button data-world-delete="geography:${r.id}">🗑</button></div></div>`).join("")}</details>`).join(""); $id("world-country-list").innerHTML = html || "<div>Sin lugares geográficos.</div>"; }
+function renderGeoList(){
+  const groups = state.geography.reduce((acc, r) => { const key = r.countryCode || r.country || "XX"; acc[key] = acc[key] || { country:r.country, countryCode:r.countryCode, rows:[] }; acc[key].rows.push(r); return acc; }, {});
+  const html = Object.values(groups).map((g)=>{
+    const ratedRows = g.rows.filter((r) => Number.isFinite(Number(r.rating)));
+    const countryAvg = ratedRows.length ? ratedRows.reduce((sum, r) => sum + Number(r.rating || 0), 0) / ratedRows.length : 0;
+    return `<details open><summary><strong>${flag(g.countryCode)} ${g.country || getCountryEnglishName(g.countryCode) || ""}</strong> · ${g.rows.length}</summary><div class="world-country-average">${stars10(countryAvg)} ${countryAvg.toFixed(1)}/10</div>${g.rows.map((r)=>`<div class="world-rich-item"><div><strong class="world-geo-title">${r.name || r.city}</strong><small class="world-geo-rating">${stars10(r.rating || 0)} ${(r.rating ?? 0).toFixed(1)}/10</small></div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="geography:${r.id}">✏️</button><button data-world-delete="geography:${r.id}">🗑</button></div></div>`).join("")}</details>`;
+  }).join("");
+  $id("world-country-list").innerHTML = html || "<div>Sin lugares geográficos.</div>";
+}
 function renderLocals(){ const rows=state.places; $id("world-locals-list").innerHTML = rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.emoji || "🏪"} ${r.name}</strong><div>${stars10(r.rating || 0)} ${(r.rating ?? 0).toFixed(1)}/10</div><small>${r.category || "Local"} · ${r.city || ""}</small></div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("") || "<div>Sin locales.</div>"; }
 function renderStats(){ $id("world-countries").textContent = String(new Set([...state.geography, ...state.places].map((x)=>x.countryCode).filter(Boolean)).size); $id("world-geo-count").textContent = String(state.geography.length); $id("world-rated-locals").textContent = String(state.places.length); }
 function renderAll(){ renderStats(); renderMap(); renderGeoList(); renderLocals(); }

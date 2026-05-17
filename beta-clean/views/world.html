@@ -1,79 +1,62 @@
-<div class="world-header">
-  <div class="world-kpis">
-    <div class="world-kpi"><div class="label">Países visitados</div><div class="value" id="world-countries">0</div></div>
-    <div class="world-kpi"><div class="label">Ciudades geográficas</div><div class="value" id="world-geo-count">0</div></div>
-    <div class="world-kpi"><div class="label">Locales valorados</div><div class="value" id="world-rated-locals">0</div></div>
-    <div class="world-kpi"><div class="label">Media global</div><div class="value" id="world-global-average">-</div></div>
-  </div>
-
-  <div class="world-controls">
-    <div class="world-scope">
-      <button class="btn world-window-tab active" data-window="map" type="button">Mapa</button>
-      <button class="btn world-window-tab" data-window="locals" type="button">Locales</button>
+<div class="world-shell">
+  <header class="world-topbar">
+    <div class="world-kpis">
+      <div class="world-pill"><span>🌍 Países</span><strong id="world-countries">0</strong></div>
+      <div class="world-pill"><span>📍 Lugares</span><strong id="world-geo-count">0</strong></div>
+      <div class="world-pill"><span>🏪 Locales</span><strong id="world-rated-locals">0</strong></div>
     </div>
-    <label class="btn primary" for="world-add-toggle">+ Añadir</label>
-  </div>
+    <div class="world-top-actions">
+      <div class="world-tabs">
+        <button type="button" class="world-tab active" data-window="map">Mapa</button>
+        <button type="button" class="world-tab" data-window="locals">Locales</button>
+      </div>
+      <button type="button" class="world-add-btn" id="world-open-add">+ Añadir</button>
+    </div>
+  </header>
+
+  <section class="world-window active" data-window-panel="map">
+    <div id="world-map"></div>
+    <div class="world-bottom-sheet">
+      <div class="world-bottom-head">
+        <h3>Geografía visitada</h3>
+        <select id="world-country-filter"><option value="all">Todos los países</option></select>
+      </div>
+      <div class="world-country-list" id="world-country-list"></div>
+    </div>
+  </section>
+
+  <section class="world-window" data-window-panel="locals">
+    <div class="world-locals-controls">
+      <select id="world-locals-group">
+        <option value="type">Por tipo/cadena</option><option value="country">Por país</option><option value="city">Por ciudad</option><option value="top">Top valorados</option>
+      </select>
+    </div>
+    <div class="world-locals-list" id="world-locals-list"></div>
+  </section>
 </div>
 
-<div class="world-window-panel active" id="world-window-map" data-window-panel="map">
-  <div class="world-map-wrap"><div id="world-map"></div></div>
-  <details class="world-card" open>
-    <summary class="world-summary"><h3>Países visitados</h3><span class="world-count" id="world-country-count">0</span></summary>
-    <div class="world-list" id="world-country-list"></div>
-  </details>
-</div>
-
-<div class="world-window-panel" id="world-window-locals" data-window-panel="locals">
-  <div class="world-filters">
-    <select id="world-locals-group">
-      <option value="type">Por tipo/cadena</option>
-      <option value="country">Por país</option>
-      <option value="region">Por comunidad/región</option>
-      <option value="city">Por ciudad</option>
-      <option value="top">Top valorados</option>
-      <option value="recent">Recientes</option>
-    </select>
-  </div>
-  <details class="world-card" open>
-    <summary class="world-summary"><h3>Locales visitados</h3><span class="world-count" id="world-locals-count">0</span></summary>
-    <div class="world-list" id="world-locals-list"></div>
-  </details>
-</div>
-
-<input class="world-modal-toggle" hidden id="world-add-toggle" type="checkbox" />
+<input id="world-add-toggle" class="world-modal-toggle" type="checkbox" hidden>
 <div class="world-modal">
-  <label class="world-modal-backdrop" for="world-add-toggle"></label>
-  <div class="world-modal-sheet world-modal-compact">
-    <div class="world-modal-header"><div class="title">Añadir</div><label class="btn" for="world-add-toggle">Cerrar</label></div>
-    <div class="world-modal-grid">
-      <div class="world-scope">
-        <button class="btn active" id="world-add-mode-geo" type="button">1. Ciudad/pueblo/geografía</button>
-        <button class="btn" id="world-add-mode-place" type="button">2. Local/establecimiento</button>
-      </div>
-
-      <div id="world-geo-mode">
-        <div class="world-modal-grid">
-          <button class="btn" id="world-mark-current" type="button">📍 Usar ubicación actual</button>
-          <input autocomplete="off" id="world-geo-q" placeholder="Buscar ciudad/pueblo/municipio" />
-          <div class="world-list" id="world-geo-results"></div>
-          <input autocomplete="off" id="world-geo-note" placeholder="Nota opcional" />
-          <div class="world-modal-actions"><button class="btn primary" id="world-geo-save" type="button">Guardar geografía</button></div>
-        </div>
-      </div>
-
-      <div id="world-place-mode" hidden>
-        <div id="world-mini-map"></div>
-        <div class="world-filters">
-          <input autocomplete="off" id="world-place-q" placeholder="Buscar local cercano (Burger King, farmacia...)" />
-          <select id="world-place-radius">
-            <option value="500">500m</option><option value="1000" selected>1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option>
-          </select>
-        </div>
-        <div class="world-list" id="world-place-results"></div>
-        <div class="world-rating" id="world-rating-stars"></div>
-        <input autocomplete="off" id="world-place-note" placeholder="Nota opcional" />
-        <div class="world-modal-actions"><button class="btn primary" id="world-place-save" type="button">Guardar local</button></div>
-      </div>
+  <label class="world-backdrop" for="world-add-toggle"></label>
+  <div class="world-sheet">
+    <div class="world-sheet-header"><h3>Añadir</h3><label for="world-add-toggle">Cerrar</label></div>
+    <div class="world-add-switch">
+      <button type="button" class="active" id="world-add-mode-geo">Lugar geográfico</button>
+      <button type="button" id="world-add-mode-place">Local/establecimiento</button>
+    </div>
+    <div id="world-geo-mode" class="world-mode">
+      <input id="world-geo-q" placeholder="Buscar país, ciudad o pueblo">
+      <div id="world-geo-results" class="world-search-list"></div>
+      <input id="world-geo-note" placeholder="Nota opcional">
+      <button type="button" class="world-save" id="world-geo-save">Guardar lugar</button>
+    </div>
+    <div id="world-place-mode" class="world-mode" hidden>
+      <div id="world-mini-map"></div>
+      <div class="world-place-search-row"><input id="world-place-q" placeholder="Burger King, farmacia, etc"><select id="world-place-radius"><option value="500">500m</option><option value="1000" selected>1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
+      <div id="world-place-results" class="world-search-list"></div>
+      <div id="world-rating-stars" class="world-rating" data-action="rate" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
+      <input id="world-place-note" placeholder="Nota opcional">
+      <button type="button" class="world-save" id="world-place-save">Guardar local</button>
     </div>
   </div>
 </div>

@@ -32,3 +32,10 @@
 #view-world .world-rating-track{position:relative;border-radius:999px;background:rgba(255,255,255,.08);padding:10px;overflow:hidden}
 #view-world .world-rating-fill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#ffd66e,#ff9f68)}
 #view-world .world-rating-text{position:relative;z-index:1;font-size:13px}
+#view-world .world-feedback{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(14px);opacity:0;pointer-events:none;background:rgba(15,18,34,.92);color:#fff;padding:10px 14px;border-radius:999px;box-shadow:0 10px 30px rgba(0,0,0,.35);transition:.24s}
+#view-world .world-feedback.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#view-world .world-result-card{display:flex;flex-direction:column;gap:4px;border:1px solid rgba(255,255,255,.12)!important;background:rgba(255,255,255,.06)!important;transition:.2s}
+#view-world .world-result-card.is-selected{border-color:#63d7ff!important;box-shadow:0 0 0 1px #63d7ff inset,0 0 22px rgba(99,215,255,.35);background:linear-gradient(130deg,rgba(90,130,255,.26),rgba(83,233,255,.18))!important}
+#view-world .world-result-card.is-dimmed{opacity:.45;filter:saturate(.6)}
+#view-world .world-geo-item{display:flex;flex-direction:column;gap:3px;border-radius:10px;padding:10px}
+#view-world .world-local-row{padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.08)}

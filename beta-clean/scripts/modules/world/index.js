@@ -9,321 +9,93 @@ const $id = (id) => document.getElementById(id);
 const iso2 = (v) => String(v || "").trim().toUpperCase();
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 
+const GEO_KEYWORDS = /(country|state|region|province|city|town|village|municipality|county|district|neighbourhood|suburb|hamlet|administrative)/i;
+const PLACE_KEYWORDS = /(restaurant|cafe|bar|burger|hotel|hostel|pharmacy|hospital|shop|store|mall|supermarket|toilet|parking|bank|business|amenity|tourism|leisure)/i;
+
 const state = {
   initialized: false, firebaseUnsub: null, firebaseRef: null,
   visits: [], customPins: [], areaVisits: [],
-  mainMap: null, miniMap: null, mapLayer: null,
+  mainMap: null, miniMap: null, mapLayer: null, miniLayer: null,
   activeWindow: "map", addMode: "geo", rating: 0,
   selectedGeo: null, selectedPlace: null,
-  placeResults: [], geoResults: [],
+  placeResults: [], geoResults: [], localSearchError: "",
   userCenter: { lat: DEFAULT_MAP_CENTER_SPAIN[0], lon: DEFAULT_MAP_CENTER_SPAIN[1] },
+  currentSearchCenter: null,
 };
-
 const createId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const nowTs = () => Date.now();
+const placeTypeHint = (v = {}) => String(v.kind || v.type || v.class || v.category || v.folder || "").toLowerCase();
 
 function normalizeRecord(v = {}) {
   return {
-    id: String(v.id || createId()),
-    ts: Number(v.ts) || nowTs(),
+    id: String(v.id || createId()), ts: Number(v.ts) || nowTs(),
     kind: String(v.kind || (v.rating != null ? "place" : "geo")),
+    type: String(v.type || ""),
     placeName: String(v.placeName || v.name || "").trim(),
-    countryCode: iso2(v.countryCode || v.country || v.country_code),
-    country: String(v.country || "").trim(),
-    subdivision: String(v.subdivision || v.region || "").trim(),
-    city: String(v.city || v.town || v.municipality || "").trim(),
-    lat: Number.isFinite(Number(v.lat)) ? Number(v.lat) : null,
-    lon: Number.isFinite(Number(v.lon)) ? Number(v.lon) : null,
+    countryCode: iso2(v.countryCode || v.country || v.country_code), country: String(v.country || "").trim(),
+    subdivision: String(v.subdivision || v.region || "").trim(), city: String(v.city || v.town || v.municipality || "").trim(),
+    lat: Number.isFinite(Number(v.lat)) ? Number(v.lat) : null, lon: Number.isFinite(Number(v.lon)) ? Number(v.lon) : null,
     rating: Number.isFinite(Number(v.rating)) ? Math.max(0, Math.min(10, Number(v.rating))) : null,
-    note: String(v.note || ""),
-    folder: String(v.folder || v.category || "").trim(),
-    source: String(v.source || v.origin || "manual"),
+    note: String(v.note || ""), folder: String(v.folder || v.category || "").trim(), source: String(v.source || v.origin || "manual"),
+    osmType: String(v.osmType || v.osm_type || ""), osmClass: String(v.osmClass || v.class || ""),
   };
-}
-
-export function classifyWorldPlace(record = {}) {
-  const n = `${record.placeName || ""} ${record.folder || ""}`.toLowerCase();
-  if (n.includes("burger king")) return "Burger King";
-  if (n.includes("mcdonald")) return "McDonald’s";
-  if (n.includes("kfc")) return "KFC";
-  if (/(farmacia|pharmacy)/.test(n)) return "Farmacias";
-  if (/(baño|wc|toilet)/.test(n)) return "Baños";
-  if (/(supermercado|supermarket)/.test(n)) return "Supermercados";
-  if (/(mall|centro comercial)/.test(n)) return "Centros comerciales";
-  if (n.includes("hotel")) return "Hoteles";
-  if (/(caf[eé]|cafeter[ií]a)/.test(n)) return "Cafeterías";
-  if (/(restaurante|bar|restaurant)/.test(n)) return "Restauración";
-  return "Otros";
 }
 
 export function isGeographicRecord(record = {}) {
   if (!record) return false;
-  return record.kind === "geo" || (record.rating == null && !record.placeName) || (record.rating == null && ["current_location", "geo_search"].includes(record.source));
+  const kind = String(record.kind || "").toLowerCase();
+  const hint = `${placeTypeHint(record)} ${record.osmType || ""} ${record.osmClass || ""}`;
+  return kind === "geo" || GEO_KEYWORDS.test(hint) || (!record.rating && !PLACE_KEYWORDS.test(hint) && !!(record.city || record.country || record.subdivision));
 }
-
 export function isRatedPlaceRecord(record = {}) {
-  if (!record) return false;
-  return !isGeographicRecord(record) && Number.isFinite(Number(record.rating));
+  if (!record || isGeographicRecord(record)) return false;
+  const hint = placeTypeHint(record);
+  const hasExplicitPlaceType = ["local", "place", "poi", "business"].includes(hint);
+  const hasRating = Number.isFinite(Number(record.rating));
+  const selectedPlaceLike = ["place_search", "osm_place"].includes(String(record.source || "")) && PLACE_KEYWORDS.test(`${hint} ${record.osmClass || ""}`);
+  return hasExplicitPlaceType || hasRating || selectedPlaceLike;
 }
 
-export function getTerritoryAverage(records = [], level = "country") {
-  const list = records.filter(isRatedPlaceRecord).filter((r) => {
-    if (level === "country") return !!r.countryCode;
-    if (level === "region") return !!r.subdivision;
-    if (level === "city") return !!r.city;
-    return true;
-  });
-  if (!list.length) return { average: 0, count: 0 };
-  const total = list.reduce((acc, r) => acc + Number(r.rating || 0), 0);
-  return { average: total / list.length, count: list.length };
+export function classifyWorldPlace(record = {}) { const n = `${record.placeName || ""} ${record.folder || ""}`.toLowerCase(); if (n.includes("burger king")) return "Burger King"; if (n.includes("mcdonald")) return "McDonald’s"; if (n.includes("kfc")) return "KFC"; if (/(farmacia|pharmacy)/.test(n)) return "Farmacias"; if (/(baño|wc|toilet)/.test(n)) return "Baños"; if (/(supermercado|supermarket)/.test(n)) return "Supermercados"; if (/(mall|centro comercial)/.test(n)) return "Centros comerciales"; if (n.includes("hotel")) return "Hoteles"; if (/(caf[eé]|cafeter[ií]a)/.test(n)) return "Cafeterías"; if (/(restaurante|bar|restaurant)/.test(n)) return "Restauración"; return "Otros"; }
+
+const getAllRecords = () => [...state.visits, ...state.customPins, ...state.areaVisits].map(normalizeRecord);
+const distanceMeters = (aLat, aLng, bLat, bLng) => { const R = 6371000; const dLat = (bLat - aLat) * Math.PI / 180; const dLng = (bLng - aLng) * Math.PI / 180; const aa = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * Math.PI / 180) * Math.cos(bLat * Math.PI / 180) * Math.sin(dLng / 2) ** 2; return 2 * R * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa)); };
+const buildViewboxFromCenterRadius = (lat, lng, radiusMeters) => { const dLat = radiusMeters / 111320; const dLng = radiusMeters / (111320 * Math.cos((lat * Math.PI) / 180)); return { left: lng - dLng, right: lng + dLng, top: lat + dLat, bottom: lat - dLat }; };
+
+async function getCurrentPositionSafe() { console.info("[world:local:position:start]"); return new Promise((resolve) => navigator.geolocation?.getCurrentPosition((pos) => { const center = { lat: pos.coords.latitude, lon: pos.coords.longitude }; console.info("[world:local:position:success]", center); resolve(center); }, (error) => { console.warn("[world:local:position:error]", error); resolve(null); }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }) || resolve(null)); }
+
+async function searchPlacesNearby(query, center, radiusMeters) {
+  console.info("[world:local:search:center]", center); console.info("[world:local:search:radius]", radiusMeters);
+  const vb = buildViewboxFromCenterRadius(center.lat, center.lon, radiusMeters); console.info("[world:local:search:viewbox]", vb);
+  const u = new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q", query); u.searchParams.set("format", "json"); u.searchParams.set("addressdetails", "1"); u.searchParams.set("limit", "30"); u.searchParams.set("bounded", "1"); u.searchParams.set("viewbox", `${vb.left},${vb.top},${vb.right},${vb.bottom}`);
+  const rows = await (await fetch(u.toString())).json(); console.info("[world:local:search:raw-results]", rows.length);
+  const filtered = rows.map((row) => ({ ...row, distance: distanceMeters(center.lat, center.lon, Number(row.lat), Number(row.lon)) })).filter((r) => Number.isFinite(r.distance) && r.distance <= radiusMeters).sort((a, b) => a.distance - b.distance);
+  console.info("[world:local:search:filtered-results]", filtered.length);
+  return filtered;
 }
 
-function getAllRecords() {
-  return [...state.visits, ...state.customPins, ...state.areaVisits].map(normalizeRecord);
-}
+function persist() { if (!state.firebaseRef) return Promise.resolve(); return update(state.firebaseRef, { visits: state.visits, customPins: state.customPins, areaVisits: state.areaVisits, updatedAt: nowTs() }); }
+function renderStars() { const host = $id("world-rating-stars"); if (!host) return; host.innerHTML = Array.from({ length: 10 }, (_, i) => `<button type="button" data-star="${i + 1}" class="${state.rating >= i + 1 ? "active" : ""}">${state.rating >= i + 1 ? "★" : "☆"}</button>`).join(""); host.querySelectorAll("button").forEach((btn) => { btn.addEventListener("click", () => { state.rating = Number(btn.dataset.star || 0); renderStars(); }); btn.addEventListener("pointermove", (ev) => { if (ev.buttons !== 1) return; state.rating = Number(btn.dataset.star || 0); renderStars(); }); }); }
 
-async function reverseGeocode(lat, lon) {
-  try {
-    const u = new URL("https://nominatim.openstreetmap.org/reverse");
-    u.searchParams.set("format", "json"); u.searchParams.set("lat", String(lat)); u.searchParams.set("lon", String(lon)); u.searchParams.set("addressdetails", "1");
-    const r = await fetch(u.toString());
-    const d = await r.json();
-    const a = d.address || {};
-    return { countryCode: iso2(a.country_code), country: a.country || "", subdivision: a.state || a.region || "", city: a.city || a.town || a.village || a.municipality || "" };
-  } catch (error) {
-    console.warn("[world:reverse:error]", error);
-    return { countryCode: "", country: "", subdivision: "", city: "" };
-  }
-}
+function renderMapPanel(records) { const host = $id("world-country-list"); const countries = new Map(); records.filter(isGeographicRecord).forEach((r) => { const key = r.countryCode || "??"; if (!countries.has(key)) countries.set(key, []); countries.get(key).push(r); }); host.innerHTML = [...countries.entries()].map(([code, rows]) => `<details class="world-country-row"><summary><strong>${esc(getCountryEnglishName(code) || code)}</strong> · ${rows.length} ubicaciones</summary>${[...new Map(rows.map((r) => [r.city || r.placeName || "Sin ciudad", true])).keys()].map((city) => `<div class="world-item"><div><div class="name">${esc(city)}</div></div></div>`).join("")}</details>`).join("") || '<div class="geo-empty">Aún no hay geografía guardada.</div>'; $id("world-country-count").textContent = String(records.filter(isGeographicRecord).length); }
+function renderLocalsPanel(records) { const host = $id("world-locals-list"); const rated = records.filter(isRatedPlaceRecord); host.innerHTML = rated.map((r) => `<div class="world-item"><div><div class="name">${esc(r.placeName || "Local")}</div><div class="meta">${esc(r.city || "")} · ${r.rating ?? "-"}/10</div></div></div>`).join("") || '<div class="geo-empty">Sin locales valorados.</div>'; $id("world-locals-count").textContent = String(rated.length); }
+async function renderMap(records) { if (!state.mainMap) state.mainMap = createLeafletMap($id("world-map"), { center: [state.userCenter.lat, state.userCenter.lon], zoom: DEFAULT_MAP_ZOOM_SPAIN }); if (state.mapLayer) state.mainMap.removeLayer(state.mapLayer); const L = window.L; state.mapLayer = L.layerGroup(); records.filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon)).forEach((r) => state.mapLayer.addLayer(L.circleMarker([r.lat, r.lon], { radius: 4, color: "#fff", weight: 1, fillColor: isRatedPlaceRecord(r) ? "#ffd166" : "#4fd0ff", fillOpacity: 0.9 }))); state.mainMap.addLayer(state.mapLayer); setLeafletViewForPoints(state.mainMap, records.filter((r) => Number.isFinite(r.lat)).map((r) => ({ lat: r.lat, lng: r.lon })), { defaultCenter: DEFAULT_MAP_CENTER_SPAIN, defaultZoom: DEFAULT_MAP_ZOOM_SPAIN, maxAutoZoom: MAX_AUTO_ZOOM, singlePointZoom: 12 }); invalidateLeafletMap(state.mainMap, 40); }
+async function renderAll() { const all = getAllRecords(); await renderMap(all); renderMapPanel(all); renderLocalsPanel(all); const geo = all.filter(isGeographicRecord); const rated = all.filter(isRatedPlaceRecord); const avg = rated.length ? rated.reduce((a, r) => a + Number(r.rating || 0), 0) / rated.length : 0; $id("world-countries").textContent = String(new Set(geo.map((r) => r.countryCode).filter(Boolean)).size); $id("world-geo-count").textContent = String(geo.length); $id("world-rated-locals").textContent = String(rated.length); $id("world-global-average").textContent = rated.length ? `${avg.toFixed(1)}/10` : "-"; }
 
-async function searchGeo(q) {
-  const u = new URL("https://nominatim.openstreetmap.org/search");
-  u.searchParams.set("q", q); u.searchParams.set("format", "json"); u.searchParams.set("addressdetails", "1"); u.searchParams.set("limit", "8");
-  const r = await fetch(u.toString());
-  return r.json();
-}
-
-async function searchNearbyPlaces(q, radius) {
-  const [lat, lon] = [state.userCenter.lat, state.userCenter.lon];
-  const d = radius / 111320;
-  const left = lon - d; const right = lon + d; const top = lat + d; const bottom = lat - d;
-  const u = new URL("https://nominatim.openstreetmap.org/search");
-  u.searchParams.set("q", q); u.searchParams.set("format", "json"); u.searchParams.set("addressdetails", "1"); u.searchParams.set("limit", "20");
-  u.searchParams.set("bounded", "1");
-  u.searchParams.set("viewbox", `${left},${top},${right},${bottom}`);
-  const r = await fetch(u.toString());
-  const rows = await r.json();
-  return rows.filter((row) => {
-    const la = Number(row.lat); const lo = Number(row.lon);
-    if (!Number.isFinite(la) || !Number.isFinite(lo)) return false;
-    const dist = Math.hypot((la - lat) * 111320, (lo - lon) * 111320);
-    return dist <= radius;
-  });
-}
-
-function persist() {
-  if (!state.firebaseRef) return;
-  update(state.firebaseRef, { visits: state.visits, customPins: state.customPins, areaVisits: state.areaVisits, updatedAt: nowTs() }).catch((e) => console.error("[world:persist:error]", e));
-}
-
-function renderStars() {
-  const host = $id("world-rating-stars");
-  if (!host) return;
-  host.innerHTML = Array.from({ length: 10 }, (_, i) => `<button type="button" data-star="${i + 1}" class="${state.rating >= i + 1 ? "active" : ""}">★</button>`).join("");
-  const buttons = host.querySelectorAll("button");
-  buttons.forEach((btn) => {
-    btn.addEventListener("click", () => { state.rating = Number(btn.dataset.star || 0); renderStars(); });
-    btn.addEventListener("pointermove", (ev) => { if (ev.buttons !== 1) return; state.rating = Number(btn.dataset.star || 0); renderStars(); });
-  });
-}
-
-function renderMapPanel(records) {
-  const host = $id("world-country-list");
-  const countries = new Map();
-  records.filter(isGeographicRecord).forEach((r) => {
-    const key = r.countryCode || "??";
-    if (!countries.has(key)) countries.set(key, []);
-    countries.get(key).push(r);
-  });
-  const html = [...countries.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([code, rows]) => {
-    const byCity = new Map();
-    rows.forEach((r) => {
-      const city = r.city || "Sin ciudad";
-      if (!byCity.has(city)) byCity.set(city, []);
-      byCity.get(city).push(r);
-    });
-    return `<details class="world-country-row"><summary><strong>${esc(getCountryEnglishName(code) || code)}</strong> · ${rows.length} ubicaciones</summary>${[...byCity.entries()].map(([city, cityRows]) => `<div class="world-item"><div><div class="name">${esc(city)}</div><div class="meta">${cityRows.length} registros</div></div></div>`).join("")}</details>`;
-  }).join("");
-  host.innerHTML = html || '<div class="geo-empty">Aún no hay geografía guardada.</div>';
-  $id("world-country-count").textContent = String(records.filter(isGeographicRecord).length);
-}
-
-function renderLocalsPanel(records) {
-  const host = $id("world-locals-list");
-  const groupBy = $id("world-locals-group")?.value || "type";
-  const rated = records.filter(isRatedPlaceRecord);
-  let html = "";
-  if (groupBy === "top") {
-    html = rated.sort((a, b) => (b.rating || 0) - (a.rating || 0)).map((r) => `<div class="world-item"><div><div class="name">${esc(r.placeName || "Local")}</div><div class="meta">${esc(classifyWorldPlace(r))} · ${r.rating}/10</div></div></div>`).join("");
-  } else if (groupBy === "recent") {
-    html = rated.sort((a, b) => b.ts - a.ts).map((r) => `<div class="world-item"><div><div class="name">${esc(r.placeName || "Local")}</div><div class="meta">${esc(r.city)} · ${r.rating}/10</div></div></div>`).join("");
-  } else {
-    const map = new Map();
-    rated.forEach((r) => {
-      const key = groupBy === "country" ? (getCountryEnglishName(r.countryCode) || r.countryCode || "Sin país") : groupBy === "region" ? (r.subdivision || "Sin región") : groupBy === "city" ? (r.city || "Sin ciudad") : classifyWorldPlace(r);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(r);
-    });
-    html = [...map.entries()].map(([key, rows]) => {
-      const avg = groupBy === "country" ? getTerritoryAverage(rows, "country") : groupBy === "region" ? getTerritoryAverage(rows, "region") : groupBy === "city" ? getTerritoryAverage(rows, "city") : { average: 0, count: rows.length };
-      return `<details class="world-country-row"><summary><strong>${esc(key)}</strong>${["country", "region", "city"].includes(groupBy) ? ` · ★${avg.average.toFixed(1)}/10 · ${avg.count} locales` : ` · ${rows.length} locales`}</summary>${rows.map((r) => `<div class="world-item"><div><div class="name">${esc(r.placeName || "Local")}</div><div class="meta">${r.rating}/10 · ${esc(r.city || "")}</div></div></div>`).join("")}</details>`;
-    }).join("");
-  }
-  host.innerHTML = html || '<div class="geo-empty">Sin locales valorados.</div>';
-  $id("world-locals-count").textContent = String(rated.length);
-}
-
-async function renderMap(records) {
-  try {
-    if (!state.mainMap) {
-      state.mainMap = createLeafletMap($id("world-map"), { center: [state.userCenter.lat, state.userCenter.lon], zoom: DEFAULT_MAP_ZOOM_SPAIN });
-    }
-    if (state.mapLayer) state.mainMap.removeLayer(state.mapLayer);
-    const L = window.L;
-    if (!L) throw new Error("Leaflet no disponible");
-    const withCoords = records.filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon));
-    state.mapLayer = L.layerGroup();
-    withCoords.forEach((r) => {
-      const color = isRatedPlaceRecord(r) ? "#ffd166" : "#4fd0ff";
-      state.mapLayer.addLayer(L.circleMarker([r.lat, r.lon], { radius: 4, color: "#fff", weight: 1, fillColor: color, fillOpacity: 0.9 }).bindTooltip(`${esc(r.placeName || r.city || "Punto")}`));
-    });
-    state.mainMap.addLayer(state.mapLayer);
-    setLeafletViewForPoints(state.mainMap, withCoords.map((r) => ({ lat: r.lat, lng: r.lon })), { defaultCenter: DEFAULT_MAP_CENTER_SPAIN, defaultZoom: DEFAULT_MAP_ZOOM_SPAIN, maxAutoZoom: MAX_AUTO_ZOOM, singlePointZoom: 12 });
-    invalidateLeafletMap(state.mainMap, 40);
-  } catch (error) {
-    console.error("[world:render:error]", error);
-    const mapHost = $id("world-map");
-    if (mapHost) mapHost.innerHTML = '<div class="geo-empty">Mapa no disponible. La lista sigue operativa.</div>';
-  }
-}
-
-async function renderAll() {
-  const all = getAllRecords();
-  await renderMap(all);
-  renderMapPanel(all);
-  renderLocalsPanel(all);
-  const rated = all.filter(isRatedPlaceRecord);
-  const avg = rated.length ? (rated.reduce((acc, r) => acc + Number(r.rating || 0), 0) / rated.length) : 0;
-  $id("world-countries").textContent = String(new Set(all.filter(isGeographicRecord).map((r) => r.countryCode).filter(Boolean)).size);
-  $id("world-geo-count").textContent = String(all.filter(isGeographicRecord).length);
-  $id("world-rated-locals").textContent = String(rated.length);
-  $id("world-global-average").textContent = rated.length ? `${avg.toFixed(1)}/10` : "-";
-}
+function renderLocalSearchMap() { const host = $id("world-mini-map"); if (!host || !window.L) return; if (!state.miniMap) state.miniMap = createLeafletMap(host, { center: [state.currentSearchCenter?.lat || state.userCenter.lat, state.currentSearchCenter?.lon || state.userCenter.lon], zoom: 14 }); invalidateLeafletMap(state.miniMap, 60); }
+function renderLocalSearchResults() { const host = $id("world-place-results"); host.innerHTML = state.localSearchError ? `<div class="geo-empty">${esc(state.localSearchError)}</div>` : (state.placeResults.length ? state.placeResults.map((r, i) => `<div class="world-item"><div><div class="name">${esc((r.display_name || "").split(",")[0])}</div><div class="meta">${Math.round(r.distance)}m</div></div><button class="btn" data-place-pick="${i}">Seleccionar</button></div>`).join("") : '<div class="geo-empty">No hay resultados en este radio.</div>'); host.querySelectorAll("[data-place-pick]").forEach((btn) => btn.addEventListener("click", () => { const row = state.placeResults[Number(btn.dataset.placePick)]; const a = row.address || {}; state.selectedPlace = normalizeRecord({ kind: "place", type: "place", source: "place_search", osmClass: row.class, placeName: (row.display_name || "").split(",")[0], lat: Number(row.lat), lon: Number(row.lon), countryCode: iso2(a.country_code), country: a.country || "", subdivision: a.state || "", city: a.city || a.town || a.village || a.municipality || "", rating: state.rating }); })); }
 
 function bindUI() {
-  document.getElementById("view-world")?.addEventListener("click", (e) => {
-    const tab = e.target.closest("[data-window]");
-    if (tab) {
-      state.activeWindow = tab.dataset.window;
-      document.querySelectorAll("#view-world .world-window-tab").forEach((el) => el.classList.toggle("active", el.dataset.window === state.activeWindow));
-      document.querySelectorAll("#view-world [data-window-panel]").forEach((el) => el.classList.toggle("active", el.dataset.windowPanel === state.activeWindow));
-    }
-  });
-
-  $id("world-locals-group")?.addEventListener("change", () => renderLocalsPanel(getAllRecords()));
-
-  $id("world-add-mode-geo")?.addEventListener("click", () => { state.addMode = "geo"; $id("world-geo-mode").hidden = false; $id("world-place-mode").hidden = true; });
-  $id("world-add-mode-place")?.addEventListener("click", () => { state.addMode = "place"; $id("world-geo-mode").hidden = true; $id("world-place-mode").hidden = false; });
-
-  $id("world-mark-current")?.addEventListener("click", () => navigator.geolocation?.getCurrentPosition(async (pos) => {
-    state.userCenter = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-    const geo = await reverseGeocode(pos.coords.latitude, pos.coords.longitude);
-    state.selectedGeo = { lat: pos.coords.latitude, lon: pos.coords.longitude, ...geo, placeName: geo.city || "Ubicación actual", source: "current_location" };
-  }));
-
-  $id("world-geo-q")?.addEventListener("input", async (e) => {
-    const q = e.target.value.trim();
-    if (q.length < 2) return;
-    try {
-      state.geoResults = await searchGeo(q);
-      const host = $id("world-geo-results");
-      host.innerHTML = state.geoResults.map((r, i) => `<div class="world-item"><div><div class="name">${esc((r.display_name || "").split(",")[0])}</div><div class="meta">${esc(r.display_name || "")}</div></div><button class="btn" data-geo-pick="${i}">Elegir</button></div>`).join("");
-      host.querySelectorAll("[data-geo-pick]").forEach((btn) => btn.addEventListener("click", () => {
-        const row = state.geoResults[Number(btn.dataset.geoPick)];
-        const a = row.address || {};
-        state.selectedGeo = { lat: Number(row.lat), lon: Number(row.lon), countryCode: iso2(a.country_code), country: a.country || "", subdivision: a.state || "", city: a.city || a.town || a.village || a.municipality || "", placeName: (row.display_name || "").split(",")[0], source: "geo_search" };
-      }));
-    } catch (error) {
-      console.warn("[world:geo:search:error]", error);
-    }
-  });
-
-  $id("world-geo-save")?.addEventListener("click", () => {
-    if (!state.selectedGeo) return;
-    state.visits.push(normalizeRecord({ ...state.selectedGeo, kind: "geo", rating: null, note: $id("world-geo-note")?.value || "" }));
-    persist(); renderAll();
-  });
-
-  $id("world-place-q")?.addEventListener("input", async (e) => {
-    const q = e.target.value.trim(); if (q.length < 2) return;
-    try {
-      const radius = Number($id("world-place-radius")?.value || 1000);
-      state.placeResults = await searchNearbyPlaces(q, radius);
-      const host = $id("world-place-results");
-      host.innerHTML = state.placeResults.map((r, i) => `<div class="world-item"><div><div class="name">${esc((r.display_name || "").split(",")[0])}</div><div class="meta">${esc(r.display_name || "")}</div></div><button class="btn" data-place-pick="${i}">Seleccionar</button></div>`).join("");
-      host.querySelectorAll("[data-place-pick]").forEach((btn) => btn.addEventListener("click", async () => {
-        const row = state.placeResults[Number(btn.dataset.placePick)];
-        const a = row.address || {};
-        state.selectedPlace = normalizeRecord({ placeName: (row.display_name || "").split(",")[0], lat: Number(row.lat), lon: Number(row.lon), countryCode: iso2(a.country_code), country: a.country || "", subdivision: a.state || "", city: a.city || a.town || a.village || a.municipality || "", folder: classifyWorldPlace({ placeName: (row.display_name || "").split(",")[0] }), kind: "place", rating: state.rating });
-      }));
-    } catch (error) {
-      console.warn("[world:place:search:error]", error);
-    }
-  });
-
-  $id("world-place-save")?.addEventListener("click", () => {
-    if (!state.selectedPlace) return;
-    state.selectedPlace.rating = state.rating;
-    state.selectedPlace.note = $id("world-place-note")?.value || "";
-    state.visits.push(normalizeRecord(state.selectedPlace));
-    persist(); renderAll();
-  });
+  $id("world-add-toggle")?.addEventListener("change", async (e) => { if (!e.target.checked) return; const pos = await getCurrentPositionSafe(); if (pos) { state.userCenter = pos; state.currentSearchCenter = pos; } else state.localSearchError = "No se pudo obtener ubicación actual"; renderLocalSearchMap(); });
+  $id("world-geo-save")?.addEventListener("click", async () => { try { console.info("[world:geo:save:start]"); console.info("[world:geo:selected]", state.selectedGeo); if (!state.selectedGeo) return; console.info("[world:geo:save:path]", state.firebaseRef?.toString?.() || "world"); const payload = normalizeRecord({ ...state.selectedGeo, kind: "geo", type: "geo", rating: null, note: $id("world-geo-note")?.value || "" }); console.info("[world:geo:save:payload]", payload); state.visits.push(payload); await persist(); await renderAll(); console.info("[world:geo:save:success]", payload.id); } catch (error) { console.error("[world:geo:save:error]", error); } });
+  $id("world-geo-q")?.addEventListener("input", async (e) => { const q = e.target.value.trim(); if (q.length < 2) return; const u = new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q", q); u.searchParams.set("format", "json"); u.searchParams.set("addressdetails", "1"); u.searchParams.set("limit", "8"); state.geoResults = await (await fetch(u.toString())).json(); $id("world-geo-results").innerHTML = state.geoResults.map((r, i) => `<div class="world-item"><div><div class="name">${esc((r.display_name || "").split(",")[0])}</div><div class="meta">${esc(r.display_name || "")}</div></div><button class="btn" data-geo-pick="${i}">Elegir</button></div>`).join(""); document.querySelectorAll("[data-geo-pick]").forEach((btn) => btn.addEventListener("click", () => { const row = state.geoResults[Number(btn.dataset.geoPick)]; const a = row.address || {}; state.selectedGeo = { lat: Number(row.lat), lon: Number(row.lon), countryCode: iso2(a.country_code), country: a.country || "", subdivision: a.state || "", city: a.city || a.town || a.village || a.municipality || "", placeName: (row.display_name || "").split(",")[0], kind: "geo", type: "city", source: "geo_search" }; console.info("[world:geo:selected]", state.selectedGeo); })); });
+  $id("world-place-q")?.addEventListener("input", async (e) => { const q = e.target.value.trim(); if (q.length < 2) return; const radius = Number($id("world-place-radius")?.value || 1000); const center = state.currentSearchCenter || state.userCenter; state.placeResults = await searchPlacesNearby(q, center, radius); state.localSearchError = ""; renderLocalSearchResults(); });
+  $id("world-place-radius")?.addEventListener("change", () => $id("world-place-q")?.dispatchEvent(new Event("input")));
+  $id("world-place-save")?.addEventListener("click", async () => { if (!state.selectedPlace) return; state.selectedPlace.rating = Math.max(0, Math.min(10, state.rating)); state.selectedPlace.note = $id("world-place-note")?.value || ""; state.visits.push(normalizeRecord(state.selectedPlace)); await persist(); await renderAll(); });
 }
 
-export async function init() {
-  if (state.initialized) return;
-  console.info("[world:init:start]");
-  try {
-    state.initialized = true;
-    await ensureLeaflet().catch((e) => console.warn("[world:leaflet:fallback]", e));
-    const uid = getCurrentUserDataRootKey() || auth.currentUser?.uid;
-    if (uid) {
-      state.firebaseRef = ref(db, WORLD_PATH(uid));
-      state.firebaseUnsub = trackedOnValue(state.firebaseRef, (snapshot) => {
-        const v = snapshot.val() || {};
-        state.visits = (v.visits || []).map(normalizeRecord);
-        state.customPins = (v.customPins || []).map(normalizeRecord);
-        state.areaVisits = (v.areaVisits || []).map(normalizeRecord);
-        renderAll().catch((err) => console.error("[world:render:error]", err));
-      }, { key: "world-root", path: WORLD_PATH(uid), module: "world", mode: "onValue", reason: "world-live-sync", viewId: "view-world" }, onValue);
-    }
-    bindUI();
-    renderStars();
-    await renderAll();
-    console.info("[world:module:ready]");
-  } catch (error) {
-    console.error("[world:init:error]", error);
-    state.initialized = false;
-  }
-}
-
-export function destroy() {
-  if (state.mainMap) { destroyLeafletMap($id("world-map")); state.mainMap = null; }
-  if (state.firebaseUnsub) state.firebaseUnsub();
-  state.firebaseUnsub = null;
-  state.initialized = false;
-}
-
+export async function init() { if (state.initialized) return; state.initialized = true; await ensureLeaflet().catch(() => {}); const uid = getCurrentUserDataRootKey() || auth.currentUser?.uid; if (uid) { state.firebaseRef = ref(db, WORLD_PATH(uid)); state.firebaseUnsub = trackedOnValue(state.firebaseRef, (snapshot) => { const v = snapshot.val() || {}; state.visits = (v.visits || []).map(normalizeRecord); state.customPins = (v.customPins || []).map(normalizeRecord); state.areaVisits = (v.areaVisits || []).map(normalizeRecord); renderAll(); }, { key: "world-root", path: WORLD_PATH(uid), module: "world", mode: "onValue", reason: "world-live-sync", viewId: "view-world" }, onValue); } bindUI(); renderStars(); await renderAll(); }
+export function destroy() { if (state.mainMap) { destroyLeafletMap($id("world-map")); state.mainMap = null; } if (state.miniMap) { destroyLeafletMap($id("world-mini-map")); state.miniMap = null; } if (state.firebaseUnsub) state.firebaseUnsub(); state.firebaseUnsub = null; state.initialized = false; }
 export function getListenerCount() { return state.firebaseUnsub ? 1 : 0; }
 export async function onShow() { if (!state.initialized) await init(); }
 export async function onHide() { destroy(); }

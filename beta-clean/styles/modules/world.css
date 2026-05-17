@@ -1,4 +1,4 @@
-#view-world{display:none;flex-direction:column;padding:12px 8px calc(90px + var(--nav-total-h));color:#eef0ff}
+#view-world{display:none;flex-direction:column;padding:40px 8px calc(90px + var(--nav-total-h));color:#eef0ff}
 #view-world.view-active{display:flex}
 #view-world .world-shell{display:flex;flex-direction:column;gap:10px}
 #view-world .world-topbar{display:flex;flex-direction:column;gap:8px}
@@ -25,6 +25,7 @@
 #view-world .world-add-switch button{flex:1;border-radius:999px;border:0;padding:8px;background:rgba(255,255,255,.08);color:#eef0ff}
 #view-world .world-add-switch .active{background:linear-gradient(120deg,#756eff,#4ab8ff)}
 #view-world .world-mode{display:flex;flex-direction:column;gap:8px}
+#view-world .world-add-geo-panel[hidden],#view-world .world-add-local-panel[hidden]{display:none!important}
 #view-world #world-mini-map{height:160px;border-radius:14px;overflow:hidden}
 #view-world .world-place-search-row{display:grid;grid-template-columns:1fr auto;gap:6px}
 #view-world .world-search-list{display:flex;flex-direction:column;gap:6px;max-height:170px;overflow:auto}
@@ -40,6 +41,9 @@
 #view-world .world-geo-item{display:flex;flex-direction:column;gap:3px;border-radius:10px;padding:10px}
 #view-world .world-local-row{padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.08)}
 #view-world .world-rich-item{display:flex;justify-content:space-between;gap:8px;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);margin-top:8px}
+#view-world .world-country-average{margin-top:8px;font-size:12px;opacity:.95}
+#view-world .world-geo-title{display:block;font-size:17px;line-height:1.25}
+#view-world .world-geo-rating{display:block;margin-top:4px;font-size:12px;opacity:.9}
 #view-world .world-item-actions{display:flex;gap:6px;align-items:center}
 #view-world .world-item-actions button,#view-world .world-popup-actions button{border:0;border-radius:10px;padding:6px 8px;background:rgba(255,255,255,.12);color:#eef0ff}
 #view-world .world-popup{display:flex;flex-direction:column;gap:4px;min-width:200px}

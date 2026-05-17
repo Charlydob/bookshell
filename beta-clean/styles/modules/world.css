@@ -562,4 +562,9 @@
 
 #world-map {
   z-index: 1;
-}
+}#view-world .world-modal-compact{max-height:85vh;display:flex;flex-direction:column}
+#world-mini-map{height:170px;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.15)}
+#view-world .world-rating{display:grid;grid-template-columns:repeat(11,1fr);gap:6px}
+#view-world .world-rating button{height:30px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:var(--w-txt)}
+#view-world .world-rating button.active{background:rgba(111,107,255,.8)}
+#view-world .world-country-row{padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:12px}

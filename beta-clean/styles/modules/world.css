@@ -39,3 +39,9 @@
 #view-world .world-result-card.is-dimmed{opacity:.45;filter:saturate(.6)}
 #view-world .world-geo-item{display:flex;flex-direction:column;gap:3px;border-radius:10px;padding:10px}
 #view-world .world-local-row{padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.08)}
+#view-world .world-rich-item{display:flex;justify-content:space-between;gap:8px;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);margin-top:8px}
+#view-world .world-item-actions{display:flex;gap:6px;align-items:center}
+#view-world .world-item-actions button,#view-world .world-popup-actions button{border:0;border-radius:10px;padding:6px 8px;background:rgba(255,255,255,.12);color:#eef0ff}
+#view-world .world-popup{display:flex;flex-direction:column;gap:4px;min-width:200px}
+#view-world .world-popup-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+#view-world .world-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}

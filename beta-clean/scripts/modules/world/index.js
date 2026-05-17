@@ -1,215 +1,75 @@
 import { auth, db, firebasePaths, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
-import { ref, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { createLeafletMap, DEFAULT_MAP_CENTER_SPAIN, DEFAULT_MAP_ZOOM_SPAIN, destroyLeafletMap, ensureLeaflet, invalidateLeafletMap, MAX_AUTO_ZOOM, setLeafletViewForPoints } from "../../shared/vendors/leaflet.js";
+import { ref, onValue, set, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { createLeafletMap, DEFAULT_MAP_CENTER_SPAIN, destroyLeafletMap, ensureLeaflet, invalidateLeafletMap } from "../../shared/vendors/leaflet.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 import { getCountryEnglishName } from "./countries.js";
 
-const WORLD_PATH = (uid) => firebasePaths.world(uid);
 const $id = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
-const iso2 = (v) => String(v || "").trim().toUpperCase();
-const GEO_KEYWORDS = /(country|state|region|province|city|town|village|municipality|county|district|neighbourhood|suburb|hamlet|administrative)/i;
-const PLACE_KEYWORDS = /(restaurant|cafe|bar|burger|hotel|hostel|pharmacy|hospital|shop|store|mall|supermarket|toilet|parking|bank|business|amenity|tourism|leisure)/i;
+const WORLD_PATH = (uid) => firebasePaths.world(uid);
+const state = { initialized:false, unsub:null, rootRef:null, map:null, miniMap:null, markers:new Map(), geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, geoResults:[], placeResults:[], rating:0, activeWindow:"map", addMode:"geo", longPressTimer:null };
 
-const state = {
-  initialized: false, firebaseUnsub: null, firebaseRef: null,
-  visits: [], customPins: [], areaVisits: [],
-  mainMap: null, mainLayer: null, miniMap: null, miniLayer: null,
-  activeWindow: "map", addMode: "geo", rating: 0,
-  selectedGeo: null, selectedPlace: null,
-  placeResults: [], geoResults: [], localSearchError: "",
-  userCenter: { lat: DEFAULT_MAP_CENTER_SPAIN[0], lon: DEFAULT_MAP_CENTER_SPAIN[1] },
-  currentSearchCenter: null,
-};
+const log = (tag, ...args) => console.info(tag, ...args);
+const id = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+const normalize = (r = {}, kind = "geography") => ({ id:r.id || id(), kind, name:String(r.name || r.placeName || "").trim(), country:String(r.country || "").trim(), countryCode:String(r.countryCode || r.country_code || "").trim().toUpperCase(), city:String(r.city || "").trim(), region:String(r.region || r.subdivision || "").trim(), category:String(r.category || r.type || "").trim(), emoji:String(r.emoji || "📍").trim(), note:String(r.note || "").trim(), rating:Number.isFinite(Number(r.rating)) ? Number(r.rating) : null, lat:Number(r.lat), lon:Number(r.lon), createdAt:Number(r.createdAt || Date.now()), updatedAt:Date.now() });
+const stars10 = (v) => "★".repeat(Math.round(v)).padEnd(10, "☆");
+const hav = (a,b,c,d)=>{const R=6371000,to=(x)=>x*Math.PI/180,d1=to(c-a),d2=to(d-b),q=Math.sin(d1/2)**2+Math.cos(to(a))*Math.cos(to(c))*Math.sin(d2/2)**2;return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q));};
 
-const nowTs = () => Date.now();
-const createId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-const getAllRecords = () => [...state.visits, ...state.customPins, ...state.areaVisits].map(normalizeRecord);
-
-function logError(context, error) { console.error("[world:error]", context, error); }
-function normalizeRecord(v = {}) { return { id: String(v.id || createId()), ts: Number(v.ts) || nowTs(), kind: String(v.kind || (v.rating != null ? "place" : "geo")), type: String(v.type || ""), placeName: String(v.placeName || v.name || "").trim(), countryCode: iso2(v.countryCode || v.country_code || v.country), country: String(v.country || "").trim(), subdivision: String(v.subdivision || v.region || "").trim(), city: String(v.city || v.town || v.village || "").trim(), lat: Number(v.lat), lon: Number(v.lon), rating: Number.isFinite(Number(v.rating)) ? Math.max(0, Math.min(10, Number(v.rating))) : null, note: String(v.note || ""), source: String(v.source || "manual"), osmType: String(v.osmType || v.osm_type || ""), osmClass: String(v.osmClass || v.class || "") }; }
-
-export function isGeographicRecord(record = {}) { const kind = String(record.kind || "").toLowerCase(); const hint = `${record.type || ""} ${record.osmType || ""} ${record.osmClass || ""}`; return kind === "geo" || GEO_KEYWORDS.test(hint) || (!record.rating && !PLACE_KEYWORDS.test(hint) && !!(record.city || record.country || record.subdivision)); }
-export function isRatedPlaceRecord(record = {}) { if (!record || isGeographicRecord(record)) return false; const hint = `${record.type || ""} ${record.osmClass || ""}`; return Number.isFinite(Number(record.rating)) || /local|place|poi|business/i.test(hint) || (record.source === "place_search" && PLACE_KEYWORDS.test(hint)); }
-
-function setWindowMode(mode) {
-  state.activeWindow = mode;
-  console.info(mode === "map" ? "[world:tab:map]" : "[world:tab:locales]");
-  document.querySelectorAll("#view-world .world-window-tab").forEach((btn) => btn.classList.toggle("active", btn.dataset.window === mode));
-  document.querySelectorAll("#view-world [data-window-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.windowPanel === mode));
-  if (state.mainMap) invalidateLeafletMap(state.mainMap, 50);
+async function getCurrentPositionSafe(){
+  log("[world:geo]", "request");
+  if (!(window.isSecureContext && navigator.geolocation)) return null;
+  return new Promise((resolve)=>navigator.geolocation.getCurrentPosition((pos)=>resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }), ()=>resolve(null), { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
 }
 
-function setAddMode(mode) {
-  state.addMode = mode;
-  const geo = $id("world-geo-mode");
-  const place = $id("world-place-mode");
-  $id("world-add-mode-geo")?.classList.toggle("active", mode === "geo");
-  $id("world-add-mode-place")?.classList.toggle("active", mode === "local");
-  if (geo) geo.hidden = mode !== "geo";
-  if (place) place.hidden = mode !== "local";
-  if (mode === "geo") console.info("[world:add:mode:geo]");
-  if (mode === "local") { console.info("[world:add:mode:local]"); initMiniMap(); }
-}
+function ratingFromPointer(el, clientX){ const rect=el.getBoundingClientRect(); return Math.max(0, Math.min(10, ((clientX - rect.left) / Math.max(rect.width,1))*10)); }
+function renderRating(){ const el=$id("world-rating-stars"); if(!el) return; const value=state.rating; el.setAttribute("aria-valuenow", String(value.toFixed(1))); el.innerHTML=`<div class="world-rating-track"><div class="world-rating-fill" style="width:${(value/10)*100}%"></div><div class="world-rating-text">${stars10(value)} ${value.toFixed(1)}/10</div></div>`; }
+function bindRating(){ const el=$id("world-rating-stars"); if(!el) return; el.addEventListener("pointerdown",(e)=>{ const move=(ev)=>{ state.rating=ratingFromPointer(el, ev.clientX); renderRating(); }; move(e); window.addEventListener("pointermove", move); const up=()=>{ window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); }; window.addEventListener("pointerup", up); }); }
 
-async function getCurrentPositionSafe() {
-  return new Promise((resolve) => navigator.geolocation?.getCurrentPosition((pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }), () => resolve(null), { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }) || resolve(null));
-}
+function setWindow(mode){ state.activeWindow=mode; document.querySelectorAll("#view-world .world-tab").forEach((b)=>b.classList.toggle("active", b.dataset.window===mode)); document.querySelectorAll("#view-world [data-window-panel]").forEach((p)=>p.classList.toggle("active", p.dataset.windowPanel===mode)); invalidateLeafletMap(state.map, 60); }
+function setAddMode(mode){ state.addMode=mode; $id("world-geo-mode").hidden=mode!=="geo"; $id("world-place-mode").hidden=mode!=="place"; $id("world-add-mode-geo").classList.toggle("active", mode==="geo"); $id("world-add-mode-place").classList.toggle("active", mode==="place"); if(mode==="place") initMiniMap(); }
 
-function renderStars() {
-  const host = $id("world-rating-stars"); if (!host) return;
-  host.innerHTML = Array.from({ length: 10 }, (_, i) => `<button type="button" data-star="${i + 1}" class="${state.rating >= i + 1 ? "active" : ""}">${state.rating >= i + 1 ? "★" : "☆"}</button>`).join("");
-}
+function renderMap(){ if(!window.L) return; const host=$id("world-map"); if(!host) return; if(!state.map) state.map=createLeafletMap(host, { center:[state.userCenter.lat, state.userCenter.lon], zoom:13 });
+  state.markers.forEach((m)=>m.remove()); state.markers.clear(); const L=window.L;
+  [...state.geography, ...state.places].forEach((r)=>{ if(!Number.isFinite(r.lat)||!Number.isFinite(r.lon)) return; const marker=L.circleMarker([r.lat,r.lon], { radius:r.kind==="places"?8:6, color:"#fff", weight:1, fillColor:r.kind==="places"?"#ffc86b":"#61d1ff", fillOpacity:0.95 }).addTo(state.map); marker.on("click", ()=>log("[world:marker:click]", r.id)); marker.bindPopup(`<b>${r.name || r.city || "Punto"}</b><br>${r.city || ""} ${r.countryCode ? "🇦🇬".replace("AG", r.countryCode) : ""}<br><button data-world-center="${r.id}">Centrar</button> <button data-world-delete="${r.kind}:${r.id}">Borrar</button>`); state.markers.set(r.id, marker); });
+  state.map.setView([state.userCenter.lat, state.userCenter.lon], 12); bindMapLongPress(); }
 
-function markerPopupHtml(r) {
-  if (isRatedPlaceRecord(r)) {
-    return `<div><strong>${esc(r.placeName || "Local")}</strong><div>${esc(r.city || "")}, ${esc(r.country || r.countryCode || "")}</div><div>${"★".repeat(Math.max(0, Math.round(r.rating || 0)))} ${r.rating ?? "-"}/10</div>${r.note ? `<div>${esc(r.note)}</div>` : ""}<div class="actions"><button type="button" class="btn" data-action="center" data-id="${esc(r.id)}">Centrar</button><button type="button" class="btn" data-action="detail" data-id="${esc(r.id)}">Ver detalle</button><button type="button" class="btn" data-action="delete" data-id="${esc(r.id)}">Borrar</button></div></div>`;
-  }
-  return `<div><strong>${esc(r.placeName || r.city || "Ubicación")}</strong><div>Tipo: ${esc(r.type || "ciudad")}</div><div>${esc(r.subdivision || "")} ${esc(r.country || r.countryCode || "")}</div>${r.ts ? `<div>${new Date(r.ts).toLocaleDateString()}</div>` : ""}<div class="actions"><button type="button" class="btn" data-action="center" data-id="${esc(r.id)}">Centrar</button><button type="button" class="btn" data-action="edit" data-id="${esc(r.id)}">Editar</button><button type="button" class="btn" data-action="delete" data-id="${esc(r.id)}">Borrar</button></div></div>`;
-}
+function bindMapLongPress(){ if(!state.map || state.map.__worldLongPress) return; state.map.__worldLongPress = true; state.map.on("mousedown", (e)=>{ state.longPressTimer = setTimeout(()=>{ log("[world:map:longpress]", e.latlng); const p = window.L.marker(e.latlng).addTo(state.map).bindPopup('<button id="world-add-here">Añadir lugar aquí</button>').openPopup(); p.on("popupopen", ()=>{ document.getElementById("world-add-here")?.addEventListener("click", ()=>{ $id("world-add-toggle").checked=true; state.selectedGeo=normalize({ lat:e.latlng.lat, lon:e.latlng.lng, name:"Punto manual" }, "geography"); }); }); }, 500); }); state.map.on("mouseup", ()=> clearTimeout(state.longPressTimer)); }
 
-function attachPopupHandlers(marker, record) {
-  marker.on("click", () => console.info("[world:marker:click]", record.id));
-  marker.on("popupopen", () => console.info("[world:marker:popup]", record.id));
+function renderGeoList(){ const filter = $id("world-country-filter")?.value || "all"; const list = state.geography.filter((g)=>filter==="all" || g.countryCode===filter); const by = new Map(); list.forEach((g)=>{ const k=g.countryCode||"??"; if(!by.has(k)) by.set(k,[]); by.get(k).push(g); }); $id("world-country-list").innerHTML = [...by.entries()].map(([cc, rows])=>`<details open><summary>${cc} ${getCountryEnglishName(cc)||cc}</summary>${rows.map((r)=>`<button class="world-geo-item" data-geo-center="${r.id}">${r.city || r.name}</button>`).join("")}</details>`).join("") || "<div>Sin lugares geográficos.</div>";
+  $id("world-country-filter").innerHTML = `<option value="all">Todos los países</option>${[...new Set(state.geography.map((g)=>g.countryCode).filter(Boolean))].map((cc)=>`<option value="${cc}">${cc} ${getCountryEnglishName(cc)||cc}</option>`).join("")}`;
 }
+function renderLocals(){ const mode=$id("world-locals-group")?.value || "type"; let groups={}; if(mode==="top"){ groups={"⭐ Top valorados": [...state.places].sort((a,b)=>(b.rating||0)-(a.rating||0)).slice(0,30)}; } else { state.places.forEach((p)=>{ const k = mode==="country" ? (p.countryCode||"??") : mode==="city" ? (p.city||"Sin ciudad") : (p.category||p.name||"Otros"); (groups[k] ||= []).push(p);}); }
+  $id("world-locals-list").innerHTML = Object.entries(groups).map(([k,rows])=>{ const avg=rows.reduce((a,b)=>a+(b.rating||0),0)/Math.max(rows.length,1); const emo=rows[0]?.emoji || "🏷️"; return `<details open><summary>${emo} ${k} · ${rows.length} · ${avg.toFixed(1)}/10</summary>${rows.map((r)=>`<div>${r.name} - ${r.city} ${r.countryCode} ${stars10(r.rating||0)}</div>`).join("")}</details>`; }).join("") || "<div>Sin locales.</div>"; }
 
-function renderMap(records) {
-  const host = $id("world-map"); if (!host || !window.L) return;
-  if (!state.mainMap) state.mainMap = createLeafletMap(host, { center: [state.userCenter.lat, state.userCenter.lon], zoom: DEFAULT_MAP_ZOOM_SPAIN });
-  if (state.mainLayer) state.mainMap.removeLayer(state.mainLayer);
-  const L = window.L;
-  state.mainLayer = L.layerGroup();
-  records.filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon)).forEach((r) => {
-    const marker = L.circleMarker([r.lat, r.lon], { radius: 7, color: "#fff", weight: 1.5, fillColor: isRatedPlaceRecord(r) ? "#ffd166" : "#4fd0ff", fillOpacity: 0.95, bubblingMouseEvents: false });
-    marker.bindPopup(markerPopupHtml(r), { closeButton: true });
-    attachPopupHandlers(marker, r);
-    state.mainLayer.addLayer(marker);
+async function persistWorld(){ if(!state.rootRef) return; await set(state.rootRef, { geography:Object.fromEntries(state.geography.map((r)=>[r.id,r])), places:Object.fromEntries(state.places.map((r)=>[r.id,r])), updatedAt:Date.now() }); }
+async function removeItem(kind,idv){ const p=ref(db, `${state.rootRef.toString().replace(/https:\/\/[^/]+\//,'')}/${kind}/${idv}`); await remove(p); }
+
+async function searchGeo(q){ const u=new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q",q); u.searchParams.set("format","json"); u.searchParams.set("addressdetails","1"); u.searchParams.set("limit","10"); const rows=await (await fetch(u)).json(); state.geoResults=rows; $id("world-geo-results").innerHTML=rows.map((r,i)=>`<button data-geo-pick="${i}">${(r.display_name||"").split(",")[0]}</button>`).join(""); }
+async function searchPlace(q){ log("[world:place:search]", q); const c=state.userCenter; const radius=Number($id("world-place-radius").value||1000); const dLat=radius/111320,dLng=radius/(111320*Math.cos((c.lat*Math.PI)/180)); const u=new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q",q); u.searchParams.set("format","json"); u.searchParams.set("addressdetails","1"); u.searchParams.set("limit","30"); u.searchParams.set("bounded","1"); u.searchParams.set("viewbox",`${c.lon-dLng},${c.lat+dLat},${c.lon+dLng},${c.lat-dLat}`); const rows=await (await fetch(u)).json(); state.placeResults=rows.map((r)=>({...r,distance:hav(c.lat,c.lon,Number(r.lat),Number(r.lon))})).filter((r)=>r.distance<=radius).sort((a,b)=>a.distance-b.distance); $id("world-place-results").innerHTML=state.placeResults.map((r,i)=>`<button data-place-pick="${i}">${(r.display_name||"").split(",")[0]} · ${Math.round(r.distance)}m</button>`).join(""); }
+
+function renderStats(){ $id("world-countries").textContent=String(new Set(state.geography.map((x)=>x.countryCode).filter(Boolean)).size); $id("world-geo-count").textContent=String(state.geography.length); $id("world-rated-locals").textContent=String(state.places.length); }
+function renderAll(){ renderStats(); renderMap(); renderGeoList(); renderLocals(); }
+
+function bindUI(){ const root=$id("view-world"); root.addEventListener("click", async (e)=>{ const t=e.target.closest("button,label"); if(!t) return; if(t.matches(".world-tab")) return setWindow(t.dataset.window); if(t.id==="world-open-add") $id("world-add-toggle").checked=true; if(t.id==="world-add-mode-geo") setAddMode("geo"); if(t.id==="world-add-mode-place") setAddMode("place"); if(t.dataset.geoPick){ const row=state.geoResults[Number(t.dataset.geoPick)]; const a=row?.address||{}; state.selectedGeo=normalize({name:(row.display_name||"").split(",")[0], city:a.city||a.town||a.village||"", region:a.state||"", country:a.country||"", countryCode:a.country_code||"", lat:Number(row.lat), lon:Number(row.lon), note:$id("world-geo-note").value}, "geography"); }
+    if(t.dataset.placePick){ const row=state.placeResults[Number(t.dataset.placePick)]; const a=row?.address||{}; state.selectedPlace=normalize({name:(row.display_name||"").split(",")[0], city:a.city||a.town||a.village||"", country:a.country||"", countryCode:a.country_code||"", category:$id("world-place-q").value, lat:Number(row.lat), lon:Number(row.lon), rating:state.rating, emoji:"🏪", note:$id("world-place-note").value}, "places"); log("[world:place]", state.selectedPlace); initMiniMap(); }
+    if(t.dataset.geoCenter){ const m=state.markers.get(t.dataset.geoCenter); if(m){ state.map.panTo(m.getLatLng()); m.openPopup(); log("[world:map:center]", t.dataset.geoCenter);} }
+    if(t.dataset.worldCenter){ const m=state.markers.get(t.dataset.worldCenter); if(m){ state.map.panTo(m.getLatLng()); m.openPopup(); } }
+    if(t.dataset.worldDelete){ const [kind,idv]=t.dataset.worldDelete.split(":"); await removeItem(kind,idv); }
   });
-  state.mainMap.addLayer(state.mainLayer);
-  const points = records.filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon)).map((r) => ({ lat: r.lat, lng: r.lon }));
-  setLeafletViewForPoints(state.mainMap, points, { defaultCenter: DEFAULT_MAP_CENTER_SPAIN, defaultZoom: DEFAULT_MAP_ZOOM_SPAIN, maxAutoZoom: MAX_AUTO_ZOOM, singlePointZoom: 12 });
-  invalidateLeafletMap(state.mainMap, 50);
+  $id("world-country-filter").addEventListener("change", renderGeoList); $id("world-locals-group").addEventListener("change", renderLocals);
+  $id("world-geo-q").addEventListener("input", (e)=> e.target.value.trim().length>1 && searchGeo(e.target.value.trim()));
+  $id("world-place-q").addEventListener("input", (e)=> e.target.value.trim().length>1 && searchPlace(e.target.value.trim()));
+  $id("world-place-radius").addEventListener("change", ()=> $id("world-place-q").dispatchEvent(new Event("input")));
+  $id("world-geo-save").addEventListener("click", async ()=>{ if(!state.selectedGeo) return; state.geography.push(state.selectedGeo); log("[world:geo:save]", state.selectedGeo); await persistWorld(); });
+  $id("world-place-save").addEventListener("click", async ()=>{ if(!state.selectedPlace) return; state.selectedPlace.rating=state.rating; state.places.push(state.selectedPlace); log("[world:place:save]", state.selectedPlace); await persistWorld(); });
+  $id("world-add-toggle").addEventListener("change", ()=>{ if($id("world-add-toggle").checked) initMiniMap(); });
+  bindRating();
 }
 
-function renderMapPanel(records) { const host = $id("world-country-list"); const geo = records.filter(isGeographicRecord); const byCountry = new Map(); geo.forEach((r) => { const key = r.countryCode || "??"; if (!byCountry.has(key)) byCountry.set(key, []); byCountry.get(key).push(r); }); host.innerHTML = byCountry.size ? [...byCountry.entries()].map(([cc, rows]) => `<details class="world-country-row"><summary><strong>${esc(getCountryEnglishName(cc) || cc)}</strong> · ${rows.length}</summary>${rows.map((r) => `<div class="world-item"><div><div class="name">${esc(r.city || r.placeName || "Sin ciudad")}</div></div></div>`).join("")}</details>`).join("") : '<div class="geo-empty">Aún no hay geografía guardada.</div>'; $id("world-country-count").textContent = String(geo.length); }
-function renderLocalsPanel(records) { const host = $id("world-locals-list"); const rated = records.filter(isRatedPlaceRecord); host.innerHTML = rated.length ? rated.map((r) => `<div class="world-item"><div><div class="name">${esc(r.placeName || "Local")}</div><div class="meta">${esc(r.city || "")}, ${esc(r.country || "")} · ${r.rating ?? "-"}/10</div></div></div>`).join("") : '<div class="geo-empty">Aún no hay locales valorados</div><button class="btn" data-action="open-add-local" type="button">Añadir local</button>'; $id("world-locals-count").textContent = String(rated.length); }
+function initMiniMap(){ if(!window.L) return; const host=$id("world-mini-map"); if(!host) return; if(!state.miniMap) state.miniMap=createLeafletMap(host, { center:[state.userCenter.lat,state.userCenter.lon], zoom:15 }); state.miniMap.setView([state.userCenter.lat,state.userCenter.lon],15); }
 
-function renderLocalSearchResults() {
-  const host = $id("world-place-results"); if (!host) return;
-  host.innerHTML = state.localSearchError ? `<div class="geo-empty">${esc(state.localSearchError)}</div>` : state.placeResults.length ? state.placeResults.map((r, i) => `<div class="world-item ${state.selectedPlace?.id === `sr_${i}` ? "selected" : ""}"><div><div class="name">${esc((r.display_name || "").split(",")[0])}</div><div class="meta">${Math.round(r.distance)}m · ${esc(r.display_name || "")}</div></div><button type="button" class="btn" data-action="pick-place" data-index="${i}">Seleccionar</button></div>`).join("") : '<div class="geo-empty">No hay resultados en este radio.</div>';
-}
-
-function initMiniMap() {
-  const host = $id("world-mini-map"); if (!host || !window.L) return;
-  const center = state.currentSearchCenter || state.userCenter;
-  if (!state.miniMap) state.miniMap = createLeafletMap(host, { center: [center.lat, center.lon], zoom: 14 });
-  if (state.miniLayer) state.miniMap.removeLayer(state.miniLayer);
-  const L = window.L;
-  state.miniLayer = L.layerGroup();
-  L.circleMarker([center.lat, center.lon], { radius: 6, color: "#fff", weight: 1, fillColor: "#6f6bff", fillOpacity: 0.9 }).addTo(state.miniLayer);
-  if (state.selectedPlace?.lat && state.selectedPlace?.lon) L.marker([state.selectedPlace.lat, state.selectedPlace.lon]).addTo(state.miniLayer);
-  state.miniLayer.addTo(state.miniMap);
-  state.miniMap.setView([center.lat, center.lon], 14);
-  invalidateLeafletMap(state.miniMap, 70);
-}
-
-async function searchPlacesNearby(query, center, radiusMeters) { const dLat = radiusMeters / 111320; const dLng = radiusMeters / (111320 * Math.cos((center.lat * Math.PI) / 180)); const viewbox = `${center.lon - dLng},${center.lat + dLat},${center.lon + dLng},${center.lat - dLat}`; const u = new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q", query); u.searchParams.set("format", "json"); u.searchParams.set("addressdetails", "1"); u.searchParams.set("limit", "30"); u.searchParams.set("bounded", "1"); u.searchParams.set("viewbox", viewbox); const rows = await (await fetch(u.toString())).json(); return rows.map((r) => ({ ...r, distance: distanceMeters(center.lat, center.lon, Number(r.lat), Number(r.lon)) })).filter((r) => Number.isFinite(r.distance) && r.distance <= radiusMeters).sort((a, b) => a.distance - b.distance); }
-function distanceMeters(aLat, aLng, bLat, bLng) { const R = 6371000; const dLat = (bLat - aLat) * Math.PI / 180; const dLng = (bLng - aLng) * Math.PI / 180; const aa = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * Math.PI / 180) * Math.cos(bLat * Math.PI / 180) * Math.sin(dLng / 2) ** 2; return 2 * R * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa)); }
-
-async function persist() { if (!state.firebaseRef) return; await update(state.firebaseRef, { visits: state.visits, customPins: state.customPins, areaVisits: state.areaVisits, updatedAt: nowTs() }); }
-
-async function renderAll() {
-  const all = getAllRecords();
-  renderMap(all); renderMapPanel(all); renderLocalsPanel(all);
-  const geo = all.filter(isGeographicRecord);
-  const rated = all.filter(isRatedPlaceRecord);
-  const avg = rated.length ? rated.reduce((a, b) => a + Number(b.rating || 0), 0) / rated.length : null;
-  $id("world-countries").textContent = String(new Set(geo.map((r) => r.countryCode).filter(Boolean)).size);
-  $id("world-geo-count").textContent = String(geo.length);
-  $id("world-rated-locals").textContent = String(rated.length);
-  $id("world-global-average").textContent = avg == null ? "-" : `${avg.toFixed(1)}/10`;
-}
-
-function bindUI() {
-  const root = $id("view-world");
-  root?.addEventListener("click", async (ev) => {
-    const btn = ev.target.closest("button,[data-action],label");
-    if (!btn) return;
-    const action = btn.dataset.action || "";
-    if (btn.matches(".world-window-tab")) return setWindowMode(btn.dataset.window || "map");
-    if (btn.id === "world-add-mode-geo") return setAddMode("geo");
-    if (btn.id === "world-add-mode-place") return setAddMode("local");
-    if (action === "open-add-local") {
-      const toggle = $id("world-add-toggle"); if (toggle) toggle.checked = true;
-      console.info("[world:add:open]");
-      setAddMode("local");
-      return;
-    }
-    if (action === "pick-place") {
-      const row = state.placeResults[Number(btn.dataset.index)];
-      if (!row) return;
-      const a = row.address || {};
-      state.selectedPlace = normalizeRecord({ id: `sr_${btn.dataset.index}`, kind: "place", type: "local", source: "place_search", placeName: (row.display_name || "").split(",")[0], city: a.city || a.town || a.village || "", subdivision: a.state || "", country: a.country || "", countryCode: iso2(a.country_code), lat: Number(row.lat), lon: Number(row.lon), rating: state.rating, note: $id("world-place-note")?.value || "" });
-      initMiniMap(); renderLocalSearchResults();
-      return;
-    }
-  });
-
-  $id("world-add-toggle")?.addEventListener("change", async (e) => {
-    if (!e.target.checked) return;
-    console.info("[world:add:open]");
-    const pos = await getCurrentPositionSafe();
-    state.currentSearchCenter = pos || state.currentSearchCenter || state.userCenter;
-    if (pos) state.userCenter = pos;
-    setAddMode(state.addMode || "geo");
-  });
-
-  $id("world-rating-stars")?.addEventListener("click", (ev) => { const b = ev.target.closest("button[data-star]"); if (!b) return; state.rating = Number(b.dataset.star); renderStars(); });
-
-  $id("world-place-q")?.addEventListener("input", async (e) => {
-    const q = e.target.value.trim(); if (q.length < 2) return;
-    try { const center = state.currentSearchCenter || state.userCenter; const radius = Number($id("world-place-radius")?.value || 1000); state.placeResults = await searchPlacesNearby(q, center, radius); state.localSearchError = ""; renderLocalSearchResults(); }
-    catch (error) { state.localSearchError = "Error buscando locales"; logError("search-place", error); renderLocalSearchResults(); }
-  });
-  $id("world-place-radius")?.addEventListener("change", () => $id("world-place-q")?.dispatchEvent(new Event("input")));
-
-  $id("world-geo-q")?.addEventListener("input", async (e) => {
-    const q = e.target.value.trim(); if (q.length < 2) return;
-    try { const u = new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q", q); u.searchParams.set("format", "json"); u.searchParams.set("addressdetails", "1"); u.searchParams.set("limit", "8"); state.geoResults = await (await fetch(u.toString())).json(); $id("world-geo-results").innerHTML = state.geoResults.map((r, i) => `<div class="world-item"><div><div class="name">${esc((r.display_name || "").split(",")[0])}</div><div class="meta">${esc(r.display_name || "")}</div></div><button type="button" class="btn" data-action="pick-geo" data-index="${i}">Elegir</button></div>`).join(""); }
-    catch (error) { logError("search-geo", error); }
-  });
-
-  $id("world-geo-results")?.addEventListener("click", (ev) => {
-    const btn = ev.target.closest("[data-action='pick-geo']"); if (!btn) return;
-    const row = state.geoResults[Number(btn.dataset.index)]; if (!row) return;
-    const a = row.address || {};
-    state.selectedGeo = normalizeRecord({ kind: "geo", type: "city", source: "geo_search", placeName: (row.display_name || "").split(",")[0], city: a.city || a.town || a.village || a.municipality || "", subdivision: a.state || "", country: a.country || "", countryCode: iso2(a.country_code), lat: Number(row.lat), lon: Number(row.lon) });
-  });
-
-  $id("world-geo-save")?.addEventListener("click", async () => { try { if (!state.selectedGeo) return; state.selectedGeo.note = $id("world-geo-note")?.value || ""; state.visits.push(normalizeRecord(state.selectedGeo)); await persist(); await renderAll(); } catch (error) { logError("save-geo", error); } });
-  $id("world-place-save")?.addEventListener("click", async () => { try { if (!state.selectedPlace) return; state.selectedPlace.rating = Math.max(0, Math.min(10, state.rating)); state.selectedPlace.note = $id("world-place-note")?.value || ""; state.visits.push(normalizeRecord(state.selectedPlace)); await persist(); await renderAll(); } catch (error) { logError("save-local", error); } });
-}
-
-export async function init() {
-  if (state.initialized) return;
-  state.initialized = true;
-  await ensureLeaflet().catch((err) => logError("leaflet", err));
-  bindUI(); renderStars();
-  const uid = getCurrentUserDataRootKey() || auth.currentUser?.uid;
-  if (uid) {
-    state.firebaseRef = ref(db, WORLD_PATH(uid));
-    state.firebaseUnsub = trackedOnValue(state.firebaseRef, (snapshot) => {
-      const v = snapshot.val() || {};
-      state.visits = (v.visits || []).map(normalizeRecord);
-      state.customPins = (v.customPins || []).map(normalizeRecord);
-      state.areaVisits = (v.areaVisits || []).map(normalizeRecord);
-      renderAll().catch((err) => logError("renderAll", err));
-    }, { key: "world-root", path: WORLD_PATH(uid), module: "world", mode: "onValue", reason: "world-live-sync", viewId: "view-world" }, onValue);
-  }
-  await renderAll();
-}
-
-export function destroy() { if (state.mainMap) { destroyLeafletMap($id("world-map")); state.mainMap = null; } if (state.miniMap) { destroyLeafletMap($id("world-mini-map")); state.miniMap = null; } if (state.firebaseUnsub) state.firebaseUnsub(); state.firebaseUnsub = null; state.initialized = false; }
-export function getListenerCount() { return state.firebaseUnsub ? 1 : 0; }
-export async function onShow() { if (!state.initialized) await init(); setWindowMode(state.activeWindow || "map"); }
-export async function onHide() { destroy(); }
+export async function init(){ if(state.initialized) return; state.initialized=true; log("[world:init]"); await ensureLeaflet(); bindUI(); renderRating(); const p=await getCurrentPositionSafe(); if(p){ state.userCenter=p; log("[world:geo]", p); }
+  const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; state.rootRef=ref(db, WORLD_PATH(uid)); state.unsub=trackedOnValue(state.rootRef, (snap)=>{ const data=snap.val()||{}; state.geography=Object.values(data.geography||{}).map((x)=>normalize(x,"geography")); state.places=Object.values(data.places||{}).map((x)=>normalize(x,"places")); renderAll(); }, { key:"world-root", path:WORLD_PATH(uid), module:"world", mode:"onValue", reason:"world-sync", viewId:"view-world" }, onValue); }
+export function destroy(){ if(state.unsub) state.unsub(); state.unsub=null; if(state.map){ destroyLeafletMap($id("world-map")); state.map=null; } if(state.miniMap){ destroyLeafletMap($id("world-mini-map")); state.miniMap=null; } state.initialized=false; }
+export async function onShow(){ if(!state.initialized) await init(); setWindow(state.activeWindow); invalidateLeafletMap(state.map,70); }
+export async function onHide(){ destroy(); }
+export function getListenerCount(){ return state.unsub?1:0; }

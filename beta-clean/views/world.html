@@ -20,7 +20,6 @@
     <div class="world-bottom-sheet">
       <div class="world-bottom-head">
         <h3>Geografía visitada</h3>
-        <select id="world-country-filter"><option value="all">Todos los países</option></select>
       </div>
       <div class="world-country-list" id="world-country-list"></div>
     </div>
@@ -55,7 +54,7 @@
     </div>
     <div id="world-place-mode" class="world-mode world-add-local-panel" hidden>
       <div id="world-mini-map"></div>
-      <div class="world-place-search-row"><input id="world-place-q" placeholder="Burger King, farmacia, etc"><select id="world-place-radius"><option value="500">500m</option><option value="1000" selected>1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
+      <div class="world-place-search-row"><input id="world-place-q" placeholder="Burger King, farmacia, etc"><select id="world-place-radius"><option value="none">Sin rango</option><option value="500">500m</option><option value="1000" selected>1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
       <div id="world-place-results" class="world-search-list"></div>
       <div id="world-rating-stars" class="world-rating" data-action="rate" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
       <input id="world-place-note" placeholder="Nota opcional">

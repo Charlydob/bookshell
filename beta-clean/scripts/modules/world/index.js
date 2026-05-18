@@ -35,14 +35,14 @@ function normalizeCountryFromAddress(address = {}) {
 }
 
 function renderGeoAddMode(){ $id("world-geo-mode").hidden = false; $id("world-place-mode").hidden = true; }
-function renderLocalAddMode(){ $id("world-place-mode").hidden = false; $id("world-geo-mode").hidden = true; initMiniMap(); }
+function renderAddLocalMode(){ $id("world-place-mode").hidden = false; $id("world-geo-mode").hidden = true; initMiniMap(); }
 function setAddMode(mode){
   const prev = state.addMode;
   state.addMode = mode;
   $id("world-add-mode-geo").classList.toggle("active", mode === "geo");
   $id("world-add-mode-place").classList.toggle("active", mode === "place");
   if (mode === "geo") { if (prev === "place") clearLocalPanelState(); renderGeoAddMode(); }
-  else { if (prev === "geo") clearGeoPanelState(); renderLocalAddMode(); }
+  else { if (prev === "geo") clearGeoPanelState(); renderAddLocalMode(); }
   renderRatings();
 }
 function renderPlaceModalMode(){
@@ -101,12 +101,13 @@ function renderAll(){ renderStats(); renderMap(); renderGeoList(); renderLocals(
 
 async function persistWorld(){ if(!state.rootRef) return; await set(state.rootRef, { geography:Object.fromEntries(state.geography.map((r)=>[r.id,r])), places:Object.fromEntries(state.places.map((r)=>[r.id,r])), updatedAt:Date.now() }); }
 
-function openAddPlaceModal(){
+function openAddLocalModal(){
   resetWorldAddModalState();
   state.editing = null;
   state.showEditLocationSearch = true;
   state.placeModalMode = "add";
   setAddMode("place");
+  renderAddLocalMode();
   setEditModeUI();
   $id("world-add-toggle").checked = true;
 }
@@ -184,8 +185,8 @@ function pickPlace(i){ const row = state.placeResults[i]; if(!row) return; const
 function bindUI(){
   const root=$id("view-world");
   root.addEventListener("click", async (e)=>{ const t=e.target.closest("button,label"); if(!t) return; if(t.matches(".world-tab")) return setWindow(t.dataset.window); if(t.id==="world-open-add") { $id("world-add-toggle").checked=true; setAddMode("geo"); resetWorldAddModalState(); state.showEditLocationSearch = true; state.placeModalMode = "add"; setEditModeUI(); }
-    if(t.id==="world-open-add-place") { openAddPlaceModal(); }
-    if(t.id==="world-add-mode-geo") setAddMode("geo"); if(t.id==="world-add-mode-place") setAddMode("place");
+    if(t.id==="world-open-add-place") { openAddLocalModal(); }
+    if(t.id==="world-add-mode-geo") setAddMode("geo"); if(t.id==="world-add-mode-place") { if (state.editing) setAddMode("place"); else openAddLocalModal(); }
     if(t.dataset.geoPick) pickGeo(Number(t.dataset.geoPick)); if(t.dataset.placePick) pickPlace(Number(t.dataset.placePick));
     if(t.dataset.worldCenter){ const m=state.markers.get(t.dataset.worldCenter); if(m){ state.map.panTo(m.getLatLng()); m.openPopup(); } }
     if(t.dataset.worldDelete){ const [kind,idv]=t.dataset.worldDelete.split(":"); await deleteItem(kind,idv); }

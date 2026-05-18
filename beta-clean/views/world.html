@@ -39,25 +39,32 @@
 <div class="world-modal">
   <label class="world-backdrop" for="world-add-toggle"></label>
   <div class="world-sheet">
-    <div class="world-sheet-header"><h3>Añadir</h3><label for="world-add-toggle">Cerrar</label></div>
+    <div class="world-sheet-header"><h3 id="world-sheet-title">Añadir</h3><label for="world-add-toggle">Cerrar</label></div>
     <div class="world-add-switch">
       <button type="button" class="active" id="world-add-mode-geo">Lugar geográfico</button>
       <button type="button" id="world-add-mode-place">Local/establecimiento</button>
     </div>
     <div id="world-geo-mode" class="world-mode world-add-geo-panel">
-      <input id="world-geo-q" placeholder="Buscar país, ciudad o pueblo">
-      <div id="world-geo-results" class="world-search-list"></div>
+      <div class="world-search-block" id="world-geo-search-block">
+        <input id="world-geo-q" placeholder="Buscar país, ciudad o pueblo">
+        <div id="world-geo-results" class="world-search-list"></div>
+      </div>
       <div class="world-edit-grid"><input id="world-form-name" placeholder="Nombre"><input id="world-form-emoji" placeholder="Emoji (ej: 📍)"><input id="world-form-category" placeholder="Categoría"><input id="world-form-country" placeholder="País"><input id="world-form-region" placeholder="Región/Comunidad"><input id="world-form-city" placeholder="Ciudad/Lugar"></div>
       <div id="world-geo-rating-stars" class="world-rating" data-action="rate-geo" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
       <input id="world-geo-note" placeholder="Nota opcional">
+      <button type="button" class="world-optional-location-btn" id="world-geo-enable-search" hidden>Cambiar ubicación</button>
       <button type="button" class="world-save" id="world-geo-save">Guardar lugar</button>
     </div>
     <div id="world-place-mode" class="world-mode world-add-local-panel" hidden>
-      <div id="world-mini-map"></div>
-      <div class="world-place-search-row"><input id="world-place-q" placeholder="Burger King, farmacia, etc"><select id="world-place-radius"><option value="none">Sin rango</option><option value="500">500m</option><option value="1000" selected>1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
-      <div id="world-place-results" class="world-search-list"></div>
+      <div class="world-search-block" id="world-place-search-block">
+        <div id="world-mini-map"></div>
+        <div class="world-place-search-row"><input id="world-place-q" placeholder="Burger King, farmacia, etc"><select id="world-place-radius"><option value="none">Sin rango</option><option value="500">500m</option><option value="1000" selected>1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
+        <div id="world-place-results" class="world-search-list"></div>
+      </div>
+      <div class="world-edit-grid" id="world-place-edit-grid"><input id="world-place-form-name" placeholder="Nombre"><input id="world-place-form-emoji" placeholder="Emoji (ej: 🏪)"><input id="world-place-form-category" placeholder="Tipo/categoría"><input id="world-place-form-country" placeholder="País"><input id="world-place-form-region" placeholder="Región"><input id="world-place-form-city" placeholder="Ciudad/Lugar"></div>
       <div id="world-rating-stars" class="world-rating" data-action="rate" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
       <input id="world-place-note" placeholder="Nota opcional">
+      <button type="button" class="world-optional-location-btn" id="world-place-enable-search" hidden>Cambiar ubicación</button>
       <button type="button" class="world-save" id="world-place-save">Guardar local</button>
     </div>
   </div>

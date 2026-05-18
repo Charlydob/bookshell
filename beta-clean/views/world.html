@@ -56,16 +56,24 @@
       <button type="button" class="world-save" id="world-geo-save">Guardar lugar</button>
     </div>
     <div id="world-place-mode" class="world-mode world-add-local-panel" hidden>
-      <div class="world-search-block" id="world-place-search-block">
-        <div id="world-place-map-wrap"><div id="world-mini-map"></div></div>
-        <div class="world-place-search-row"><input id="world-place-q" placeholder="Burger King, farmacia, etc"><select id="world-place-radius"><option value="none">Sin rango</option><option value="500">500m</option><option value="1000" selected>1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
-        <div id="world-place-results" class="world-search-list"></div>
+      <div id="world-place-add-panel">
+        <div class="world-search-block" id="world-place-search-block">
+          <div id="world-place-map-wrap"><div id="world-mini-map"></div></div>
+          <div class="world-place-search-row"><input id="world-place-q" placeholder="Burger King, farmacia, etc"><select id="world-place-radius"><option value="none">Sin rango</option><option value="500">500m</option><option value="1000" selected>1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
+          <div id="world-place-results" class="world-search-list"></div>
+        </div>
+        <div class="world-edit-grid" id="world-place-edit-grid"><input id="world-place-form-name" placeholder="Nombre"><input id="world-place-form-emoji" placeholder="Emoji (ej: 🏪)"><input id="world-place-form-category" placeholder="Tipo/categoría"><input id="world-place-form-country" placeholder="País"><input id="world-place-form-region" placeholder="Región"><input id="world-place-form-city" placeholder="Ciudad/Lugar"></div>
+        <div id="world-rating-stars" class="world-rating" data-action="rate" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
+        <input id="world-place-note" placeholder="Nota opcional">
+        <button type="button" class="world-save" id="world-place-save">Guardar local</button>
       </div>
-      <div class="world-edit-grid" id="world-place-edit-grid"><input id="world-place-form-name" placeholder="Nombre"><input id="world-place-form-emoji" placeholder="Emoji (ej: 🏪)"><input id="world-place-form-category" placeholder="Tipo/categoría"><input id="world-place-form-country" placeholder="País"><input id="world-place-form-region" placeholder="Región"><input id="world-place-form-city" placeholder="Ciudad/Lugar"></div>
-      <div id="world-rating-stars" class="world-rating" data-action="rate" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
-      <input id="world-place-note" placeholder="Nota opcional">
-      <button type="button" class="world-optional-location-btn" id="world-place-enable-search" hidden>Cambiar ubicación</button>
-      <button type="button" class="world-save" id="world-place-save">Guardar local</button>
+      <div id="world-place-edit-panel" hidden>
+        <div class="world-edit-grid"><input id="world-place-edit-name" placeholder="Nombre"><input id="world-place-edit-emoji" placeholder="Emoji (ej: 🏪)"><input id="world-place-edit-category" placeholder="Tipo/categoría"><input id="world-place-edit-country" placeholder="País"><input id="world-place-edit-region" placeholder="Región"><input id="world-place-edit-city" placeholder="Ciudad/Lugar"></div>
+        <div id="world-place-edit-rating-stars" class="world-rating" data-action="rate-edit-place" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
+        <input id="world-place-edit-note" placeholder="Nota opcional">
+        <button type="button" class="world-optional-location-btn" id="world-place-enable-search" hidden>Cambiar ubicación</button>
+        <button type="button" class="world-save" id="world-place-edit-save">Guardar cambios</button>
+      </div>
     </div>
   </div>
 </div>

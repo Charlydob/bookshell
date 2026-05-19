@@ -5455,7 +5455,11 @@ margin-bottom: 50px;
   scrollbar-width: thin;
 }
 .financeTab .productsWorkbench__receiptMetaHint .productsWorkbench__miniAction{ width:32px; min-width:32px; height:32px; padding:0; }
-.financeTab .productsWorkbench__receiptMetaControl--country{ min-width: 90px; max-width: 150px; }
+.financeTab .productsWorkbench__receiptMetaControl--country{
+  min-width: 72px;
+  max-width: 120px;
+  justify-self: end;
+}
 .financeTab .productsWorkbench__receiptCountryHint{ font-size:11px; color:rgba(32,38,47,.7); }
 
 .financeTab .productsWorkbench__receiptMetaControl:hover{

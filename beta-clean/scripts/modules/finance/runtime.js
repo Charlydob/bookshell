@@ -3444,7 +3444,8 @@ function renderProductsReceiptLineRow(line, model) {
   const ticketCurrency = String(model?.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
   const lineRate = Number(model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
   const lineTotalOriginal = Number(line?.priceOriginal ?? normalized.actualPrice ?? 0);
-  const lineTotalEUR = Number(line?.priceEUR ?? normalizeMovementCurrencyPayload({ amount: lineTotalOriginal, currency: ticketCurrency, exchangeRateToEUR: lineRate }).amountEUR);
+  const lineTotalEUR = Number(Number(lineTotalOriginal || 0) * Math.max(0.0000001, Number(lineRate || 1)));
+  console.info('[finance:currency] item-price-eur', { itemId: lineId, item: line?.name || '', original: lineTotalOriginal, currency: ticketCurrency, exchangeRateToEUR: lineRate, eur: lineTotalEUR });
   const lineDiffMeta = resolveProductsReceiptDiffMeta(normalized.diffSubtotal);
   return `
     <div class="productsWorkbench__receiptRow ${isSelected ? 'is-selected' : ''}" data-products-receipt-row="${escapeHtml(lineId)}">
@@ -3946,6 +3947,19 @@ function renderProductsListPanel(model) {
   `;
 }
 
+function resolveProductsConverterDraft(model) {
+  const ticketId = String(model?.activeTicketId || '').trim();
+  const ticketCurrency = String(model?.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const rateFromEUR = ticketCurrency === 'EUR' ? 1 : Math.max(0.0000001, Number(model?.activeTicket?.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(model?.activeTicket?.exchangeRateToEUR || 1))) || 1));
+  const cached = state.productsReceiptConverterTemp?.[ticketId];
+  if (!cached || cached.currency !== ticketCurrency) return { eur: 1, foreign: rateFromEUR, rateFromEUR };
+  return {
+    eur: Math.max(0.0000001, Number(cached.eur || 1)),
+    foreign: Math.max(0.0000001, Number(cached.foreign || rateFromEUR)),
+    rateFromEUR,
+  };
+}
+
 function renderProductsTicketHero(model, options = {}) {
   const showSubviewSwitch = options.showSubviewSwitch !== false;
   const showRegistry = options.showRegistry !== false;
@@ -3959,6 +3973,7 @@ function renderProductsTicketHero(model, options = {}) {
   const receiptActualTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
   const ticketCurrency = String(model.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
   const exchangeRateToEUR = Number(model.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
+  const converterDraft = resolveProductsConverterDraft(model);
   const receiptTotalEUR = Number(normalizeMovementCurrencyPayload({ amount: receiptActualTotal, currency: ticketCurrency, exchangeRateToEUR }).amountEUR || 0);
   const diffMeta = resolveProductsReceiptDiffMeta(receiptActualTotal - receiptEstimatedTotal);
   const receiptError = normalizeProductText(state.productsReceiptError || '');
@@ -3999,9 +4014,11 @@ function renderProductsTicketHero(model, options = {}) {
           </select>
           ${ticketCurrency !== 'EUR' ? `
             <div class="productsWorkbench__receiptMetaHint">
-              <span>1 € ≈</span>
-              <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--fx" type="number" step="0.01" value="${escapeHtml((1 / Math.max(0.0000001, exchangeRateToEUR)).toFixed(2))}" data-products-converter-foreign aria-label="${escapeHtml(ticketCurrency)}" />
+              <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--fx" type="number" step="0.01" value="${escapeHtml(Number(converterDraft.eur || 1).toFixed(2))}" data-products-converter-eur aria-label="EUR" />
+              <span>€ ≈</span>
+              <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--fx" type="number" step="0.01" value="${escapeHtml(Number(converterDraft.foreign || converterDraft.rateFromEUR).toFixed(2))}" data-products-converter-foreign aria-label="${escapeHtml(ticketCurrency)}" />
               <span>${escapeHtml(ticketCurrency)}</span>
+              <button type="button" class="productsWorkbench__miniAction" data-products-converter-reset aria-label="Reset conversor">↺</button>
             </div>
           ` : ''}
         </header>
@@ -5057,13 +5074,9 @@ function readProductsListDraftFromDom(root = document) {
   nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   const ticketCurrency = String(scope.querySelector('[data-products-receipt-currency]')?.value || nextList.tickets?.[activeTicketId]?.ticketCurrency || getDefaultCurrency()).toUpperCase();
-  const converterEur = Number(scope.querySelector('[data-products-converter-eur]')?.value || 1);
-  const converterForeign = Number(scope.querySelector('[data-products-converter-foreign]')?.value || 0);
   const derivedFromEUR = ticketCurrency === 'EUR'
     ? 1
-    : ((converterForeign > 0 && converterEur > 0)
-      ? (converterForeign / converterEur)
-      : Number(nextList.tickets?.[activeTicketId]?.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(nextList.tickets?.[activeTicketId]?.exchangeRateToEUR || 0)))));
+    : Number(nextList.tickets?.[activeTicketId]?.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(nextList.tickets?.[activeTicketId]?.exchangeRateToEUR || 0))));
   const exchangeRateFromEUR = ticketCurrency === 'EUR' ? 1 : Math.max(0.0000001, Number(derivedFromEUR || 0));
   const exchangeRateToEUR = ticketCurrency === 'EUR' ? 1 : Math.max(0.0000001, Number(1 / exchangeRateFromEUR));
   nextList.activeTicketId = activeTicketId;
@@ -15526,6 +15539,19 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-food-products-food-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyFood: !!event.target.checked }; applyProductsFiltersDirectDom(); }
     if (event.target.matches('[data-food-products-custom-start]')) { state.foodProductsView = { ...state.foodProductsView, customStart: event.target.value }; applyProductsFiltersDirectDom(); }
     if (event.target.matches('[data-food-products-custom-end]')) { state.foodProductsView = { ...state.foodProductsView, customEnd: event.target.value }; applyProductsFiltersDirectDom(); }
+    if (event.target.matches('[data-products-converter-reset]')) {
+      const formEl = view.querySelector('[data-products-list-form]');
+      const ticketId = String(formEl?.dataset.productsActiveTicketId || resolveActiveProductsList()?.activeTicketId || '').trim();
+      const currency = String(view.querySelector('[data-products-receipt-currency]')?.value || 'EUR').toUpperCase();
+      const rateFromEUR = Math.max(0.0000001, Number(resolveActiveProductsList()?.tickets?.[ticketId]?.exchangeRateFromEUR || 1));
+      state.productsReceiptConverterTemp = { ...(state.productsReceiptConverterTemp || {}), [ticketId]: { currency, eur: 1, foreign: rateFromEUR } };
+      const eurInput = view.querySelector('[data-products-converter-eur]');
+      const foreignInput = view.querySelector('[data-products-converter-foreign]');
+      if (eurInput) eurInput.value = '1.00';
+      if (foreignInput) foreignInput.value = Number(rateFromEUR).toFixed(2);
+      console.info('[finance:currency] converter-reset', { currency, eur: 1, foreign: rateFromEUR });
+      return;
+    }
     if (event.target.matches('[data-products-receipt-select]')) {
       toggleReceiptLineSelection(event.target.dataset.productsReceiptSelect, event.target.checked);
       return;
@@ -15690,15 +15716,28 @@ view.addEventListener('focusout', async (event) => {
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;
     }
-    if (event.target.matches('[data-products-converter-foreign]')) {
+    if (event.target.matches('[data-products-converter-eur], [data-products-converter-foreign]')) {
       const root = view;
+      const formEl = root.querySelector('[data-products-list-form]');
+      const ticketId = String(formEl?.dataset.productsActiveTicketId || resolveActiveProductsList()?.activeTicketId || '').trim();
+      const eurInput = root.querySelector('[data-products-converter-eur]');
       const foreignInput = root.querySelector('[data-products-converter-foreign]');
       const currency = String(root.querySelector('[data-products-receipt-currency]')?.value || 'EUR').toUpperCase();
-      const foreignValue = Math.max(0.0000001, Number(foreignInput?.value || 1));
-      const draft = readProductsListDraftFromDom(view);
-      console.info('[finance:currency] converter:update', { currency, foreignValue, exchangeRateFromEUR: foreignValue, exchangeRateToEUR: (1 / foreignValue) });
-      syncProductsDraftListLocal(draft);
-      syncProductsTicketComposerDom(view);
+      const rateFromEUR = Math.max(0.0000001, Number(resolveActiveProductsList()?.tickets?.[ticketId]?.exchangeRateFromEUR || 1));
+      let eurValue = Math.max(0.0000001, Number(eurInput?.value || 1));
+      let foreignValue = Math.max(0.0000001, Number(foreignInput?.value || rateFromEUR));
+      if (event.target.matches('[data-products-converter-eur]')) {
+        eurValue = Math.max(0.0000001, Number(event.target.value || 1));
+        foreignValue = eurValue * rateFromEUR;
+        if (foreignInput) foreignInput.value = Number(foreignValue).toFixed(2);
+        console.info('[finance:currency] converter-temp-eur', { currency, eur: eurValue, foreign: foreignValue });
+      } else {
+        foreignValue = Math.max(0.0000001, Number(event.target.value || rateFromEUR));
+        eurValue = foreignValue * (1 / rateFromEUR);
+        if (eurInput) eurInput.value = Number(eurValue).toFixed(2);
+        console.info('[finance:currency] converter-temp-foreign', { currency, eur: eurValue, foreign: foreignValue });
+      }
+      state.productsReceiptConverterTemp = { ...(state.productsReceiptConverterTemp || {}), [ticketId]: { currency, eur: eurValue, foreign: foreignValue } };
       return;
     }
     if (event.target.matches('[data-products-filter="productsQuery"]')) {

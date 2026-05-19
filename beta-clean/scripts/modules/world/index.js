@@ -101,14 +101,14 @@ function destroyWorldMapLayers(){
   if (state.worldClusterGroup) {
     state.worldClusterGroup.clearLayers?.();
     state.map.removeLayer(state.worldClusterGroup);
-    state.worldClusterGroup = null;
+    console.log("[world:cluster:reset] removed old layers");
   }
+  state.worldClusterGroup = null;
   if (state.worldLayers) {
     state.worldLayers.clearLayers?.();
     state.map.removeLayer(state.worldLayers);
     state.worldLayers = null;
   }
-  state.markers.forEach((m)=>m.remove?.());
   state.markers.clear();
   state.mapMarkersIndex.clear();
 }
@@ -119,33 +119,46 @@ function createGoogleMapsUrl(lat, lon){
 function buildWorldClusters(rows = []) { if (!state.map) return []; const zoom = Number(state.map.getZoom?.() || 5); const cellSize = zoom >= 11 ? 34 : zoom >= 9 ? 42 : 54; const groups = new Map(); rows.forEach((r) => { const projected = state.map.project([r.lat, r.lon], zoom); const key = `${Math.floor(projected.x / cellSize)}:${Math.floor(projected.y / cellSize)}`; const group = groups.get(key) || { rows:[], latSum:0, lonSum:0, coordKeys:new Set() }; group.rows.push(r); group.latSum += Number(r.lat); group.lonSum += Number(r.lon); group.coordKeys.add(`${Number(r.lat).toFixed(6)},${Number(r.lon).toFixed(6)}`); groups.set(key, group); }); return Array.from(groups.values()).map((g) => ({ rows:g.rows, lat:g.latSum / Math.max(1, g.rows.length), lon:g.lonSum / Math.max(1, g.rows.length), coordCount:g.coordKeys.size })); }
 function zoomToWorldCluster(cluster = {}) { const L = window.L; const points = (cluster.rows || []).map((item) => [item.lat, item.lon]); if (!points.length) return; const currentZoom = Number(state.map?.getZoom?.() || 0); if ((cluster.coordCount || 0) <= 1 || points.length <= 1) { if (currentZoom >= 14) return; state.map.setView(points[0], Math.min(16, Math.max(currentZoom + 2, 12))); return; } const bounds = L.latLngBounds(points); state.map.fitBounds(bounds, { padding:[40,40], maxZoom:Math.max(currentZoom + 2, 14) }); }
 
+function logWorldClusterZoom(){
+  if (!state.map || !state.worldClusterGroup) return;
+  const zoom = Number(state.map.getZoom?.() || 0);
+  let visibleMarkers = 0;
+  let visibleClusters = 0;
+  state.worldClusterGroup.eachLayer((layer) => {
+    if (!state.map.hasLayer(layer)) return;
+    if (typeof layer.getChildCount === "function") visibleClusters += 1;
+    else visibleMarkers += 1;
+  });
+  console.log("[world:cluster:zoom]", zoom, visibleMarkers, visibleClusters);
+}
+
 function renderWorldMarkers(){
   if(!window.L || !state.map) return;
-  destroyWorldMapLayers();
   const L = window.L;
+  if (typeof L.markerClusterGroup !== "function") {
+    console.warn("[world:cluster] markerClusterGroup plugin missing");
+    return;
+  }
+  destroyWorldMapLayers();
   const rows = [...state.geography, ...state.places].filter((r)=>Number.isFinite(r.lat)&&Number.isFinite(r.lon));
   const dotIcon = L.divIcon({ className:"notes-map-dot-icon", html:'<span class="notes-map-dot" aria-hidden="true"></span>', iconSize:[12,12], iconAnchor:[6,6] });
-  if (typeof L.markerClusterGroup === "function") {
-    state.worldClusterGroup = L.markerClusterGroup({
-      removeOutsideVisibleBounds:true,
-      showCoverageOnHover:false,
-      spiderfyOnMaxZoom:true,
-      iconCreateFunction: (cluster) => createWorldClusterIcon(cluster.getChildCount())
-    });
-    rows.forEach((r) => {
-      const marker = L.marker([r.lat, r.lon], { icon:dotIcon });
-      marker.bindPopup(buildPopup(r));
-      state.worldClusterGroup.addLayer(marker);
-      state.markers.set(r.id, marker);
-      state.mapMarkersIndex.set(r.id, marker);
-    });
-    state.map.addLayer(state.worldClusterGroup);
-  } else {
-    state.worldLayers = L.layerGroup().addTo(state.map);
-    const grouped = buildWorldClusters(rows);
-    grouped.forEach((cluster)=>{ if ((cluster.rows || []).length <= 1) { const r = cluster.rows[0]; if (!r) return; const marker = L.marker([r.lat, r.lon], { icon:dotIcon }).addTo(state.worldLayers); marker.bindPopup(buildPopup(r)); state.markers.set(r.id, marker); state.mapMarkersIndex.set(r.id, marker); return; } const marker = L.marker([cluster.lat, cluster.lon], { icon:createWorldClusterIcon(cluster.rows.length) }).addTo(state.worldLayers); marker.on("click", ()=> zoomToWorldCluster(cluster)); marker.bindPopup(`<div class="world-popup"><strong>${cluster.rows.length} lugares agrupados</strong><small>Haz zoom para separar puntos</small></div>`); });
-  }
-  console.log("[world:map:clusters:render]", { total:rows.length, clustered:Boolean(state.worldClusterGroup) });
+  state.worldClusterGroup = L.markerClusterGroup({
+    showCoverageOnHover: false,
+    spiderfyOnMaxZoom: true,
+    disableClusteringAtZoom: 16,
+    maxClusterRadius: 55,
+    iconCreateFunction: (cluster) => createWorldClusterIcon(cluster.getChildCount())
+  });
+  rows.forEach((r) => {
+    const marker = L.marker([r.lat, r.lon], { icon:dotIcon });
+    marker.bindPopup(buildPopup(r));
+    state.worldClusterGroup.addLayer(marker);
+    state.markers.set(r.id, marker);
+    state.mapMarkersIndex.set(r.id, marker);
+  });
+  state.map.addLayer(state.worldClusterGroup);
+  console.log("[world:cluster:add]", rows.length);
+  logWorldClusterZoom();
 }
 function renderMap(){ if(!window.L) return; const host = $id("world-map"); if(!host) return; if(!state.map) state.map = createLeafletMap(host, { center:[state.userCenter.lat, state.userCenter.lon], zoom:5 }); renderWorldMarkers(); }
 function setWindow(mode){ state.activeWindow = mode; document.querySelectorAll("#view-world .world-tab").forEach((b)=>b.classList.toggle("active", b.dataset.window===mode)); document.querySelectorAll("#view-world [data-window-panel]").forEach((p)=>p.classList.toggle("active", p.dataset.windowPanel===mode)); invalidateLeafletMap(state.map, 60); }

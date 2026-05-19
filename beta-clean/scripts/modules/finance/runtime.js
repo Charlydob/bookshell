@@ -5067,7 +5067,6 @@ async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR')
     };
   }
   const draft = readProductsListDraftFromDom(root);
-  const hasLines = Object.keys(draft?.lines || {}).length > 0;
   const ticketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   draft.tickets = { ...(draft.tickets || {}) };
   draft.tickets[ticketId] = normalizeProductsListTicketMeta(ticketId, {
@@ -5084,7 +5083,7 @@ async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR')
   if (fx.approximate) setProductsReceiptError('Usando tasa aproximada');
   syncProductsDraftListLocal(draft);
   syncProductsTicketComposerDom(root);
-  if (!hasLines && code !== 'EUR') {
+  if (code !== 'EUR') {
     console.info('[finance:fx] converter:persist-empty-ticket', { ticketId, currency: code, exchangeRateFromEUR: Number(fx.fromEUR || 1), exchangeRateToEUR: Number(fx.toEUR || 1) });
   }
   console.info('[finance:fx] recalculated-ticket', { ticketId, currency: code });
@@ -5148,9 +5147,9 @@ function readProductsListDraftFromDom(root = document) {
       unit: normalizeProductUnit(rowEl.querySelector(`[data-products-line-unit="${lineId}"]`)?.value || baseList.lines?.[lineId]?.unit || 'ud'),
       estimatedPrice,
       actualPrice,
-      currency: ticketCurrency,
+      currency: String(baseList.lines?.[lineId]?.currency || ticketCurrency).toUpperCase(),
       priceOriginal: actualPrice,
-      priceEUR: normalizeMovementCurrencyPayload({ amount: actualPrice, currency: ticketCurrency, exchangeRateToEUR }).amountEUR,
+      priceEUR: normalizeMovementCurrencyPayload({ amount: actualPrice, currency: String(baseList.lines?.[lineId]?.currency || ticketCurrency).toUpperCase(), exchangeRateToEUR }).amountEUR,
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
       checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
       ticketId: lineTicketId,
@@ -5275,14 +5274,14 @@ async function updateReceiptLine(ticketId = '', lineId = '', patch = {}, options
   if (!currentLine) return null;
   const targetTicketId = String(ticketId || currentLine.ticketId || draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   const targetTicket = draft.tickets?.[targetTicketId] || {};
-  const targetCurrency = String(currentLine.currency || targetTicket.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const targetCurrency = String(targetTicket.ticketCurrency || currentLine.currency || getDefaultCurrency()).toUpperCase();
   const targetRateToEUR = Number(targetTicket.exchangeRateToEUR || getCurrencyRates()[targetCurrency] || 1);
   const nextLine = calculateLineTotals(normalizeReceiptLine({ ...currentLine, ...patch, ticketId: targetTicketId }, currentLine));
   const priceOriginal = Number(nextLine.actualPrice || 0);
   draft.lines[safeLineId] = {
     ...currentLine,
     ...nextLine,
-    currency: String(currentLine.currency || targetCurrency).toUpperCase(),
+    currency: targetCurrency,
     exchangeRateToEUR: targetRateToEUR,
     priceOriginal,
     priceEUR: Number(normalizeMovementCurrencyPayload({ amount: priceOriginal, currency: targetCurrency, exchangeRateToEUR: targetRateToEUR }).amountEUR || 0),
@@ -5519,11 +5518,19 @@ async function addProductToActiveProductsListFromReceipt(productId = '') {
   const addQty = Number(document.querySelector('[data-products-receipt-add-qty]')?.value || 1);
   const addUnit = Number(document.querySelector('[data-products-receipt-add-unit]')?.value || 0);
   if (addedLine?.id) {
+    const activeTicket = nextList.tickets?.[activeTicketId] || {};
+    const itemCurrency = String(activeTicket.ticketCurrency || 'EUR').toUpperCase();
+    const enteredPrice = Math.max(0, addUnit || nextList.lines[addedLine.id].actualPrice || nextList.lines[addedLine.id].estimatedPrice || 0);
+    const rateToEUR = Number(activeTicket.exchangeRateToEUR || getCurrencyRates()[itemCurrency] || 1);
     nextList.lines[addedLine.id] = {
       ...nextList.lines[addedLine.id],
       qty: Math.max(0.01, addQty || nextList.lines[addedLine.id].qty || 1),
-      actualPrice: Math.max(0, addUnit || nextList.lines[addedLine.id].actualPrice || nextList.lines[addedLine.id].estimatedPrice || 0),
-      estimatedPrice: Math.max(0, nextList.lines[addedLine.id].estimatedPrice || addUnit || 0),
+      actualPrice: enteredPrice,
+      estimatedPrice: Math.max(0, nextList.lines[addedLine.id].estimatedPrice || enteredPrice || 0),
+      currency: itemCurrency,
+      exchangeRateToEUR: rateToEUR,
+      priceOriginal: enteredPrice,
+      priceEUR: Number(normalizeMovementCurrencyPayload({ amount: enteredPrice, currency: itemCurrency, exchangeRateToEUR: rateToEUR }).amountEUR || 0),
       updatedAt: nowTs(),
     };
   }

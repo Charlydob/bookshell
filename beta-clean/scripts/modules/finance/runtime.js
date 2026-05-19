@@ -3901,6 +3901,7 @@ function renderProductsEditorPanel(model) {
 
 function renderProductsListPanel(model) {
   const activeList = model.activeList;
+  const ticketCurrency = String(model?.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
   return `
     <section class="productsWorkbench__panel productsWorkbench__panel--shopping" data-products-shopping-panel>
       <header class="productsWorkbench__panelHead">
@@ -3940,8 +3941,8 @@ function renderProductsListPanel(model) {
                 <input class="food-control" type="number" min="0" step="0.01" value="${Number(line.actualPrice || 0) || ''}" data-products-line-actual="${escapeHtml(line.id)}" />
               </label>
               <div class="productsWorkbench__lineTotals">
-                <span data-products-line-est-total="${escapeHtml(line.id)}">${fmtCurrency(line.estimatedSubtotal || 0)}</span>
-                <strong data-products-line-act-total="${escapeHtml(line.id)}">${fmtCurrency(line.actualSubtotal || 0)}</strong>
+                <span data-products-line-est-total="${escapeHtml(line.id)}">${fmtCurrencyCode(line.estimatedSubtotal || 0, line.currency || ticketCurrency || 'EUR')}</span>
+                <strong data-products-line-act-total="${escapeHtml(line.id)}">${fmtCurrencyCode(line.actualSubtotal || 0, line.currency || ticketCurrency || 'EUR')}</strong>
               </div>
               <button type="button" class="productsWorkbench__miniAction" data-products-remove-line="${escapeHtml(line.id)}" aria-label="Eliminar linea ${index + 1}">×</button>
             </div>
@@ -5168,6 +5169,7 @@ function syncProductsTicketComposerDom(root = document) {
   if (!formEl) return;
   const scope = formEl.closest('[data-products-workbench]') || root;
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || '').trim();
+  const ticketCurrency = String(scope.querySelector('[data-products-receipt-currency]')?.value || getDefaultCurrency()).toUpperCase();
   const lineTotals = [];
   const activeTicketLineTotals = [];
   formEl.querySelectorAll('[data-products-line-row]').forEach((rowEl) => {
@@ -5200,8 +5202,8 @@ function syncProductsTicketComposerDom(root = document) {
     const receiptDiff = root.querySelector(`[data-products-receipt-diff="${lineId}"]`);
     const quickQty = root.querySelector(`[data-products-quick-line-qty="${lineId}"]`);
     const lineDiffMeta = resolveProductsReceiptDiffMeta(actualSubtotal - estimatedSubtotal);
-    if (estimatedNode) estimatedNode.textContent = fmtCurrency(estimatedSubtotal);
-    if (actualNode) actualNode.textContent = fmtCurrency(actualSubtotal);
+    if (estimatedNode) estimatedNode.textContent = fmtCurrencyCode(estimatedSubtotal, line.currency || ticketCurrency || 'EUR');
+    if (actualNode) actualNode.textContent = fmtCurrencyCode(actualSubtotal, line.currency || ticketCurrency || 'EUR');
     if (receiptQty && document.activeElement !== receiptQty) receiptQty.value = String(qty);
     syncProductsMoneyFieldDisplay(receiptUnit, estimatedPrice);
     syncProductsMoneyFieldDisplay(receiptTotal, actualPrice);

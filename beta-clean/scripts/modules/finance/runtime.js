@@ -5022,10 +5022,11 @@ async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR')
     exchangeRateApproximate: !!fx.approximate,
     updatedAt: nowTs(),
   });
-  console.info('[finance:currency] ticket:update', { ticketId, currency: code, exchangeRateFromEUR: fx.fromEUR, exchangeRateToEUR: fx.toEUR });
+  console.info('[finance:fx] applied', { ticketId, currency: code, exchangeRateFromEUR: fx.fromEUR, exchangeRateToEUR: fx.toEUR, source: fx.source });
   if (fx.approximate) setProductsReceiptError('Usando tasa aproximada');
   syncProductsDraftListLocal(draft);
   syncProductsTicketComposerDom(root);
+  console.info('[finance:fx] recalculated-ticket', { ticketId, currency: code });
 }
 
 function readProductsListDraftFromDom(root = document) {
@@ -5048,8 +5049,12 @@ function readProductsListDraftFromDom(root = document) {
   const ticketCurrency = String(scope.querySelector('[data-products-receipt-currency]')?.value || nextList.tickets?.[activeTicketId]?.ticketCurrency || getDefaultCurrency()).toUpperCase();
   const converterEur = Number(scope.querySelector('[data-products-converter-eur]')?.value || 1);
   const converterForeign = Number(scope.querySelector('[data-products-converter-foreign]')?.value || 0);
-  const derivedFromEUR = ticketCurrency === 'EUR' ? 1 : ((converterForeign > 0 && converterEur > 0) ? (converterForeign / converterEur) : Number(nextList.tickets?.[activeTicketId]?.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(nextList.tickets?.[activeTicketId]?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1)))));
-  const exchangeRateFromEUR = ticketCurrency === 'EUR' ? 1 : Math.max(0.0000001, Number(derivedFromEUR || 1));
+  const derivedFromEUR = ticketCurrency === 'EUR'
+    ? 1
+    : ((converterForeign > 0 && converterEur > 0)
+      ? (converterForeign / converterEur)
+      : Number(nextList.tickets?.[activeTicketId]?.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(nextList.tickets?.[activeTicketId]?.exchangeRateToEUR || 0)))));
+  const exchangeRateFromEUR = ticketCurrency === 'EUR' ? 1 : Math.max(0.0000001, Number(derivedFromEUR || 0));
   const exchangeRateToEUR = ticketCurrency === 'EUR' ? 1 : Math.max(0.0000001, Number(1 / exchangeRateFromEUR));
   nextList.activeTicketId = activeTicketId;
   nextList.tickets = { ...(nextList.tickets || {}) };

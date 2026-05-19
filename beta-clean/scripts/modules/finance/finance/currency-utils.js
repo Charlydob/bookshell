@@ -19,7 +19,7 @@ export const SUPPORTED_CURRENCIES = Object.freeze([
   { code: 'DKK', symbol: 'kr', label: 'DKK kr Corona danesa' },
 ]);
 
-const RATE_KEY = 'financeCurrencyRates';
+const RATE_KEY = 'financeFxRates';
 const RATE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const BASE_RATES = Object.freeze({
   EUR: 1, PEN: 0.247, USD: 0.92, GBP: 1.17, CHF: 1.03, JPY: 0.0059, CNY: 0.127,
@@ -51,7 +51,7 @@ export async function resolveExchangeRateFromEUR(currency = DEFAULT_CURRENCY) {
   const cached = cache[code];
   const now = Date.now();
   if (cached && Number(cached.fromEUR) > 0 && (now - Number(cached.ts || 0)) < RATE_CACHE_TTL_MS) {
-    console.info('[finance:fx] cache:hit', { currency: code, fromEUR: Number(cached.fromEUR) });
+    console.info('[finance:fx] cache-hit', { currency: code, fromEUR: Number(cached.fromEUR) });
     return {
       fromEUR: Number(cached.fromEUR),
       toEUR: 1 / Number(cached.fromEUR),
@@ -60,10 +60,10 @@ export async function resolveExchangeRateFromEUR(currency = DEFAULT_CURRENCY) {
       approximate: !!cached.approximate,
     };
   }
-  console.info('[finance:fx] fetch:start', { currency: code });
+  console.info('[finance:fx] request', { currency: code });
   const endpoints = [
+    `https://api.frankfurter.app/latest?from=EUR&to=${encodeURIComponent(code)}`,
     `https://open.er-api.com/v6/latest/EUR`,
-    `https://api.frankfurter.app/latest?from=EUR`,
   ];
   for (const endpoint of endpoints) {
     try {
@@ -83,15 +83,16 @@ export async function resolveExchangeRateFromEUR(currency = DEFAULT_CURRENCY) {
           approximate: false,
         };
         writeRateCache({ ...cache, [code]: normalized });
-        console.info('[finance:fx] fetch:success', { currency: code, fromEUR, source });
+        console.info('[finance:fx] response', { currency: code, fromEUR, source });
         return { fromEUR, toEUR: 1 / fromEUR, updatedAt, source, approximate: false };
       }
     } catch (error) {
-      console.info('[finance:fx] fetch:error', { currency: code, endpoint, error: String(error?.message || error) });
+      console.info('[finance:fx] response', { currency: code, endpoint, error: String(error?.message || error) });
     }
   }
-  const fallbackFromEUR = Number(FX_FALLBACK_FROM_EUR[code] || BASE_RATES[code] || 1);
-  console.info('[finance:fx] fallback', { currency: code, fromEUR: fallbackFromEUR });
+  const fallbackFromEUR = Number(FX_FALLBACK_FROM_EUR[code] || BASE_RATES[code]);
+  if (!(fallbackFromEUR > 0)) throw new Error(`fx-rate-unavailable:${code}`);
+  console.info('[finance:fx] fallback-used', { currency: code, fromEUR: fallbackFromEUR });
   return {
     fromEUR: fallbackFromEUR,
     toEUR: 1 / fallbackFromEUR,

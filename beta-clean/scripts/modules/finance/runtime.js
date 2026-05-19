@@ -2202,6 +2202,7 @@ function cloneProductsListRecord(list = {}) {
 function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
   const safeId = String(ticketId || payload?.id || createFinanceRecordId('lticket')).trim();
   const ticketCurrency = String(payload?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const ticketCountry = String(payload?.ticketCountry || payload?.country || '').trim();
   const exchangeRateToEUR = Number(payload?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
   const exchangeRateFromEUR = ticketCurrency === 'EUR' ? 1 : (Number(payload?.exchangeRateFromEUR || (1 / Math.max(0.0000001, exchangeRateToEUR))) || 1);
   return {
@@ -2216,6 +2217,7 @@ function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
     confirmedAt: normalizeProductNumber(payload?.confirmedAt, 0),
     accountedTxId: normalizeProductText(payload?.accountedTxId || ''),
     ticketCurrency,
+    ticketCountry,
     exchangeRateToEUR: Number.isFinite(exchangeRateToEUR) && exchangeRateToEUR > 0 ? exchangeRateToEUR : 1,
     exchangeRateFromEUR: Number.isFinite(exchangeRateFromEUR) && exchangeRateFromEUR > 0 ? exchangeRateFromEUR : 1,
     confirmedTicketId: normalizeProductText(payload?.confirmedTicketId || ''),
@@ -4065,6 +4067,20 @@ function renderProductsTicketHero(model, options = {}) {
   `;
 }
 
+function renderProductsTicketHeroSafe(model, options = {}) {
+  try {
+    return renderProductsTicketHero(model, options);
+  } catch (error) {
+    console.error('[finance:boot] receipt-safe-render-error', error);
+    return `
+      <section class="productsWorkbench__ticketHero" data-products-ticket-hero>
+        ${options.showSubviewSwitch === false ? '' : renderProductsSubviewSwitch(model)}
+        <p class="productsWorkbench__emptyMini is-negative">El ticket no se pudo renderizar, pero Finanzas sigue operativa.</p>
+      </section>
+    `;
+  }
+}
+
 function renderProductsTicketRegistry(model) {
   const groupedTickets = model.recentTickets.reduce((acc, ticket) => {
     const ticketDateTs = Number(ticket.confirmedAt || 0) || parseDayKey(ticket.dateISO || '');
@@ -4208,7 +4224,7 @@ function renderFinanceTicketPreview() {
     </div>
     <div class="financeTicketPreview">
       <div class="financeProductsView productsWorkbench productsWorkbench--homePreview" data-products-workbench data-products-home-preview="true" data-products-active-tab="list">
-        ${renderProductsTicketHero({ ...model, tickets: orderedTickets }, {
+        ${renderProductsTicketHeroSafe({ ...model, tickets: orderedTickets }, {
           embedded: true,
           containerId: 'finance-ticket-preview',
           showSubviewSwitch: false,
@@ -4338,7 +4354,7 @@ function renderProductsView(isModal = false) {
   const activeTab = model.cfg.tab === 'catalog' ? 'catalog' : 'list';
   const content = `
     <div class="financeProductsView productsWorkbench" data-products-workbench data-products-active-tab="${escapeHtml(activeTab)}">
-      ${renderProductsTicketHero(model)}
+      ${renderProductsTicketHeroSafe(model)}
       <div class="productsWorkbench__subview" data-products-subview="list" ${activeTab === 'list' ? '' : 'hidden'}>
       ${renderProductsListPanel(model)}
       </div>
@@ -4446,7 +4462,7 @@ function patchProductsTicketHero(model = null) {
   const current = root?.querySelector?.('[data-products-ticket-hero]');
   if (!current) return false;
   const nextModel = model || buildCurrentProductsModel();
-  current.replaceWith(createProductsNode(renderProductsTicketHero(nextModel)));
+  current.replaceWith(createProductsNode(renderProductsTicketHeroSafe(nextModel)));
   return true;
 }
 
@@ -6618,6 +6634,10 @@ function normalizeProductsHubLineMap(lines = {}) {
   return sourceEntries.reduce((acc, [lineId, line]) => {
     const safeId = String(lineId || line?.id || createFinanceRecordId('line')).trim();
     const payload = line && typeof line === 'object' ? line : {};
+    const itemCurrency = String(payload?.currency || payload?.ticketCurrency || 'EUR').toUpperCase();
+    const priceOriginal = normalizeProductPositiveNumber(payload?.priceOriginal ?? payload?.actualPrice ?? payload?.finalPrice ?? payload?.estimatedPrice ?? payload?.unitPrice ?? payload?.price, 0);
+    const exchangeRateToEUR = Number(payload?.exchangeRateToEUR || getCurrencyRates()[itemCurrency] || 1);
+    const priceEUR = normalizeProductPositiveNumber(payload?.priceEUR ?? payload?.convertedAmountEUR ?? normalizeMovementCurrencyPayload({ amount: priceOriginal, currency: itemCurrency, exchangeRateToEUR }).amountEUR, 0);
     const name = normalizeFoodName(payload?.name || payload?.productName || '');
     acc[safeId] = {
       id: safeId,
@@ -6627,9 +6647,10 @@ function normalizeProductsHubLineMap(lines = {}) {
       unit: normalizeProductUnit(payload?.unit || 'ud'),
       estimatedPrice: normalizeProductPositiveNumber(payload?.estimatedPrice ?? payload?.plannedPrice ?? payload?.unitPrice ?? payload?.price, 0),
       actualPrice: normalizeProductPositiveNumber(payload?.actualPrice ?? payload?.finalPrice ?? payload?.estimatedPrice ?? payload?.unitPrice ?? payload?.price, 0),
-      currency: String(payload?.currency || 'EUR').toUpperCase(),
-      priceOriginal: normalizeProductPositiveNumber(payload?.priceOriginal ?? payload?.actualPrice ?? payload?.finalPrice ?? payload?.estimatedPrice ?? payload?.unitPrice ?? payload?.price, 0),
-      priceEUR: normalizeProductPositiveNumber(payload?.priceEUR ?? payload?.convertedAmountEUR ?? payload?.actualPrice ?? payload?.finalPrice ?? payload?.estimatedPrice ?? payload?.unitPrice ?? payload?.price, 0),
+      currency: itemCurrency,
+      priceOriginal,
+      priceEUR,
+      exchangeRateToEUR: Number.isFinite(exchangeRateToEUR) && exchangeRateToEUR > 0 ? exchangeRateToEUR : 1,
       store: normalizeFoodName(payload?.store || payload?.place || ''),
       checked: payload?.checked !== false,
       ticketId: String(payload?.ticketId || '').trim(),
@@ -16544,6 +16565,7 @@ function bootFinance() {
 
 export async function init() {
   const financeStart = performance.now();
+  console.info('[finance:boot] start');
   await ensureFinanceLoaded();
   await boot();
   if (!state.booted && auth?.currentUser == null) {
@@ -16560,6 +16582,7 @@ export async function init() {
     state.firstInitDone = true;
     console.log('[perf] finance-first-open-ms', Math.round(performance.now() - financeStart));
   }
+  console.info('[finance:boot] ready');
   console.log('[perf] listeners view-finance', getFinanceListenerCount());
 }
 

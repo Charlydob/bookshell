@@ -3447,8 +3447,8 @@ function renderProductsReceiptLineRow(line, model) {
   const lineCurrency = String(line?.currency || ticketCurrency).toUpperCase();
   const lineRate = Number(line?.exchangeRateToEUR || model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
   const lineTotalOriginal = Number(line?.priceOriginal ?? normalized.actualPrice ?? 0);
-  const lineTotalEUR = Number(Number(lineTotalOriginal || 0) * Math.max(0.0000001, Number(lineRate || 1)));
-  console.info('[finance:currency] item-price-eur', { itemId: lineId, item: line?.name || '', original: lineTotalOriginal, currency: ticketCurrency, exchangeRateToEUR: lineRate, eur: lineTotalEUR });
+  const lineTotalEUR = Number(line?.priceEUR ?? (Number(lineTotalOriginal || 0) * Math.max(0.0000001, Number(lineRate || 1))));
+  console.info('[finance:currency] item-price-eur', { itemId: lineId, item: line?.name || '', original: lineTotalOriginal, currency: lineCurrency, exchangeRateToEUR: lineRate, eur: lineTotalEUR });
   const lineDiffMeta = resolveProductsReceiptDiffMeta(normalized.diffSubtotal);
   return `
     <div class="productsWorkbench__receiptRow ${isSelected ? 'is-selected' : ''}" data-products-receipt-row="${escapeHtml(lineId)}">
@@ -3480,7 +3480,7 @@ function renderProductsReceiptLineRow(line, model) {
         class="productsWorkbench__receiptUnit food-control"
         type="text"
         inputmode="decimal"
-        value="${escapeHtml(fmtCurrency(normalized.estimatedPrice || 0))}"
+        value="${escapeHtml(fmtCurrencyCode(normalized.estimatedPrice || 0, lineCurrency))}"
         aria-label="Precio previsto de ${escapeHtml(line.name || 'producto')}"
         data-money-last-valid="${escapeHtml(String(Number(normalized.estimatedPrice || 0).toFixed(2)))}"
         data-products-receipt-unit="${escapeHtml(lineId)}" />
@@ -5218,7 +5218,12 @@ function syncProductsTicketComposerDom(root = document) {
   const addQty = root.querySelector('[data-products-receipt-add-qty]');
   const addUnit = root.querySelector('[data-products-receipt-add-unit]');
   const addTotal = root.querySelector('[data-products-receipt-add-total]');
-  if (addTotal) addTotal.textContent = fmtCurrency(Math.max(0, Number(addQty?.value || 1)) * Math.max(0, Number(addUnit?.value || 0)));
+  if (addTotal) {
+    const draft = ensureProductsListTickets(readProductsListDraftFromDom(root));
+    const activeTicketId = String(draft?.activeTicketId || draft?.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+    const ticketCurrency = String(draft?.tickets?.[activeTicketId]?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+    addTotal.textContent = fmtCurrencyCode(Math.max(0, Number(addQty?.value || 1)) * Math.max(0, Number(addUnit?.value || 0)), ticketCurrency);
+  }
   const storeSelect = scope.querySelector('[name="store"]');
   const storeValue = String((storeSelect?.value === '__new__' ? scope.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || 'Supermercado').trim() || 'Supermercado';
   const accountSelect = scope.querySelector('[name="accountId"]');
@@ -5234,9 +5239,12 @@ function syncProductsTicketComposerDom(root = document) {
   if (receiptStore && document.activeElement !== receiptStore && storeValue && receiptStore.value !== storeValue) receiptStore.value = storeValue;
   if (receiptPayment && document.activeElement !== receiptPayment && receiptPayment.value !== accountId) receiptPayment.value = accountId;
   if (receiptDate && document.activeElement !== receiptDate && !receiptDate.value) receiptDate.value = dayKeyFromTs(nowTs());
-  if (listTotal) listTotal.textContent = fmtCurrency(activeTicketTotals.estimatedTotal);
-  if (ticketTotal) ticketTotal.textContent = fmtCurrency(receiptTotals.actualTotal);
-  if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrency(activeTicketTotals.actualTotal);
+  const draftCurrency = ensureProductsListTickets(readProductsListDraftFromDom(root));
+  const activeDraftTicketId = String(draftCurrency?.activeTicketId || draftCurrency?.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  const activeTicketCurrency = String(draftCurrency?.tickets?.[activeDraftTicketId]?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  if (listTotal) listTotal.textContent = fmtCurrencyCode(activeTicketTotals.estimatedTotal, activeTicketCurrency);
+  if (ticketTotal) ticketTotal.textContent = fmtCurrencyCode(receiptTotals.actualTotal, activeTicketCurrency);
+  if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrencyCode(activeTicketTotals.actualTotal, activeTicketCurrency);
   if (ticketDiffRow) {
     const diffMeta = resolveProductsReceiptDiffMeta(activeTicketTotals.diffTotal);
     if (ticketDiff) ticketDiff.textContent = diffMeta.label;
@@ -5265,14 +5273,14 @@ async function updateReceiptLine(ticketId = '', lineId = '', patch = {}, options
   if (!currentLine) return null;
   const targetTicketId = String(ticketId || currentLine.ticketId || draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   const targetTicket = draft.tickets?.[targetTicketId] || {};
-  const targetCurrency = String(targetTicket.ticketCurrency || currentLine.currency || getDefaultCurrency()).toUpperCase();
+  const targetCurrency = String(currentLine.currency || targetTicket.ticketCurrency || getDefaultCurrency()).toUpperCase();
   const targetRateToEUR = Number(targetTicket.exchangeRateToEUR || getCurrencyRates()[targetCurrency] || 1);
   const nextLine = calculateLineTotals(normalizeReceiptLine({ ...currentLine, ...patch, ticketId: targetTicketId }, currentLine));
   const priceOriginal = Number(nextLine.actualPrice || 0);
   draft.lines[safeLineId] = {
     ...currentLine,
     ...nextLine,
-    currency: targetCurrency,
+    currency: String(currentLine.currency || targetCurrency).toUpperCase(),
     exchangeRateToEUR: targetRateToEUR,
     priceOriginal,
     priceEUR: Number(normalizeMovementCurrencyPayload({ amount: priceOriginal, currency: targetCurrency, exchangeRateToEUR: targetRateToEUR }).amountEUR || 0),

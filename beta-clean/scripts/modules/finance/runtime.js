@@ -4128,7 +4128,7 @@ const ticketDeleteHint = ticket.txId
                     const lineCurrency = String(line.currency || historyCurrency).toUpperCase();
                     const lineOriginal = Number(line.priceOriginal ?? line.actualPrice ?? line.estimatedPrice ?? 0);
                     const lineRateToEUR = Number(line.exchangeRateToEUR || historyRateToEUR || 1);
-                    const lineEUR = Number(line.priceEUR ?? normalizeMovementCurrencyPayload({ amount: lineOriginal, currency: lineCurrency, exchangeRateToEUR: lineRateToEUR }).amountEUR || 0);
+                    const lineEUR = Number((line.priceEUR ?? normalizeMovementCurrencyPayload({ amount: lineOriginal, currency: lineCurrency, exchangeRateToEUR: lineRateToEUR }).amountEUR) || 0);
                     return `
                     <div class="productsWorkbench__ticketRegistryLine">
                       <span>${Math.max(0.01, Number(line.qty || 1))} × ${escapeHtml(line.name || 'Producto')}</span>

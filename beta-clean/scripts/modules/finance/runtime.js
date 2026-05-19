@@ -2211,6 +2211,8 @@ function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
     accountId: normalizeProductText(payload?.accountId || ''),
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
     ticketCategoryId: normalizeProductText(payload?.ticketCategoryId || ''),
+    ticketCountry: normalizeProductText(payload?.ticketCountry || ''),
+    ticketCountryCode: normalizeProductText(payload?.ticketCountryCode || '').toUpperCase(),
     plannedFor: toIsoDay(String(payload?.plannedFor || '')) || dayKeyFromTs(nowTs()),
     notes: normalizeProductText(payload?.notes || ''),
     confirmedAt: normalizeProductNumber(payload?.confirmedAt, 0),
@@ -3442,10 +3444,11 @@ function renderProductsReceiptLineRow(line, model) {
   const isSelected = !!selection[lineId];
   const normalized = calculateLineTotals(line);
   const ticketCurrency = String(model?.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
-  const lineRate = Number(model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
+  const lineCurrency = String(line?.currency || ticketCurrency).toUpperCase();
+  const lineRate = Number(line?.exchangeRateToEUR || model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
   const lineTotalOriginal = Number(line?.priceOriginal ?? normalized.actualPrice ?? 0);
   const lineTotalEUR = Number(Number(lineTotalOriginal || 0) * Math.max(0.0000001, Number(lineRate || 1)));
-  console.info('[finance:currency] item-price-eur', { itemId: lineId, item: line?.name || '', original: lineTotalOriginal, currency: ticketCurrency, exchangeRateToEUR: lineRate, eur: lineTotalEUR });
+  console.info('[finance:currency] item-render-currency', { itemId: lineId, item: line?.name || '', currency: lineCurrency, ticketCurrency, exchangeRateToEUR: lineRate });
   const lineDiffMeta = resolveProductsReceiptDiffMeta(normalized.diffSubtotal);
   return `
     <div class="productsWorkbench__receiptRow ${isSelected ? 'is-selected' : ''}" data-products-receipt-row="${escapeHtml(lineId)}">
@@ -3486,12 +3489,12 @@ function renderProductsReceiptLineRow(line, model) {
           class="productsWorkbench__receiptTotal food-control"
           type="text"
           inputmode="decimal"
-          value="${escapeHtml(fmtCurrencyCode(lineTotalOriginal || 0, ticketCurrency))}"
+          value="${escapeHtml(fmtCurrencyCode(lineTotalOriginal || 0, lineCurrency))}"
           aria-label="Precio real de ${escapeHtml(line.name || 'producto')}"
           data-money-last-valid="${escapeHtml(String(Number(normalized.actualPrice || 0).toFixed(2)))}"
           data-products-receipt-total="${escapeHtml(lineId)}" />
         <small class="productsWorkbench__receiptLineDiff is-${lineDiffMeta.tone}" data-products-receipt-diff="${escapeHtml(lineId)}">${lineDiffMeta.label}</small>
-        ${ticketCurrency !== 'EUR' ? `<small class="productsWorkbench__receiptLineDiff">≈ ${fmtCurrency(lineTotalEUR)}</small>` : ''}
+        ${lineCurrency !== 'EUR' ? `<small class="productsWorkbench__receiptLineDiff">≈ ${fmtCurrency(lineTotalEUR)}</small>` : ''}
       </div>
       <button type="button" class="productsWorkbench__receiptRemove" data-products-remove-line="${escapeHtml(lineId)}" aria-label="Eliminar ${escapeHtml(line.name || 'linea')}">❌</button>
     </div>
@@ -4010,7 +4013,7 @@ function renderProductsTicketHero(model, options = {}) {
           </div>
           <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--date" type="date" name="plannedFor" value="${escapeHtml(plannedFor)}" data-products-receipt-date aria-label="Fecha del ticket" />
           <select class="food-control productsWorkbench__receiptMetaControl" data-products-receipt-currency aria-label="Moneda ticket">
-            ${SUPPORTED_CURRENCIES.map((row) => `<option value="${row.code}" ${ticketCurrency === row.code ? 'selected' : ''}>${escapeHtml(row.label)}</option>`).join('')}
+            ${SUPPORTED_CURRENCIES.map((row) => `<option value="${row.code}" title="${escapeHtml(row.label)}" ${ticketCurrency === row.code ? 'selected' : ''}>${escapeHtml(`${row.code} ${row.symbol || ''}`.trim())}</option>`).join('')}
           </select>
           ${ticketCurrency !== 'EUR' ? `
             <div class="productsWorkbench__receiptMetaHint">
@@ -4021,6 +4024,11 @@ function renderProductsTicketHero(model, options = {}) {
               <button type="button" class="productsWorkbench__miniAction" data-products-converter-reset aria-label="Reset conversor">↺</button>
             </div>
           ` : ''}
+          <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--country" type="text" list="products-country-suggest" value="${escapeHtml(ticketCountry)}" placeholder="País" data-products-ticket-country aria-label="País del ticket" />
+          <datalist id="products-country-suggest">
+            <option value="Perú"></option><option value="España"></option><option value="México"></option><option value="Colombia"></option><option value="Argentina"></option>
+          </datalist>
+          ${ticketCountry ? `<small class="productsWorkbench__receiptCountryHint">País: ${escapeHtml(ticketCountry)}</small>` : ''}
         </header>
         <div class="productsWorkbench__receiptLines">
           ${model.listLines.map((line) => renderProductsReceiptLineRow(line, model)).join('')}
@@ -5075,6 +5083,7 @@ function readProductsListDraftFromDom(root = document) {
   nextList.accountId = String(scope.querySelector('[name="accountId"]')?.value || nextList.accountId || '').trim();
   nextList.paymentMethod = normalizeProductText(scope.querySelector('[name="paymentMethod"]')?.value || nextList.paymentMethod || 'Tarjeta') || 'Tarjeta';
   nextList.ticketCategoryId = String(scope.querySelector('[name="ticketCategoryId"]')?.value || nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '').trim();
+  nextList.ticketCountry = normalizeProductText(scope.querySelector('[data-products-ticket-country]')?.value || nextList.ticketCountry || '');
   nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   const ticketCurrency = String(scope.querySelector('[data-products-receipt-currency]')?.value || nextList.tickets?.[activeTicketId]?.ticketCurrency || getDefaultCurrency()).toUpperCase();
@@ -5092,6 +5101,8 @@ function readProductsListDraftFromDom(root = document) {
     accountId: nextList.accountId,
     paymentMethod: nextList.paymentMethod,
     ticketCategoryId: nextList.ticketCategoryId,
+    ticketCountry: nextList.ticketCountry,
+    ticketCountryCode: String(nextList.ticketCountry || '').trim().toLowerCase() === 'perú' || String(nextList.ticketCountry || '').trim().toLowerCase() === 'peru' ? 'PE' : String(nextList.tickets?.[activeTicketId]?.ticketCountryCode || '').toUpperCase(),
     ticketCurrency,
     exchangeRateToEUR,
     exchangeRateFromEUR,
@@ -5118,9 +5129,9 @@ function readProductsListDraftFromDom(root = document) {
       unit: normalizeProductUnit(rowEl.querySelector(`[data-products-line-unit="${lineId}"]`)?.value || baseList.lines?.[lineId]?.unit || 'ud'),
       estimatedPrice,
       actualPrice,
-      currency: ticketCurrency,
-      priceOriginal: actualPrice,
-      priceEUR: normalizeMovementCurrencyPayload({ amount: actualPrice, currency: ticketCurrency, exchangeRateToEUR }).amountEUR,
+      currency: String(baseLine.currency || ticketCurrency).toUpperCase(),
+      priceOriginal: Math.max(0, normalizeProductPositiveNumber(baseLine.priceOriginal, actualPrice)),
+      priceEUR: Math.max(0, normalizeProductPositiveNumber(baseLine.priceEUR, normalizeMovementCurrencyPayload({ amount: actualPrice, currency: String(baseLine.currency || ticketCurrency).toUpperCase(), exchangeRateToEUR }).amountEUR)),
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
       checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
       ticketId: lineTicketId,
@@ -15553,14 +15564,14 @@ view.addEventListener('focusout', async (event) => {
       const foreignInput = view.querySelector('[data-products-converter-foreign]');
       if (eurInput) eurInput.value = '1.00';
       if (foreignInput) foreignInput.value = Number(rateFromEUR).toFixed(2);
-      console.info('[finance:currency] converter-reset', { currency, eur: 1, foreign: rateFromEUR });
+      console.info('[finance:fx] converter-reset', { currency, eur: 1, foreign: rateFromEUR });
       return;
     }
     if (event.target.matches('[data-products-receipt-select]')) {
       toggleReceiptLineSelection(event.target.dataset.productsReceiptSelect, event.target.checked);
       return;
     }
-    if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment], [data-products-ticket-category], [data-products-receipt-currency]')) {
+    if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment], [data-products-ticket-category], [data-products-receipt-currency], [data-products-ticket-country]')) {
       if (event.target.matches('[data-products-receipt-currency]')) {
         const currency = String(event.target.value || '').toUpperCase();
         console.info('[finance:currency] selected', { currency });
@@ -15570,6 +15581,9 @@ view.addEventListener('focusout', async (event) => {
         return;
       }
       if (state.productsReceiptError) setProductsReceiptError('');
+      if (event.target.matches('[data-products-ticket-country]')) {
+        console.info('[finance:country] ticket:update', { country: normalizeProductText(event.target.value || '') });
+      }
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;
@@ -16612,3 +16626,4 @@ function getFinanceListenerCount() {
 document.addEventListener('click', (event) => {
   console.log('🟡 CLICK GLOBAL:', event.target);
 }, true);
+  const ticketCountry = normalizeProductText(model.activeTicket?.ticketCountry || '');

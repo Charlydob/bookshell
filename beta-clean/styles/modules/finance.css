@@ -5438,6 +5438,17 @@ margin-bottom: 50px;
   font: inherit;
   letter-spacing: 0;
   padding: 2px 4px;
+  font-size: 12px;
+}
+.financeTab .productsWorkbench__receiptMetaControl[data-products-receipt-currency]{ min-width: 88px; }
+.financeTab .productsWorkbench__receiptMetaControl--fx{ width: 64px; max-width: 64px; text-align: right; }
+.financeTab .productsWorkbench__receiptMetaHint{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .financeTab .productsWorkbench__receiptMetaControl:hover{

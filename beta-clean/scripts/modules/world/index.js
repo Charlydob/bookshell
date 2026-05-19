@@ -12,7 +12,7 @@ const hav = (a, b, c, d) => { const R = 6371000; const to = (x) => x * Math.PI /
 const countryNameToIso = new Intl.DisplayNames(["en"], { type:"region" });
 const WORLD_LOCATION_PERMISSION_KEY = "worldLocationPermissionAccepted";
 
-const state = { initialized:false, unsub:null, rootRef:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add" };
+const state = { initialized:false, unsub:null, rootRef:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), worldLayers:null, worldClusterGroup:null, geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add" };
 
 const normalize = (r = {}, kind = "geography") => ({ id:r.id || id(), kind, name:String(r.name || r.placeName || "").trim(), label:String(r.label || r.displayName || r.name || "").trim(), country:String(r.country || "").trim(), countryCode:String(r.countryCode || r.country_code || "").trim().toUpperCase(), city:String(r.city || "").trim(), region:String(r.region || r.subdivision || "").trim(), postalCode:String(r.postalCode || "").trim(), address:String(r.address || "").trim(), category:String(r.category || r.type || "").trim(), emoji:String(r.emoji || (kind === "places" ? "🏪" : "📍")).trim(), note:String(r.note || "").trim(), productName:String(r.productName || "").trim(), price:Number.isFinite(Number(r.price)) ? Number(r.price) : null, currency:String(r.currency || "EUR").trim().toUpperCase(), rating:Number.isFinite(Number(r.rating)) ? Number(r.rating) : null, lat:Number(r.lat), lon:Number(r.lon), createdAt:Number(r.createdAt || Date.now()), updatedAt:Date.now() });
 const toTitleCase = (s = "") => String(s || "").trim().toLowerCase().replace(/\b\p{L}/gu, (m) => m.toUpperCase());
@@ -90,10 +90,58 @@ function renderPlaceResults(){ const root = $id("world-place-results"); root.inn
 function buildPopup(rec){ return `<div class="world-popup"><strong>${rec.emoji || "📍"} ${rec.name || rec.city || "Punto"}</strong><small>${rec.label || ""}</small><small>${flag(rec.countryCode)} ${rec.country || getCountryEnglishName(rec.countryCode) || ""}</small><small>${stars10(rec.rating || 0)} ${(rec.rating ?? 0).toFixed(1)}/10</small><div class="world-popup-actions"><button data-world-center="${rec.id}">Centrar</button><button data-world-edit="${rec.kind}:${rec.id}">Editar</button><button data-world-delete="${rec.kind}:${rec.id}">Eliminar</button>${rec.kind === "places" ? `<button data-world-rate="${rec.kind}:${rec.id}">Rating +1</button>` : ""}</div></div>`; }
 function renderMiniMapMarkers(){ if (!state.miniMap || !window.L) return; state.miniMarkers.forEach((m)=>m.remove()); state.miniMarkers = []; const L = window.L; state.placeResults.forEach((r, i) => { if (!Number.isFinite(r.lat) || !Number.isFinite(r.lon)) return; const marker = L.circleMarker([r.lat, r.lon], { radius:7, fillOpacity:0.9, color:"#fff", fillColor:state.selectedPlaceIndex===i?"#ff8a65":"#5ec7ff", weight:2 }).addTo(state.miniMap); marker.on("click", ()=>{ pickPlace(i); state.miniMap.setView([r.lat, r.lon], 17); }); state.miniMarkers.push(marker); }); }
 function createWorldClusterIcon(count = 0) { const L = window.L; const safeCount = Math.max(1, Number(count || 0)); return L.divIcon({ className:"notes-map-cluster-icon", html:`<span class="notes-map-cluster${safeCount >= 10 ? " is-large" : ""}"><span class="notes-map-cluster-count">${safeCount}</span></span>`, iconSize:safeCount >= 10 ? [38,38] : [34,34], iconAnchor:safeCount >= 10 ? [19,19] : [17,17] }); }
+function destroyWorldMapLayers(){
+  if (!state.map) return;
+  if (state.worldClusterGroup) {
+    state.worldClusterGroup.clearLayers?.();
+    state.map.removeLayer(state.worldClusterGroup);
+    state.worldClusterGroup = null;
+  }
+  if (state.worldLayers) {
+    state.worldLayers.clearLayers?.();
+    state.map.removeLayer(state.worldLayers);
+    state.worldLayers = null;
+  }
+  state.markers.forEach((m)=>m.remove?.());
+  state.markers.clear();
+  state.mapMarkersIndex.clear();
+}
+function createGoogleMapsUrl(lat, lon){
+  if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) return "";
+  return `https://www.google.com/maps/search/?api=1&query=${Number(lat)},${Number(lon)}`;
+}
 function buildWorldClusters(rows = []) { if (!state.map) return []; const zoom = Number(state.map.getZoom?.() || 5); const cellSize = zoom >= 11 ? 34 : zoom >= 9 ? 42 : 54; const groups = new Map(); rows.forEach((r) => { const projected = state.map.project([r.lat, r.lon], zoom); const key = `${Math.floor(projected.x / cellSize)}:${Math.floor(projected.y / cellSize)}`; const group = groups.get(key) || { rows:[], latSum:0, lonSum:0, coordKeys:new Set() }; group.rows.push(r); group.latSum += Number(r.lat); group.lonSum += Number(r.lon); group.coordKeys.add(`${Number(r.lat).toFixed(6)},${Number(r.lon).toFixed(6)}`); groups.set(key, group); }); return Array.from(groups.values()).map((g) => ({ rows:g.rows, lat:g.latSum / Math.max(1, g.rows.length), lon:g.lonSum / Math.max(1, g.rows.length), coordCount:g.coordKeys.size })); }
 function zoomToWorldCluster(cluster = {}) { const L = window.L; const points = (cluster.rows || []).map((item) => [item.lat, item.lon]); if (!points.length) return; const currentZoom = Number(state.map?.getZoom?.() || 0); if ((cluster.coordCount || 0) <= 1 || points.length <= 1) { if (currentZoom >= 14) return; state.map.setView(points[0], Math.min(16, Math.max(currentZoom + 2, 12))); return; } const bounds = L.latLngBounds(points); state.map.fitBounds(bounds, { padding:[40,40], maxZoom:Math.max(currentZoom + 2, 14) }); }
 
-function renderMap(){ if(!window.L) return; const host = $id("world-map"); if(!host) return; if(!state.map) state.map = createLeafletMap(host, { center:[state.userCenter.lat, state.userCenter.lon], zoom:5 }); state.markers.forEach((m)=>m.remove()); state.markers.clear(); state.mapMarkersIndex.clear(); const L = window.L; const dotIcon = L.divIcon({ className:"notes-map-dot-icon", html:'<span class="notes-map-dot" aria-hidden="true"></span>', iconSize:[12,12], iconAnchor:[6,6] }); const grouped = buildWorldClusters([...state.geography, ...state.places].filter((r)=>Number.isFinite(r.lat)&&Number.isFinite(r.lon))); grouped.forEach((cluster)=>{ if ((cluster.rows || []).length <= 1) { const r = cluster.rows[0]; if (!r) return; const marker = L.marker([r.lat, r.lon], { icon:dotIcon }).addTo(state.map); marker.bindPopup(buildPopup(r)); state.markers.set(r.id, marker); state.mapMarkersIndex.set(r.id, marker); return; } const marker = L.marker([cluster.lat, cluster.lon], { icon:createWorldClusterIcon(cluster.rows.length) }).addTo(state.map); marker.on("click", ()=> zoomToWorldCluster(cluster)); marker.bindPopup(`<div class="world-popup"><strong>${cluster.rows.length} lugares agrupados</strong><small>Haz zoom para separar puntos</small></div>`); }); }
+function renderWorldMarkers(){
+  if(!window.L || !state.map) return;
+  destroyWorldMapLayers();
+  const L = window.L;
+  const rows = [...state.geography, ...state.places].filter((r)=>Number.isFinite(r.lat)&&Number.isFinite(r.lon));
+  const dotIcon = L.divIcon({ className:"notes-map-dot-icon", html:'<span class="notes-map-dot" aria-hidden="true"></span>', iconSize:[12,12], iconAnchor:[6,6] });
+  if (typeof L.markerClusterGroup === "function") {
+    state.worldClusterGroup = L.markerClusterGroup({
+      removeOutsideVisibleBounds:true,
+      showCoverageOnHover:false,
+      spiderfyOnMaxZoom:true,
+      iconCreateFunction: (cluster) => createWorldClusterIcon(cluster.getChildCount())
+    });
+    rows.forEach((r) => {
+      const marker = L.marker([r.lat, r.lon], { icon:dotIcon });
+      marker.bindPopup(buildPopup(r));
+      state.worldClusterGroup.addLayer(marker);
+      state.markers.set(r.id, marker);
+      state.mapMarkersIndex.set(r.id, marker);
+    });
+    state.map.addLayer(state.worldClusterGroup);
+  } else {
+    state.worldLayers = L.layerGroup().addTo(state.map);
+    const grouped = buildWorldClusters(rows);
+    grouped.forEach((cluster)=>{ if ((cluster.rows || []).length <= 1) { const r = cluster.rows[0]; if (!r) return; const marker = L.marker([r.lat, r.lon], { icon:dotIcon }).addTo(state.worldLayers); marker.bindPopup(buildPopup(r)); state.markers.set(r.id, marker); state.mapMarkersIndex.set(r.id, marker); return; } const marker = L.marker([cluster.lat, cluster.lon], { icon:createWorldClusterIcon(cluster.rows.length) }).addTo(state.worldLayers); marker.on("click", ()=> zoomToWorldCluster(cluster)); marker.bindPopup(`<div class="world-popup"><strong>${cluster.rows.length} lugares agrupados</strong><small>Haz zoom para separar puntos</small></div>`); });
+  }
+  console.log("[world:map:clusters:render]", { total:rows.length, clustered:Boolean(state.worldClusterGroup) });
+}
+function renderMap(){ if(!window.L) return; const host = $id("world-map"); if(!host) return; if(!state.map) state.map = createLeafletMap(host, { center:[state.userCenter.lat, state.userCenter.lon], zoom:5 }); renderWorldMarkers(); }
 function setWindow(mode){ state.activeWindow = mode; document.querySelectorAll("#view-world .world-tab").forEach((b)=>b.classList.toggle("active", b.dataset.window===mode)); document.querySelectorAll("#view-world [data-window-panel]").forEach((p)=>p.classList.toggle("active", p.dataset.windowPanel===mode)); invalidateLeafletMap(state.map, 60); }
 
 function renderGeoList(){
@@ -105,7 +153,8 @@ function renderGeoList(){
   }).join("");
   $id("world-country-list").innerHTML = html || "<div>Sin lugares geográficos.</div>";
 }
-function renderLocals(){ const rows=state.places; const mode = $id("world-locals-group")?.value || "type"; if (mode === "type") { const groups = rows.reduce((acc, r)=>{ const normalizedName = normalizeChainName(r); const key = normalizedName.toLowerCase(); (acc[key] ||= { label:normalizedName, emoji:r.emoji || "🏪", rows:[] }).rows.push(r); return acc; }, {}); $id("world-locals-list").innerHTML = Object.values(groups).map((g)=>{ const ratedRows = g.rows.filter((r) => Number.isFinite(Number(r.rating))); const avg = ratedRows.length ? ratedRows.reduce((sum, r) => sum + Number(r.rating || 0), 0) / ratedRows.length : 0; const pricedRows = g.rows.filter((r) => Number.isFinite(Number(r.price))); const avgPrice = pricedRows.length ? pricedRows.reduce((sum, r) => sum + Number(r.price || 0), 0) / pricedRows.length : null; const cheapest = pricedRows.length ? pricedRows.reduce((best, row) => (!best || Number(row.price) < Number(best.price) ? row : best), null) : null; const mostExpensive = pricedRows.length ? pricedRows.reduce((best, row) => (!best || Number(row.price) > Number(best.price) ? row : best), null) : null; return `<details><summary><strong>${g.emoji} ${g.label}</strong> · ${g.rows.length} visitas · ${stars10(avg)} ${avg.toFixed(1)}/10</summary>${avgPrice !== null ? `<div class="world-rich-item"><div><small>Precio medio: ${avgPrice.toFixed(2)} €</small><small>Más barato: ${cheapest?.city || cheapest?.region || cheapest?.name || "Local"} · ${Number(cheapest?.price || 0).toFixed(2)} €</small><small>Más caro: ${mostExpensive?.city || mostExpensive?.region || mostExpensive?.name || "Local"} · ${Number(mostExpensive?.price || 0).toFixed(2)} €</small></div></div>` : ""}${g.rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.city || r.region || "Sin ciudad"} · ${(r.rating ?? 0).toFixed(1)}/10</strong><small>${r.name}</small>${Number.isFinite(Number(r.price)) ? `<small>${r.productName || "Producto"} · ${Number(r.price).toFixed(2)} €</small>` : ""}</div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("")}</details>`; }).join("") || "<div>Sin locales.</div>"; return; } if (mode !== "country") { $id("world-locals-list").innerHTML = rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.emoji || "🏪"} ${r.name}</strong><div>${stars10(r.rating || 0)} ${(r.rating ?? 0).toFixed(1)}/10</div><small>${r.category || "Local"} · ${r.city || ""}</small></div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("") || "<div>Sin locales.</div>"; return; } const groups = rows.reduce((acc, r)=>{ const key = r.countryCode || r.country || "XX"; (acc[key] ||= { country:r.country, countryCode:r.countryCode, rows:[] }).rows.push(r); return acc; }, {}); $id("world-locals-list").innerHTML = Object.values(groups).map((g)=>`<details open><summary><strong>${flag(g.countryCode)} ${g.country || getCountryEnglishName(g.countryCode) || "Sin país"}</strong></summary>${g.rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.name}</strong><small>${r.city || r.region || ""}</small></div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("")}</details>`).join("") || "<div>Sin locales.</div>"; }
+function worldGoogleMapsBtn(r = {}){ return r.googleMapsUrl ? `<a href="${r.googleMapsUrl}" target="_blank" rel="noopener noreferrer">🗺️ Abrir en Google Maps</a>` : ""; }
+function renderLocals(){ const rows=state.places; const mode = $id("world-locals-group")?.value || "type"; if (mode === "type") { const groups = rows.reduce((acc, r)=>{ const normalizedName = normalizeChainName(r); const key = normalizedName.toLowerCase(); (acc[key] ||= { label:normalizedName, emoji:r.emoji || "🏪", rows:[] }).rows.push(r); return acc; }, {}); $id("world-locals-list").innerHTML = Object.values(groups).map((g)=>{ const ratedRows = g.rows.filter((r) => Number.isFinite(Number(r.rating))); const avg = ratedRows.length ? ratedRows.reduce((sum, r) => sum + Number(r.rating || 0), 0) / ratedRows.length : 0; const pricedRows = g.rows.filter((r) => Number.isFinite(Number(r.price))); const avgPrice = pricedRows.length ? pricedRows.reduce((sum, r) => sum + Number(r.price || 0), 0) / pricedRows.length : null; const cheapest = pricedRows.length ? pricedRows.reduce((best, row) => (!best || Number(row.price) < Number(best.price) ? row : best), null) : null; const mostExpensive = pricedRows.length ? pricedRows.reduce((best, row) => (!best || Number(row.price) > Number(best.price) ? row : best), null) : null; return `<details><summary><strong>${g.emoji} ${g.label}</strong> · ${g.rows.length} visitas · ${stars10(avg)} ${avg.toFixed(1)}/10</summary>${avgPrice !== null ? `<div class="world-rich-item"><div><small>Precio medio: ${avgPrice.toFixed(2)} €</small><small>Más barato: ${cheapest?.city || cheapest?.region || cheapest?.name || "Local"} · ${Number(cheapest?.price || 0).toFixed(2)} €</small><small>Más caro: ${mostExpensive?.city || mostExpensive?.region || mostExpensive?.name || "Local"} · ${Number(mostExpensive?.price || 0).toFixed(2)} €</small></div></div>` : ""}${g.rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.city || r.region || "Sin ciudad"} · ${(r.rating ?? 0).toFixed(1)}/10</strong><small>${r.name}</small>${Number.isFinite(Number(r.price)) ? `<small>${r.productName || "Producto"} · ${Number(r.price).toFixed(2)} €</small>` : ""}${worldGoogleMapsBtn(r)}</div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("")}</details>`; }).join("") || "<div>Sin locales.</div>"; return; } if (mode !== "country") { $id("world-locals-list").innerHTML = rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.emoji || "🏪"} ${r.name}</strong><div>${stars10(r.rating || 0)} ${(r.rating ?? 0).toFixed(1)}/10</div><small>${r.category || "Local"} · ${r.city || ""}</small>${worldGoogleMapsBtn(r)}</div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("") || "<div>Sin locales.</div>"; return; } const groups = rows.reduce((acc, r)=>{ const key = r.countryCode || r.country || "XX"; (acc[key] ||= { country:r.country, countryCode:r.countryCode, rows:[] }).rows.push(r); return acc; }, {}); $id("world-locals-list").innerHTML = Object.values(groups).map((g)=>`<details open><summary><strong>${flag(g.countryCode)} ${g.country || getCountryEnglishName(g.countryCode) || "Sin país"}</strong></summary>${g.rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.name}</strong><small>${r.city || r.region || ""}</small>${worldGoogleMapsBtn(r)}</div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("")}</details>`).join("") || "<div>Sin locales.</div>"; }
 function renderStats(){ $id("world-countries").textContent = String(new Set([...state.geography, ...state.places].map((x)=>x.countryCode).filter(Boolean)).size); $id("world-geo-count").textContent = String(state.geography.length); $id("world-rated-locals").textContent = String(state.places.length); }
 function renderAll(){ renderStats(); renderMap(); renderGeoList(); renderLocals(); }
 
@@ -190,22 +239,50 @@ async function saveEdit(){
 
 async function searchGeo(q){ const u = new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q", q); u.searchParams.set("format", "jsonv2"); u.searchParams.set("addressdetails", "1"); u.searchParams.set("limit", "8"); const rows = await (await fetch(u)).json(); state.geoResults = (Array.isArray(rows) ? rows : []).map((r) => normalizeLocationAddress(r)).filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon)); renderGeoResults(); }
 async function searchPlace(q){ const c=state.userCenter; const radiusRaw=$id("world-place-radius").value||"1000"; const radius=radiusRaw === "none" ? null : Number(radiusRaw); const u=new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q",q); u.searchParams.set("format","jsonv2"); u.searchParams.set("addressdetails","1"); u.searchParams.set("limit","24"); if (radius) { const dLat=radius/111320, dLng=radius/(111320*Math.cos((c.lat*Math.PI)/180)); u.searchParams.set("bounded","1"); u.searchParams.set("viewbox",`${c.lon-dLng},${c.lat+dLat},${c.lon+dLng},${c.lat-dLat}`); } const rows=await (await fetch(u)).json(); state.placeResults=(Array.isArray(rows)?rows:[]).map((raw)=>{ const r=normalizeLocationAddress(raw); const addressLine = [r.address?.road, r.address?.house_number].filter(Boolean).join(" ") || [r.address?.suburb, r.address?.county].filter(Boolean).join(", "); return ({ ...r, distance:radius ? hav(c.lat,c.lon,Number(r.lat),Number(r.lon)) : null, addressLine }); }).filter((r)=>!radius || r.distance<=radius).sort((a,b)=>(a.distance ?? 0)-(b.distance ?? 0)); state.selectedPlace = null; state.selectedPlaceIndex = -1; renderPlaceResults(); }
+async function reverseGeocode(lat, lon){
+  const u = new URL("https://nominatim.openstreetmap.org/reverse");
+  u.searchParams.set("lat", String(lat));
+  u.searchParams.set("lon", String(lon));
+  u.searchParams.set("format", "jsonv2");
+  u.searchParams.set("addressdetails", "1");
+  const raw = await (await fetch(u)).json();
+  return normalizeLocationAddress(raw);
+}
 
 function pickGeo(i){ const row = state.geoResults[i]; if(!row) return; const normalizedCountry = normalizeCountryFromAddress(row.address); if (!normalizedCountry.countryCode) return showToast("País inválido, selecciona otro resultado"); state.selectedGeoIndex = i; state.selectedGeo = normalize({ id:`geo_${Date.now()}_${Math.random().toString(36).slice(2,8)}`, name:row.name, label:row.label, city:row.city || row.municipality, region:row.region, category:row.address?.type || "", country:normalizedCountry.country, countryCode:normalizedCountry.countryCode, postalCode:row.postalCode, lat:row.lat, lon:row.lon, note:$id("world-geo-note").value, rating:state.geoRating }, "geography"); console.log("[world:geo:select]", state.selectedGeo); $id("world-form-name").value = state.selectedGeo.name || ""; $id("world-form-country").value = state.selectedGeo.country || ""; $id("world-form-region").value = state.selectedGeo.region || ""; $id("world-form-city").value = state.selectedGeo.city || ""; $id("world-form-category").value = state.selectedGeo.category || ""; $id("world-form-emoji").value = state.selectedGeo.emoji || "📍"; console.log("[world:geo:autofill]", { country:state.selectedGeo.country, region:state.selectedGeo.region, city:state.selectedGeo.city, category:state.selectedGeo.category }); if (state.map && Number.isFinite(state.selectedGeo.lat) && Number.isFinite(state.selectedGeo.lon)) state.map.setView([state.selectedGeo.lat, state.selectedGeo.lon], 9); renderGeoResults(); }
 function pickPlace(i){ const row = state.placeResults[i]; if(!row) return; const normalizedCountry = normalizeCountryFromAddress(row.address); state.selectedPlaceIndex = i; state.selectedPlace = normalize({ id:`place_${Date.now()}_${Math.random().toString(36).slice(2,8)}`, name:row.name, label:row.label, city:row.city || row.municipality, country:normalizedCountry.country, countryCode:normalizedCountry.countryCode, region:row.region, postalCode:row.postalCode, category:$id("world-place-q").value, lat:row.lat, lon:row.lon, address:row.addressLine || row.label, rating:state.placeRating, note:$id("world-place-note").value }, "places"); $id("world-place-form-name").value = state.selectedPlace.name || ""; $id("world-place-form-emoji").value = state.selectedPlace.emoji || "🏪"; $id("world-place-form-category").value = state.selectedPlace.category || ""; $id("world-place-form-country").value = state.selectedPlace.country || ""; $id("world-place-form-region").value = state.selectedPlace.region || ""; $id("world-place-form-city").value = state.selectedPlace.city || ""; if (state.miniMap) state.miniMap.setView([row.lat, row.lon], 17); renderPlaceResults(); }
 async function useCurrentLocationForNewPlace(){
-  console.log("[world:add-place] use-current-location:start");
+  console.log("[world:modal:geo:start]");
   try {
     const pos = await getCurrentPositionSafe({ forceRequest:true });
     if (!pos || !Number.isFinite(pos.lat) || !Number.isFinite(pos.lon)) throw new Error("position-unavailable");
+    const reverse = await reverseGeocode(pos.lat, pos.lon);
+    const normalizedCountry = normalizeCountryFromAddress(reverse.address);
     state.selectedPlaceIndex = -1;
     state.selectedPlace = normalize({ id:`place_${Date.now()}_${Math.random().toString(36).slice(2,8)}`, name:$id("world-place-form-name")?.value || "Nuevo local", category:$id("world-place-form-category")?.value || "", lat:pos.lat, lon:pos.lon, rating:state.placeRating, note:$id("world-place-note")?.value || "" }, "places");
+    state.selectedPlace.country = state.selectedPlace.country || normalizedCountry.country || "";
+    state.selectedPlace.countryCode = state.selectedPlace.countryCode || normalizedCountry.countryCode || "";
+    state.selectedPlace.region = state.selectedPlace.region || reverse.region || "";
+    state.selectedPlace.city = state.selectedPlace.city || reverse.city || reverse.municipality || "";
+    state.selectedPlace.address = state.selectedPlace.address || reverse.label || "";
+    const displayName = reverse.label || reverse.name || "";
+    state.selectedPlace.displayName = displayName;
+    state.selectedPlace.googleMapsUrl = createGoogleMapsUrl(pos.lat, pos.lon);
+    const preserveOrSet = (idv, value) => {
+      const input = $id(idv);
+      if (!input) return;
+      if (!String(input.value || "").trim() && String(value || "").trim()) input.value = String(value);
+    };
+    preserveOrSet("world-place-form-country", state.selectedPlace.country);
+    preserveOrSet("world-place-form-region", state.selectedPlace.region);
+    preserveOrSet("world-place-form-city", state.selectedPlace.city);
+    preserveOrSet("world-place-form-name", reverse.name || state.selectedPlace.name);
     if (state.miniMap) state.miniMap.setView([pos.lat, pos.lon], 17);
     renderPlaceResults();
-    console.log("[world:add-place] use-current-location:success", { lat:pos.lat, lon:pos.lon });
+    console.log("[world:modal:geo:success]", { lat:pos.lat, lon:pos.lon, country:state.selectedPlace.country, region:state.selectedPlace.region, city:state.selectedPlace.city, displayName });
   } catch (error) {
-    console.log("[world:add-place] use-current-location:error", error);
-    showToast("No se pudo obtener la ubicación actual");
+    console.log("[world:modal:geo:error]", error);
+    showToast("No se pudo obtener ubicación actual (permiso denegado o GPS no disponible)");
   }
 }
 
@@ -214,7 +291,7 @@ function bindUI(){
   root.addEventListener("click", async (e)=>{ const t=e.target.closest("button,label"); if(!t) return; if(t.matches(".world-tab")) return setWindow(t.dataset.window); if(t.id==="world-open-add") { $id("world-add-toggle").checked=true; setAddMode("geo"); resetWorldAddModalState(); state.showEditLocationSearch = true; state.placeModalMode = "add"; setEditModeUI(); }
     if(t.id==="world-open-add-place") { openAddLocalModal(); }
     if(t.id==="world-place-use-current-location") { await useCurrentLocationForNewPlace(); }
-    if(t.id==="world-add-mode-geo") setAddMode("geo"); if(t.id==="world-add-mode-place") { if (state.editing) setAddMode("place"); else openAddLocalModal(); }
+    if(t.id==="world-add-mode-geo") setAddMode("geo"); if(t.id==="world-add-mode-place") { if (state.editing) setAddMode("place"); else openAddLocalModal(); invalidateMiniMapSafe(); }
     if(t.dataset.geoPick) pickGeo(Number(t.dataset.geoPick)); if(t.dataset.placePick) pickPlace(Number(t.dataset.placePick));
     if(t.dataset.worldCenter){ const m=state.markers.get(t.dataset.worldCenter); if(m){ state.map.panTo(m.getLatLng()); m.openPopup(); } }
     if(t.dataset.worldDelete){ const [kind,idv]=t.dataset.worldDelete.split(":"); await deleteItem(kind,idv); }
@@ -225,14 +302,22 @@ function bindUI(){
   $id("world-geo-q").addEventListener("input", (e)=> e.target.value.trim().length>1 ? searchGeo(e.target.value.trim()) : ($id("world-geo-results").innerHTML = ""));
   $id("world-place-q").addEventListener("input", (e)=> e.target.value.trim().length>1 ? searchPlace(e.target.value.trim()) : ($id("world-place-results").innerHTML = ""));
   $id("world-place-radius").addEventListener("change", ()=> $id("world-place-q").dispatchEvent(new Event("input")));
+  $id("world-add-toggle").addEventListener("change", (e)=>{ if (e.target.checked && state.addMode === "place") invalidateMiniMapSafe(); });
   $id("world-locals-group").addEventListener("change", ()=> renderLocals());
   $id("world-geo-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedGeo) return; state.selectedGeo.note = $id("world-geo-note").value.trim(); state.selectedGeo.rating = state.geoRating; state.geography.push(state.selectedGeo); await persistWorld(); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
-  $id("world-place-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedPlace) return; state.selectedPlace.rating = state.placeRating; state.selectedPlace.note = $id("world-place-note").value.trim(); state.selectedPlace.name = $id("world-place-form-name").value.trim() || state.selectedPlace.name; state.selectedPlace.emoji = $id("world-place-form-emoji").value.trim() || state.selectedPlace.emoji; state.selectedPlace.category = $id("world-place-form-category").value.trim(); state.selectedPlace.country = $id("world-place-form-country").value.trim() || state.selectedPlace.country; state.selectedPlace.region = $id("world-place-form-region").value.trim(); state.selectedPlace.city = $id("world-place-form-city").value.trim(); state.selectedPlace.productName = $id("world-place-form-product").value.trim(); state.selectedPlace.price = parsePrice($id("world-place-form-price").value); state.selectedPlace.currency = "EUR"; state.places.push(state.selectedPlace); await persistWorld(); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
+  $id("world-place-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedPlace) return; state.selectedPlace.rating = state.placeRating; state.selectedPlace.note = $id("world-place-note").value.trim(); state.selectedPlace.name = $id("world-place-form-name").value.trim() || state.selectedPlace.name; state.selectedPlace.emoji = $id("world-place-form-emoji").value.trim() || state.selectedPlace.emoji; state.selectedPlace.category = $id("world-place-form-category").value.trim(); state.selectedPlace.country = $id("world-place-form-country").value.trim() || state.selectedPlace.country; state.selectedPlace.region = $id("world-place-form-region").value.trim() || state.selectedPlace.region; state.selectedPlace.city = $id("world-place-form-city").value.trim() || state.selectedPlace.city; state.selectedPlace.productName = $id("world-place-form-product").value.trim(); state.selectedPlace.price = parsePrice($id("world-place-form-price").value); state.selectedPlace.currency = "EUR"; state.selectedPlace.googleMapsUrl = createGoogleMapsUrl(state.selectedPlace.lat, state.selectedPlace.lon); state.places.push(state.selectedPlace); await persistWorld(); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
   $id("world-place-edit-save").addEventListener("click", async ()=>{ if (!state.editing || state.editing.kind !== "places") return; await saveEdit(); });
   ["world-rating-stars","world-geo-rating-stars","world-place-edit-rating-stars"].forEach((rid)=>{ const rating = $id(rid); rating.addEventListener("pointerdown",(e)=>{ const move=(ev)=>{ const value=ratingFromPointer(rating, ev.clientX); if (rid === "world-geo-rating-stars") state.geoRating=value; else state.placeRating=value; renderRatings(); }; move(e); window.addEventListener("pointermove", move); const up=()=>{ window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); }; window.addEventListener("pointerup", up); }); });
 }
 
 function initMiniMap(){ if(!window.L) return; const host=$id("world-mini-map"); if(!host) return; if(!state.miniMap) state.miniMap=createLeafletMap(host, { center:[state.userCenter.lat,state.userCenter.lon], zoom:15 }); state.miniMap.setView([state.userCenter.lat,state.userCenter.lon],15); renderPlaceResults(); }
+function invalidateMiniMapSafe(){
+  if (!state.miniMap) return;
+  requestAnimationFrame(() => {
+    state.miniMap.invalidateSize?.();
+    setTimeout(() => state.miniMap?.invalidateSize?.(), 90);
+  });
+}
 async function resolveWorldLocationPermissionState(){
   if (!navigator.permissions?.query) return "unknown";
   try {
@@ -251,8 +336,8 @@ async function getCurrentPositionSafe({ forceRequest = false } = {}){
   return new Promise((resolve)=>navigator.geolocation.getCurrentPosition((pos)=>{ localStorage.setItem(WORLD_LOCATION_PERMISSION_KEY, "true"); console.log("[world:location] permission:accepted"); resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }); }, ()=>{ localStorage.removeItem(WORLD_LOCATION_PERMISSION_KEY); console.log("[world:location] permission:denied"); resolve(null); }, { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
 }
 
-export async function init(){ if(state.initialized) return; state.initialized=true; await ensureLeaflet(); bindUI(); renderRatings(); const p=await getCurrentPositionSafe(); if(p) state.userCenter=p; const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; state.rootRef=ref(db, WORLD_PATH(uid)); state.unsub=trackedOnValue(state.rootRef, (snap)=>{ const data=snap.val()||{}; state.geography=Object.values(data.geography||{}).map((x)=>normalize(x,"geography")); state.places=Object.values(data.places||{}).map((x)=>normalize(x,"places")); renderAll(); if (state.map && !state._mapClusterBound) { state._mapClusterBound = true; state.map.on("zoomend", ()=>renderMap()); state.map.on("moveend", ()=>renderMap()); } }, { key:"world-root", path:WORLD_PATH(uid), module:"world", mode:"onValue", reason:"world-sync", viewId:"view-world" }, onValue); }
-export function destroy(){ if(state.unsub) state.unsub(); state.unsub=null; if(state.map){ destroyLeafletMap($id("world-map")); state.map=null; } if(state.miniMap){ destroyLeafletMap($id("world-mini-map")); state.miniMap=null; } state.initialized=false; }
+export async function init(){ if(state.initialized) return; state.initialized=true; await ensureLeaflet(); bindUI(); renderRatings(); const p=await getCurrentPositionSafe(); if(p) state.userCenter=p; const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; state.rootRef=ref(db, WORLD_PATH(uid)); state.unsub=trackedOnValue(state.rootRef, (snap)=>{ const data=snap.val()||{}; state.geography=Object.values(data.geography||{}).map((x)=>normalize(x,"geography")); state.places=Object.values(data.places||{}).map((x)=>normalize({ ...x, googleMapsUrl:x.googleMapsUrl || createGoogleMapsUrl(x.lat, x.lon) },"places")); renderAll(); if (state.map && !state._mapClusterBound) { state._mapClusterBound = true; state.map.on("zoomend", ()=>renderWorldMarkers()); } }, { key:"world-root", path:WORLD_PATH(uid), module:"world", mode:"onValue", reason:"world-sync", viewId:"view-world" }, onValue); }
+export function destroy(){ if(state.unsub) state.unsub(); state.unsub=null; if(state.map){ destroyWorldMapLayers(); destroyLeafletMap($id("world-map")); state.map=null; } if(state.miniMap){ destroyLeafletMap($id("world-mini-map")); state.miniMap=null; } state.initialized=false; }
 export async function onShow(){ if(!state.initialized) await init(); setWindow(state.activeWindow); invalidateLeafletMap(state.map,70); }
 export async function onHide(){ destroy(); }
 export function getListenerCount(){ return state.unsub?1:0; }

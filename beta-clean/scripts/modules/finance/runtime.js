@@ -5032,8 +5032,25 @@ function syncProductsReceiptLineToBacking(root = document, lineId = '') {
 }
 
 async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR') {
+  const scope = root?.querySelector?.('[data-products-receipt]') || root;
+  if (!scope?.querySelector?.('[data-products-list-form]')) {
+    console.info('[finance:fx] init-safe-fallback', { reason: 'missing-receipt-dom' });
+    return;
+  }
   const code = String(currency || 'EUR').toUpperCase();
-  let fx = await resolveExchangeRateFromEUR(code);
+  let fx;
+  try {
+    fx = await resolveExchangeRateFromEUR(code);
+  } catch (error) {
+    console.info('[finance:fx] init-safe-fallback', { reason: 'fetch-failed', currency: code, error: String(error?.message || error) });
+    fx = {
+      fromEUR: 1,
+      toEUR: 1,
+      updatedAt: new Date().toISOString(),
+      source: 'fallback-safe',
+      approximate: true,
+    };
+  }
   if (code !== 'EUR' && (!(Number(fx?.fromEUR) > 0) || Number(fx?.fromEUR) === 1)) {
     console.info('[finance:fx] invalid-rate', { currency: code, fromEUR: Number(fx?.fromEUR || 0), source: String(fx?.source || 'unknown') });
     fx = {
@@ -5044,7 +5061,7 @@ async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR')
       approximate: true,
     };
   }
-  const draft = readProductsListDraftFromDom(root);
+  const draft = readProductsListDraftFromDom(scope);
   const hasLines = Object.keys(draft?.lines || {}).length > 0;
   const ticketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   draft.tickets = { ...(draft.tickets || {}) };
@@ -5061,7 +5078,7 @@ async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR')
   console.info('[finance:fx] applied', { ticketId, currency: code, exchangeRateFromEUR: fx.fromEUR, exchangeRateToEUR: fx.toEUR, source: fx.source });
   if (fx.approximate) setProductsReceiptError('Usando tasa aproximada');
   syncProductsDraftListLocal(draft);
-  syncProductsTicketComposerDom(root);
+  syncProductsTicketComposerDom(scope);
   if (!hasLines && code !== 'EUR') {
     console.info('[finance:fx] converter:persist-empty-ticket', { ticketId, currency: code, exchangeRateFromEUR: Number(fx.fromEUR || 1), exchangeRateToEUR: Number(fx.toEUR || 1) });
   }
@@ -15576,7 +15593,10 @@ view.addEventListener('focusout', async (event) => {
         const currency = String(event.target.value || '').toUpperCase();
         console.info('[finance:currency] selected', { currency });
         if (state.productsReceiptError) setProductsReceiptError('');
-        await applyTicketCurrencyRateFromApi(view, currency);
+        applyTicketCurrencyRateFromApi(view, currency)
+          .catch((error) => {
+            console.info('[finance:fx] init-safe-fallback', { reason: 'converter-apply-failed', currency, error: String(error?.message || error) });
+          });
         console.info('[finance:fx] converter:show-on-select', { currency });
         return;
       }
@@ -15741,7 +15761,12 @@ view.addEventListener('focusout', async (event) => {
       const ticketId = String(formEl?.dataset.productsActiveTicketId || resolveActiveProductsList()?.activeTicketId || '').trim();
       const eurInput = root.querySelector('[data-products-converter-eur]');
       const foreignInput = root.querySelector('[data-products-converter-foreign]');
-      const currency = String(root.querySelector('[data-products-receipt-currency]')?.value || 'EUR').toUpperCase();
+      const currencySelector = root.querySelector('[data-products-receipt-currency]');
+      if (!eurInput || !foreignInput || !currencySelector) {
+        console.info('[finance:fx] init-safe-fallback', { reason: 'missing-converter-dom' });
+        return;
+      }
+      const currency = String(currencySelector.value || 'EUR').toUpperCase();
       const rateFromEUR = Math.max(0.0000001, Number(resolveActiveProductsList()?.tickets?.[ticketId]?.exchangeRateFromEUR || 1));
       let eurValue = Math.max(0.0000001, Number(eurInput?.value || 1));
       let foreignValue = Math.max(0.0000001, Number(foreignInput?.value || rateFromEUR));

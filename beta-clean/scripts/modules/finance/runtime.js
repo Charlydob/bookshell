@@ -3442,7 +3442,8 @@ function renderProductsReceiptLineRow(line, model) {
   const isSelected = !!selection[lineId];
   const normalized = calculateLineTotals(line);
   const ticketCurrency = String(model?.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
-  const lineRate = Number(model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
+  const lineCurrency = String(line?.currency || ticketCurrency).toUpperCase();
+  const lineRate = Number(line?.exchangeRateToEUR || model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
   const lineTotalOriginal = Number(line?.priceOriginal ?? normalized.actualPrice ?? 0);
   const lineTotalEUR = Number(Number(lineTotalOriginal || 0) * Math.max(0.0000001, Number(lineRate || 1)));
   console.info('[finance:currency] item-price-eur', { itemId: lineId, item: line?.name || '', original: lineTotalOriginal, currency: ticketCurrency, exchangeRateToEUR: lineRate, eur: lineTotalEUR });
@@ -3486,12 +3487,12 @@ function renderProductsReceiptLineRow(line, model) {
           class="productsWorkbench__receiptTotal food-control"
           type="text"
           inputmode="decimal"
-          value="${escapeHtml(fmtCurrencyCode(lineTotalOriginal || 0, ticketCurrency))}"
+          value="${escapeHtml(fmtCurrencyCode(lineTotalOriginal || 0, lineCurrency))}"
           aria-label="Precio real de ${escapeHtml(line.name || 'producto')}"
           data-money-last-valid="${escapeHtml(String(Number(normalized.actualPrice || 0).toFixed(2)))}"
           data-products-receipt-total="${escapeHtml(lineId)}" />
         <small class="productsWorkbench__receiptLineDiff is-${lineDiffMeta.tone}" data-products-receipt-diff="${escapeHtml(lineId)}">${lineDiffMeta.label}</small>
-        ${ticketCurrency !== 'EUR' ? `<small class="productsWorkbench__receiptLineDiff">≈ ${fmtCurrency(lineTotalEUR)}</small>` : ''}
+        ${lineCurrency !== 'EUR' ? `<small class="productsWorkbench__receiptLineDiff">≈ ${fmtCurrency(lineTotalEUR)}</small>` : ''}
       </div>
       <button type="button" class="productsWorkbench__receiptRemove" data-products-remove-line="${escapeHtml(lineId)}" aria-label="Eliminar ${escapeHtml(line.name || 'linea')}">❌</button>
     </div>
@@ -3499,6 +3500,8 @@ function renderProductsReceiptLineRow(line, model) {
 }
 
 function renderProductsReceiptEmptyRow(model) {
+  const ticketCurrency = String(model?.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const currencyLabel = ticketCurrency === 'EUR' ? '€' : ticketCurrency;
   return `
     <div class="productsWorkbench__receiptRow productsWorkbench__receiptRow--add" data-products-receipt-add-row>
       <span class="productsWorkbench__receiptSelectWrap productsWorkbench__receiptSelectWrap--placeholder" aria-hidden="true"></span>
@@ -3509,8 +3512,8 @@ function renderProductsReceiptEmptyRow(model) {
           ${renderProductsReceiptSuggestionList(model, '')}
         </div>
       </div>
-      <input class="productsWorkbench__receiptUnit food-control" type="number" min="0" step="0.01" inputmode="decimal" placeholder="precio/u" aria-label="Precio unitario nuevo" data-products-receipt-add-unit />
-      <strong class="productsWorkbench__receiptTotal" data-products-receipt-add-total>${fmtCurrency(0)}</strong>
+      <input class="productsWorkbench__receiptUnit food-control" type="number" min="0" step="0.01" inputmode="decimal" placeholder="precio ${escapeHtml(currencyLabel)}" aria-label="Precio unitario nuevo en ${escapeHtml(ticketCurrency)}" data-products-receipt-add-unit />
+      <strong class="productsWorkbench__receiptTotal" data-products-receipt-add-total>${fmtCurrencyCode(0, ticketCurrency)}</strong>
       <button type="button" class="productsWorkbench__receiptAddHint" data-products-receipt-add-line aria-label="Añadir línea">+</button>
     </div>
   `;
@@ -4088,10 +4091,13 @@ const ticketDeleteHint = ticket.txId
   ? 'Eliminar ticket y su movimiento contabilizado'
   : 'Eliminar ticket del registro';
           const imageUrl = String(ticket.imageUrl || ticket.receiptImageUrl || ticket.image || '').trim();
+          const historyCurrency = String(ticket.ticketCurrency || 'EUR').toUpperCase();
+          const historyRateToEUR = Number(ticket.exchangeRateToEUR || getCurrencyRates()[historyCurrency] || 1);
+          const historyTotalOriginal = Number(ticket.totalOriginal || 0);
           return `
             <details class="productsWorkbench__ticketRegistryItem" data-products-ticket-history-item="${escapeHtml(ticket.id)}">
               <summary>
-                <span>${escapeHtml(ticketDate)} · ${escapeHtml(ticket.store || 'Supermercado')} · ${fmtCurrency(ticket.actualTotal || 0)}</span>
+                <span>${escapeHtml(ticketDate)} · ${escapeHtml(ticket.store || 'Supermercado')} · ${fmtCurrencyCode(historyTotalOriginal, historyCurrency)}</span>
                 <small>${ticket.lineCount} líneas · ${escapeHtml(ticketStatus)}</small>
               </summary>
               <div class="productsWorkbench__ticketRegistryDetail">
@@ -4102,16 +4108,24 @@ const ticketDeleteHint = ticket.txId
                 </div>
                 ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="Imagen de ticket ${escapeHtml(ticket.store || ticket.id)}" loading="lazy" />` : ''}
                 <div class="productsWorkbench__ticketRegistryLines">
-                  ${Object.values(ticket.lines || {}).map((line) => `
+                  ${Object.values(ticket.lines || {}).map((line) => {
+                    const lineCurrency = String(line.currency || historyCurrency).toUpperCase();
+                    const lineOriginal = Number(line.priceOriginal ?? line.actualPrice ?? line.estimatedPrice ?? 0);
+                    const lineRateToEUR = Number(line.exchangeRateToEUR || historyRateToEUR || 1);
+                    const lineEUR = Number(line.priceEUR ?? normalizeMovementCurrencyPayload({ amount: lineOriginal, currency: lineCurrency, exchangeRateToEUR: lineRateToEUR }).amountEUR || 0);
+                    return `
                     <div class="productsWorkbench__ticketRegistryLine">
                       <span>${Math.max(0.01, Number(line.qty || 1))} × ${escapeHtml(line.name || 'Producto')}</span>
-                      <strong>${fmtCurrency(Math.max(0.01, Number(line.qty || 1)) * Number(line.actualPrice || line.estimatedPrice || 0))}</strong>
+                      <strong>${fmtCurrencyCode(lineOriginal, lineCurrency)}</strong>
+                      ${lineCurrency !== 'EUR' ? `<small>≈ ${fmtCurrency(lineEUR)}</small>` : ''}
                     </div>
-                  `).join('') || '<div class="productsWorkbench__emptyMini">Ticket sin líneas.</div>'}
+                  `;
+                  }).join('') || '<div class="productsWorkbench__emptyMini">Ticket sin líneas.</div>'}
                 </div>
                 <div class="productsWorkbench__ticketTotals">
-                  <small>Previsto ${fmtCurrency(ticket.estimatedTotal || 0)}</small>
-                  <strong>${fmtCurrency(ticket.actualTotal || 0)}</strong>
+                  <small>Previsto ${fmtCurrencyCode(Number(ticket.estimatedTotal || 0), historyCurrency)}</small>
+                  <strong>${fmtCurrencyCode(historyTotalOriginal, historyCurrency)}</strong>
+                  ${historyCurrency !== 'EUR' ? `<small>Total en euros ≈ ${fmtCurrency(Number(ticket.totalEUR || normalizeMovementCurrencyPayload({ amount: historyTotalOriginal, currency: historyCurrency, exchangeRateToEUR: historyRateToEUR }).amountEUR || 0))}</small>` : ''}
                 </div>
                 <div class="productsWorkbench__ticketRegistryActions">
                   <button type="button" class="food-history-btn" data-products-reuse-ticket="${escapeHtml(ticket.id)}">Reutilizar como lista</button>
@@ -5234,10 +5248,18 @@ async function updateReceiptLine(ticketId = '', lineId = '', patch = {}, options
   const currentLine = draft.lines?.[safeLineId];
   if (!currentLine) return null;
   const targetTicketId = String(ticketId || currentLine.ticketId || draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  const targetTicket = draft.tickets?.[targetTicketId] || {};
+  const targetCurrency = String(targetTicket.ticketCurrency || currentLine.currency || getDefaultCurrency()).toUpperCase();
+  const targetRateToEUR = Number(targetTicket.exchangeRateToEUR || getCurrencyRates()[targetCurrency] || 1);
   const nextLine = calculateLineTotals(normalizeReceiptLine({ ...currentLine, ...patch, ticketId: targetTicketId }, currentLine));
+  const priceOriginal = Number(nextLine.actualPrice || 0);
   draft.lines[safeLineId] = {
     ...currentLine,
     ...nextLine,
+    currency: targetCurrency,
+    exchangeRateToEUR: targetRateToEUR,
+    priceOriginal,
+    priceEUR: Number(normalizeMovementCurrencyPayload({ amount: priceOriginal, currency: targetCurrency, exchangeRateToEUR: targetRateToEUR }).amountEUR || 0),
     ticketId: targetTicketId,
     updatedAt: nowTs(),
   };

@@ -5416,10 +5416,11 @@ margin-bottom: 50px;
 }
 
 .financeTab .productsWorkbench__receipt header{
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+  overflow: visible;
 }
 
 .financeTab .productsWorkbench__receiptMetaGroup{
@@ -5440,17 +5441,17 @@ margin-bottom: 50px;
   padding: 2px 4px;
   font-size: 12px;
 }
-.financeTab .productsWorkbench__receiptMetaControl[data-products-receipt-currency]{ min-width: 92px; max-width: 120px; }
+.financeTab .productsWorkbench__receiptMetaControl[data-products-receipt-currency]{ min-width: 104px; max-width: 132px; flex: 0 0 auto; }
 .financeTab .productsWorkbench__receiptMetaControl--fx{ width: 56px; max-width: 56px; text-align: right; font-size: 12px; padding: 2px 3px; }
 .financeTab .productsWorkbench__receiptMetaHint{
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   font-size: 12px;
-  white-space: nowrap;
+  white-space: normal;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .financeTab .productsWorkbench__receiptMetaControl:hover{

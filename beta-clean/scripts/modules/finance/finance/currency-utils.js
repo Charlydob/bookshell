@@ -19,7 +19,8 @@ export const SUPPORTED_CURRENCIES = Object.freeze([
   { code: 'DKK', symbol: 'kr', label: 'DKK kr Corona danesa' },
 ]);
 
-const RATE_KEY = 'financeFxRates';
+const LEGACY_RATE_KEYS = Object.freeze(['financeCurrencyRates', 'financeFxRates']);
+const RATE_KEY = 'financeFxRates:v2';
 const RATE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const BASE_RATES = Object.freeze({
   EUR: 1, PEN: 0.247, USD: 0.92, GBP: 1.17, CHF: 1.03, JPY: 0.0059, CNY: 0.127,
@@ -29,7 +30,7 @@ const BASE_RATES = Object.freeze({
 
 
 const FX_FALLBACK_FROM_EUR = Object.freeze({
-  EUR: 1, PEN: 4.0, USD: 1.08, GBP: 0.85, CHF: 0.95, JPY: 165, CNY: 7.8,
+  EUR: 1, PEN: 3.98, USD: 1.08, GBP: 0.85, CHF: 0.95, JPY: 165, CNY: 7.8,
   MXN: 19, COP: 4200, ARS: 980, BRL: 5.8, CLP: 1000, CAD: 1.47, AUD: 1.62,
   NOK: 11.7, SEK: 11.4, DKK: 7.46,
 });
@@ -42,23 +43,59 @@ function writeRateCache(next = {}) {
   try { localStorage.setItem(RATE_KEY, JSON.stringify(next || {})); } catch {}
 }
 
+function removeLegacyRateCaches() {
+  for (const legacyKey of LEGACY_RATE_KEYS) {
+    try {
+      if (localStorage.getItem(legacyKey) != null) localStorage.removeItem(legacyKey);
+    } catch {}
+  }
+}
+
+function isInvalidFromEUR(code = 'EUR', fromEUR = 0) {
+  if (code === 'EUR') return false;
+  const safe = Number(fromEUR);
+  return !Number.isFinite(safe) || safe <= 0 || safe === 1;
+}
+
+function normalizeFxRateOrNull(code = 'EUR', fromEUR = 0, meta = {}) {
+  if (isInvalidFromEUR(code, fromEUR)) {
+    console.info('[finance:fx] invalid-rate', { currency: code, fromEUR: Number(fromEUR), source: String(meta?.source || 'unknown') });
+    return null;
+  }
+  const normalizedFromEUR = Number(fromEUR);
+  return {
+    fromEUR: normalizedFromEUR,
+    toEUR: 1 / normalizedFromEUR,
+    updatedAt: String(meta?.updatedAt || new Date().toISOString()),
+    source: String(meta?.source || 'unknown'),
+    approximate: !!meta?.approximate,
+  };
+}
+
 export async function resolveExchangeRateFromEUR(currency = DEFAULT_CURRENCY) {
   const code = String(currency || DEFAULT_CURRENCY).toUpperCase();
+  removeLegacyRateCaches();
   if (code === 'EUR') {
     return { fromEUR: 1, toEUR: 1, updatedAt: new Date().toISOString(), source: 'base:eur', approximate: false };
   }
-  const cache = readRateCache();
+  const cache = { ...(readRateCache() || {}) };
   const cached = cache[code];
   const now = Date.now();
-  if (cached && Number(cached.fromEUR) > 0 && (now - Number(cached.ts || 0)) < RATE_CACHE_TTL_MS) {
-    console.info('[finance:fx] cache-hit', { currency: code, fromEUR: Number(cached.fromEUR) });
-    return {
-      fromEUR: Number(cached.fromEUR),
-      toEUR: 1 / Number(cached.fromEUR),
-      updatedAt: String(cached.updatedAt || new Date(Number(cached.ts || now)).toISOString()),
-      source: String(cached.source || 'cache'),
-      approximate: !!cached.approximate,
-    };
+  if (cached && (now - Number(cached.ts || 0)) < RATE_CACHE_TTL_MS) {
+    if (isInvalidFromEUR(code, cached.fromEUR)) {
+      delete cache[code];
+      writeRateCache(cache);
+      console.info('[finance:fx] cache-invalidated', { currency: code, reason: 'invalid-legacy-rate', fromEUR: Number(cached.fromEUR) });
+    } else {
+      console.info('[finance:fx] cache-hit', { currency: code, fromEUR: Number(cached.fromEUR) });
+      return {
+        fromEUR: Number(cached.fromEUR),
+        toEUR: 1 / Number(cached.fromEUR),
+        updatedAt: String(cached.updatedAt || new Date(Number(cached.ts || now)).toISOString()),
+        source: String(cached.source || 'cache'),
+        approximate: !!cached.approximate,
+      };
+    }
   }
   console.info('[finance:fx] request', { currency: code });
   const endpoints = [
@@ -71,35 +108,37 @@ export async function resolveExchangeRateFromEUR(currency = DEFAULT_CURRENCY) {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       const rates = payload?.rates || {};
-      const fromEUR = Number(rates[code]);
-      if (fromEUR > 0) {
-        const source = endpoint.includes('er-api') ? 'open.er-api.com' : 'frankfurter.app';
+      const fromEUR = Number(rates?.[code]);
+      const source = endpoint.includes('er-api') ? 'open.er-api.com' : 'frankfurter.app';
+      if (Number.isFinite(fromEUR)) {
         const updatedAt = String(payload?.time_last_update_utc || payload?.date || new Date().toISOString());
+        const normalizedRate = normalizeFxRateOrNull(code, fromEUR, { source, updatedAt, approximate: false });
+        if (!normalizedRate) continue;
         const normalized = {
-          fromEUR,
+          fromEUR: normalizedRate.fromEUR,
           ts: now,
           source,
-          updatedAt,
-          approximate: false,
+          updatedAt: normalizedRate.updatedAt,
+          approximate: normalizedRate.approximate,
         };
         writeRateCache({ ...cache, [code]: normalized });
-        console.info('[finance:fx] response', { currency: code, fromEUR, source });
-        return { fromEUR, toEUR: 1 / fromEUR, updatedAt, source, approximate: false };
+        console.info('[finance:fx] response', { currency: code, fromEUR: normalizedRate.fromEUR, source });
+        return normalizedRate;
       }
+      console.info('[finance:fx] response', { currency: code, source, missingRate: true });
     } catch (error) {
       console.info('[finance:fx] response', { currency: code, endpoint, error: String(error?.message || error) });
     }
   }
   const fallbackFromEUR = Number(FX_FALLBACK_FROM_EUR[code] || BASE_RATES[code]);
-  if (!(fallbackFromEUR > 0)) throw new Error(`fx-rate-unavailable:${code}`);
-  console.info('[finance:fx] fallback-used', { currency: code, fromEUR: fallbackFromEUR });
-  return {
-    fromEUR: fallbackFromEUR,
-    toEUR: 1 / fallbackFromEUR,
-    updatedAt: new Date().toISOString(),
+  const fallback = normalizeFxRateOrNull(code, fallbackFromEUR, {
     source: 'fallback-local',
+    updatedAt: new Date().toISOString(),
     approximate: true,
-  };
+  });
+  if (!fallback) throw new Error(`fx-rate-unavailable:${code}`);
+  console.info('[finance:fx] fallback-used', { currency: code, fromEUR: fallbackFromEUR });
+  return fallback;
 }
 
 export function getDefaultCurrency() { return DEFAULT_CURRENCY; }

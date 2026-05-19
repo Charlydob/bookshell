@@ -3974,6 +3974,7 @@ function renderProductsTicketHero(model, options = {}) {
   const plannedFor = model.activeTicket?.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs());
   const receiptEstimatedTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
   const receiptActualTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
+  const ticketCountry = normalizeProductText(model.activeTicket?.ticketCountry || activeList?.ticketCountry || '');
   const ticketCurrency = String(model.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
   const exchangeRateToEUR = Number(model.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
   const converterDraft = resolveProductsConverterDraft(model);

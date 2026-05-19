@@ -5440,15 +5440,17 @@ margin-bottom: 50px;
   padding: 2px 4px;
   font-size: 12px;
 }
-.financeTab .productsWorkbench__receiptMetaControl[data-products-receipt-currency]{ min-width: 88px; }
-.financeTab .productsWorkbench__receiptMetaControl--fx{ width: 64px; max-width: 64px; text-align: right; }
+.financeTab .productsWorkbench__receiptMetaControl[data-products-receipt-currency]{ min-width: 72px; max-width: 96px; }
+.financeTab .productsWorkbench__receiptMetaControl--fx{ width: 56px; max-width: 56px; text-align: right; font-size: 12px; padding: 2px 3px; }
 .financeTab .productsWorkbench__receiptMetaHint{
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: nowrap;
   font-size: 12px;
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .financeTab .productsWorkbench__receiptMetaControl:hover{

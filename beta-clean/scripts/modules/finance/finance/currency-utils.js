@@ -20,7 +20,7 @@ export const SUPPORTED_CURRENCIES = Object.freeze([
 ]);
 
 const LEGACY_RATE_KEYS = Object.freeze(['financeCurrencyRates', 'financeFxRates']);
-const RATE_KEY = 'financeFxRates:v2';
+const RATE_KEY = 'financeFxRates:v3';
 const RATE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const BASE_RATES = Object.freeze({
   EUR: 1, PEN: 0.247, USD: 0.92, GBP: 1.17, CHF: 1.03, JPY: 0.0059, CNY: 0.127,
@@ -57,6 +57,10 @@ function isInvalidFromEUR(code = 'EUR', fromEUR = 0) {
   return !Number.isFinite(safe) || safe <= 0 || safe === 1;
 }
 
+function logInvalidOneToOneRate(code = 'EUR', fromEUR = 0, source = 'unknown') {
+  console.info('[finance:fx] invalid-1to1-rate', { currency: code, fromEUR: Number(fromEUR), source: String(source || 'unknown') });
+}
+
 function normalizeFxRateOrNull(code = 'EUR', fromEUR = 0, meta = {}) {
   if (isInvalidFromEUR(code, fromEUR)) {
     console.info('[finance:fx] invalid-rate', { currency: code, fromEUR: Number(fromEUR), source: String(meta?.source || 'unknown') });
@@ -83,6 +87,7 @@ export async function resolveExchangeRateFromEUR(currency = DEFAULT_CURRENCY) {
   const now = Date.now();
   if (cached && (now - Number(cached.ts || 0)) < RATE_CACHE_TTL_MS) {
     if (isInvalidFromEUR(code, cached.fromEUR)) {
+      logInvalidOneToOneRate(code, cached.fromEUR, cached.source || 'cache');
       delete cache[code];
       writeRateCache(cache);
       console.info('[finance:fx] cache-invalidated', { currency: code, reason: 'invalid-legacy-rate', fromEUR: Number(cached.fromEUR) });

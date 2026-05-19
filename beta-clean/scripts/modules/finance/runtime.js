@@ -4082,6 +4082,22 @@ function renderProductsTicketHeroSafe(model, options = {}) {
   }
 }
 
+
+function resolveTicketTotals(ticket = {}) {
+  const currency = String(ticket?.ticketCurrency || ticket?.currency || 'EUR').toUpperCase();
+  const items = Array.isArray(ticket?.items) ? ticket.items : Array.isArray(ticket?.lines) ? Object.values(ticket.lines || {}) : [];
+  const totalOriginal = Number(ticket?.totalOriginal) || Number(ticket?.total) || items.reduce((sum, item) => {
+    const qty = Number(item?.qty || item?.quantity || 1);
+    const value = Number(item?.finalPriceOriginal ?? item?.priceOriginal ?? item?.actualPrice ?? item?.price ?? item?.amount ?? 0);
+    return sum + (Math.max(0.01, qty) * value);
+  }, 0);
+  const rateToEUR = currency === 'EUR' ? 1 : Number(ticket?.exchangeRateToEUR || ticket?.fxToEUR || 0);
+  const totalEUR = currency === 'EUR'
+    ? totalOriginal
+    : Number(ticket?.totalEUR || ticket?.convertedAmountEUR || 0) || (rateToEUR > 0 ? (totalOriginal * rateToEUR) : 0);
+  return { currency, totalOriginal, totalEUR, rateToEUR };
+}
+
 function renderProductsTicketRegistry(model) {
   const groupedTickets = model.recentTickets.reduce((acc, ticket) => {
     const ticketDateTs = Number(ticket.confirmedAt || 0) || parseDayKey(ticket.dateISO || '');
@@ -4108,9 +4124,11 @@ const ticketDeleteHint = ticket.txId
   ? 'Eliminar ticket y su movimiento contabilizado'
   : 'Eliminar ticket del registro';
           const imageUrl = String(ticket.imageUrl || ticket.receiptImageUrl || ticket.image || '').trim();
-          const historyCurrency = String(ticket.ticketCurrency || 'EUR').toUpperCase();
-          const historyRateToEUR = Number(ticket.exchangeRateToEUR || getCurrencyRates()[historyCurrency] || 1);
-          const historyTotalOriginal = Number(ticket.totalOriginal || 0);
+          const resolvedTotals = resolveTicketTotals(ticket);
+          const historyCurrency = resolvedTotals.currency;
+          const historyRateToEUR = Number(resolvedTotals.rateToEUR || getCurrencyRates()[historyCurrency] || 1);
+          const historyTotalOriginal = Number(resolvedTotals.totalOriginal || 0);
+          const historyTotalEUR = Number(resolvedTotals.totalEUR || 0);
           return `
             <details class="productsWorkbench__ticketRegistryItem" data-products-ticket-history-item="${escapeHtml(ticket.id)}">
               <summary>
@@ -4142,7 +4160,7 @@ const ticketDeleteHint = ticket.txId
                 <div class="productsWorkbench__ticketTotals">
                   <small>Previsto ${fmtCurrencyCode(Number(ticket.estimatedTotal || 0), historyCurrency)}</small>
                   <strong>${fmtCurrencyCode(historyTotalOriginal, historyCurrency)}</strong>
-                  ${historyCurrency !== 'EUR' ? `<small>Total en euros ≈ ${fmtCurrency(Number(ticket.totalEUR || normalizeMovementCurrencyPayload({ amount: historyTotalOriginal, currency: historyCurrency, exchangeRateToEUR: historyRateToEUR }).amountEUR || 0))}</small>` : ''}
+                  ${historyCurrency !== 'EUR' ? `<small>Total en euros ≈ ${fmtCurrency(historyTotalEUR)}</small>` : ''}
                 </div>
                 <div class="productsWorkbench__ticketRegistryActions">
                   <button type="button" class="food-history-btn" data-products-reuse-ticket="${escapeHtml(ticket.id)}">Reutilizar como lista</button>
@@ -5055,6 +5073,16 @@ function syncProductsReceiptLineToBacking(root = document, lineId = '') {
 
 async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR') {
   const code = String(currency || 'EUR').toUpperCase();
+  const draftImmediate = readProductsListDraftFromDom(root);
+  const immediateTicketId = String(draftImmediate.activeTicketId || draftImmediate.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  draftImmediate.tickets = { ...(draftImmediate.tickets || {}) };
+  draftImmediate.tickets[immediateTicketId] = normalizeProductsListTicketMeta(immediateTicketId, {
+    ...(draftImmediate.tickets?.[immediateTicketId] || {}),
+    ticketCurrency: code,
+    updatedAt: nowTs(),
+  });
+  syncProductsDraftListLocal(draftImmediate);
+  syncProductsTicketComposerDom(root);
   let fx = await resolveExchangeRateFromEUR(code);
   if (code !== 'EUR' && (!(Number(fx?.fromEUR) > 0) || Number(fx?.fromEUR) === 1)) {
     console.info('[finance:fx] invalid-rate', { currency: code, fromEUR: Number(fx?.fromEUR || 0), source: String(fx?.source || 'unknown') });
@@ -6270,7 +6298,7 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
   const payload = {
     id: saveId,
     type: 'expense',
-    amount: totalAmount,
+    amount: Number(list.totalEUR || totalAmount),
     date: dateISO,
     monthKey: dateISO.slice(0, 7),
     accountId,
@@ -6278,7 +6306,12 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     toAccountId: '',
     category,
     note,
-    source: 'receipt/shoppingHub',
+    currency: 'EUR',
+    originalAmount: Number(list.totalOriginal || totalAmount),
+    originalCurrency: String(list.ticketCurrency || 'EUR').toUpperCase(),
+    exchangeRateToEUR: Number(list.exchangeRateToEUR || 1),
+    exchangeRateFromEUR: Number(list.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(list.exchangeRateToEUR || 1)))),
+    source: 'ticket',
     receiptId,
     store,
     supermarket: store,
@@ -6369,10 +6402,10 @@ async function confirmProductsTicketFromDom() {
       Object.entries(draft.lines || {}).filter(([, line]) => String(line?.ticketId || draft.primaryTicketId || '').trim() === activeTicketId),
     );
     const draftLineCount = Object.keys(activeTicketLines || {}).length;
-    const draftTotal = Object.values(activeTicketLines || {}).reduce((sum, line) => sum + Number(line?.priceOriginal ?? line?.actualPrice ?? 0), 0);
+    const actualTotalOriginal = Object.values(activeTicketLines || {}).reduce((sum, line) => sum + Number(line?.finalPriceOriginal ?? line?.priceOriginal ?? line?.actualPrice ?? 0), 0);
     const receiptCurrency = String(activeTicketMeta.ticketCurrency || getDefaultCurrency()).toUpperCase();
     const ticketRate = Number(activeTicketMeta.exchangeRateToEUR || getCurrencyRates()[receiptCurrency] || 1);
-    const receiptCurrencyPayload = normalizeMovementCurrencyPayload({ amount: draftTotal, currency: receiptCurrency, exchangeRateToEUR: ticketRate });
+    const receiptCurrencyPayload = normalizeMovementCurrencyPayload({ amount: actualTotalOriginal, currency: receiptCurrency, exchangeRateToEUR: ticketRate });
     console.info('[finance:currency] ticket:state-before-add', { ticketCurrency: receiptCurrency, exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1) });
     Object.values(activeTicketLines || {}).forEach((line) => {
       const lineTotalOriginal = Number(line?.priceOriginal ?? line?.actualPrice ?? 0);
@@ -6394,7 +6427,7 @@ async function confirmProductsTicketFromDom() {
     ).trim();
     console.log('[ticket:confirm:start]', {
       lines: Object.values(activeTicketLines || {}),
-      total: draftTotal,
+      total: actualTotalOriginal,
       accountId: draftAccountId,
       categoryId: draftCategoryId,
     });
@@ -6514,7 +6547,7 @@ async function confirmProductsTicketFromDom() {
       confirmedAt: confirmedAtTs,
       estimatedTotal,
       actualTotal: Number(receiptCurrencyPayload.amountEUR || validation.total),
-      totalOriginal: Number(draftTotal || 0),
+      totalOriginal: Number(actualTotalOriginal || 0),
       totalEUR: Number(receiptCurrencyPayload.amountEUR || validation.total),
       ticketCurrency: receiptCurrency,
       exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1),
@@ -6525,7 +6558,15 @@ async function confirmProductsTicketFromDom() {
       createdAt: confirmedAtTs,
       updatedAt: confirmedAtTs,
     });
-    console.info('[finance:currency] ticket:totals', { ticketCurrency: receiptCurrency, totalOriginal: Number(draftTotal || 0), totalEUR: Number(receiptCurrencyPayload.amountEUR || validation.total) });
+    console.info('[finance:ticket] totals-resolved', { ticketCurrency: receiptCurrency, totalOriginal: Number(actualTotalOriginal || 0), totalEUR: Number(receiptCurrencyPayload.amountEUR || validation.total), exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1) });
+    if (receiptCurrency !== 'EUR' && Math.abs(Number(receiptCurrencyPayload.amountEUR || validation.total) - Number(actualTotalOriginal || 0)) < 0.01) {
+      console.warn('[finance:ticket] suspicious-1to1-total', {
+        ticketCurrency: receiptCurrency,
+        totalOriginal: Number(actualTotalOriginal || 0),
+        totalEUR: Number(receiptCurrencyPayload.amountEUR || validation.total),
+        exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1),
+      });
+    }
     const shoppingHubUpdates = {
       [productsHubPath(`tickets/${ticketRecord.id}`)]: ticketRecord,
       [productsHubPath(`lists/${convertedList.id}`)]: convertedList,
@@ -6547,7 +6588,7 @@ async function confirmProductsTicketFromDom() {
       exchangeRateFromEUR: Number(activeTicketMeta.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(receiptCurrencyPayload.exchangeRateToEUR || 1)))),
       exchangeRateUpdatedAt: String(activeTicketMeta.exchangeRateUpdatedAt || ''),
       exchangeRateSource: String(activeTicketMeta.exchangeRateSource || ''),
-      totalOriginal: Number(draftTotal || 0),
+      totalOriginal: Number(actualTotalOriginal || 0),
       totalEUR: Number(receiptCurrencyPayload.amountEUR || validation.total),
       accountId: validation.accountId,
       store: validation.store,
@@ -6557,6 +6598,7 @@ async function confirmProductsTicketFromDom() {
       receiptId: ticketId,
       extraUpdates: shoppingHubUpdates,
     });
+    console.info('[finance:movement] from-ticket', { amount: txResult?.payload?.amount, currency: txResult?.payload?.currency || 'EUR', originalAmount: txResult?.payload?.originalAmount, originalCurrency: txResult?.payload?.originalCurrency });
     console.info('[finance:currency] movement:payload', txResult?.payload || null);
     console.log('[ticket:confirm:movementPayload]', txResult?.payload || null);
 
@@ -15612,7 +15654,7 @@ view.addEventListener('focusout', async (event) => {
         console.info('[finance:currency] selected', { currency });
         if (state.productsReceiptError) setProductsReceiptError('');
         await applyTicketCurrencyRateFromApi(view, currency);
-        console.info('[finance:fx] converter:show-on-select', { currency });
+        console.info('[finance:fx] converter:show-immediate', { ticketCurrency: currency, exchangeRateFromEUR: Number(resolveActiveProductsList()?.tickets?.[String(resolveActiveProductsList()?.activeTicketId || resolveActiveProductsList()?.primaryTicketId || 'ticket-1')]?.exchangeRateFromEUR || 0) });
         return;
       }
       if (state.productsReceiptError) setProductsReceiptError('');

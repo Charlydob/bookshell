@@ -5008,7 +5008,17 @@ function syncProductsReceiptLineToBacking(root = document, lineId = '') {
 
 async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR') {
   const code = String(currency || 'EUR').toUpperCase();
-  const fx = await resolveExchangeRateFromEUR(code);
+  let fx = await resolveExchangeRateFromEUR(code);
+  if (code !== 'EUR' && (!(Number(fx?.fromEUR) > 0) || Number(fx?.fromEUR) === 1)) {
+    console.info('[finance:fx] invalid-rate', { currency: code, fromEUR: Number(fx?.fromEUR || 0), source: String(fx?.source || 'unknown') });
+    fx = {
+      fromEUR: code === 'PEN' ? 3.98 : Math.max(0.0000001, Number(fx?.fromEUR || 0)),
+      toEUR: code === 'PEN' ? (1 / 3.98) : 1,
+      updatedAt: new Date().toISOString(),
+      source: 'fallback-protected',
+      approximate: true,
+    };
+  }
   const draft = readProductsListDraftFromDom(root);
   const ticketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   draft.tickets = { ...(draft.tickets || {}) };

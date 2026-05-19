@@ -26,6 +26,7 @@ import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/serv
 import { logFirebaseRead, logFirebaseWrite, registerViewListener, trackedGet, trackedOnValue } from '../../shared/firebase/read-debug.js';
 import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
+import { SUPPORTED_CURRENCIES, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload } from './finance/currency-utils.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -301,7 +302,7 @@ function setHomePanelView(nextView = 'hero') {
   try { localStorage.setItem(HOME_PANEL_VIEW_KEY, state.homePanelView); } catch (_) {}
 }
 function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s])); }
-function fmtCurrency(value) { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(Number(value || 0)); }
+function fmtCurrency(value) { return formatCurrency(Number(value || 0), 'EUR'); }
 function fmtSignedCurrency(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${fmtCurrency(num)}`; }
 function fmtSignedPercent(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${num.toFixed(2)}%`; }
 function toneClass(value) { if (value > 0) return 'is-positive'; if (value < 0) return 'is-negative'; return 'is-neutral'; }
@@ -3978,6 +3979,9 @@ function renderProductsTicketHero(model, options = {}) {
             <button type="button" class="food-history-btn" data-products-move-selected-ticket>Nuevo ticket (${selectedCount})</button>
           </div>
           <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--date" type="date" name="plannedFor" value="${escapeHtml(plannedFor)}" data-products-receipt-date aria-label="Fecha del ticket" />
+          <select class="food-control productsWorkbench__receiptMetaControl" data-products-receipt-currency aria-label="Moneda ticket">
+            ${SUPPORTED_CURRENCIES.map((row) => `<option value="${row.code}">${escapeHtml(row.label)}</option>`).join('')}
+          </select>
         </header>
         <div class="productsWorkbench__receiptLines">
           ${model.listLines.map((line) => renderProductsReceiptLineRow(line, model)).join('')}
@@ -6225,6 +6229,8 @@ async function confirmProductsTicketFromDom() {
     const draftTotal = Object.values(activeTicketLines || {}).reduce((sum, line) => (
       sum + (Math.max(0.01, Number(line?.qty || 1)) * normalizeProductPositiveNumber(line?.actualPrice, normalizeProductPositiveNumber(line?.estimatedPrice, 0)))
     ), 0);
+    const receiptCurrency = String(document.querySelector('[data-products-receipt-currency]')?.value || getDefaultCurrency()).toUpperCase();
+    const receiptCurrencyPayload = normalizeMovementCurrencyPayload({ amount: draftTotal, currency: receiptCurrency });
     const draftAccountId = String(
       activeTicketMeta.accountId
       || draft.accountId
@@ -6359,7 +6365,11 @@ async function confirmProductsTicketFromDom() {
       dateISO: confirmedDateISO,
       confirmedAt: confirmedAtTs,
       estimatedTotal,
-      actualTotal: validation.total,
+      actualTotal: Number(receiptCurrencyPayload.amountEUR || validation.total),
+      totalOriginal: Number(draftTotal || 0),
+      totalEUR: Number(receiptCurrencyPayload.amountEUR || validation.total),
+      ticketCurrency: receiptCurrency,
+      exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1),
       lines: persistedActiveTicketLines,
       createdAt: confirmedAtTs,
       updatedAt: confirmedAtTs,
@@ -6379,6 +6389,11 @@ async function confirmProductsTicketFromDom() {
 
     const txResult = await saveProductsPurchaseTransaction({
       ...ticketPayload,
+      total: Number(receiptCurrencyPayload.amountEUR || validation.total),
+      ticketCurrency: receiptCurrency,
+      exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1),
+      totalOriginal: Number(draftTotal || 0),
+      totalEUR: Number(receiptCurrencyPayload.amountEUR || validation.total),
       accountId: validation.accountId,
       store: validation.store,
       ticketCategoryId: validation.ticketCategoryId,
@@ -8370,6 +8385,7 @@ function getEmptyMovementForm(overrides = {}) {
   return {
     type: 'expense',
     amount: '',
+    currency: getDefaultCurrency(),
     dateISO: defaultDate,
     accountId: defaultAccountId,
     fromAccountId: '',
@@ -12134,6 +12150,9 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
 
       <div class="fm-field fm-field--amount">
         <input id="fm-tx-amount" class="fm-control fm-control--amount" required name="amount" type="number" step="0.01" placeholder="Cantidad (€)" value="${escapeHtml(defaultAmount)}" aria-label="Cantidad"/>
+        <select class="fm-control fm-control--select" name="currency" aria-label="Moneda">
+          ${SUPPORTED_CURRENCIES.map((row) => `<option value="${row.code}" ${String(state.balanceFormState.currency || getDefaultCurrency()) === row.code ? 'selected' : ''}>${escapeHtml(row.label)}</option>`).join('')}
+        </select>
         </div>
       <div class="fm-field fm-field--account" data-tx-account-from hidden>
         <label class="fm-label-cuenta-origen" for="fm-tx-account-from">Cuenta origen</label>
@@ -12431,7 +12450,10 @@ if (form) {
       const actionButtons = row.recurringVirtual
         ? `<button class="finance-pill finance-pill--mini" data-recurring-instance-open="${escapeHtml(String(row.recurringId || ''))}" data-recurring-month="${escapeHtml(String(row.monthKey || monthKey))}">✏️</button>`
         : `<button class="finance-pill finance-pill--mini" data-tx-edit="${row.id}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${row.id}">❌</button>`;
-      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrency(row.amount)}</strong><span class="finance-row" id="filas-movimiento" >${actionButtons}</span></div>`;
+      const originalCurrency = String(row.originalCurrency || row.currency || 'EUR').toUpperCase();
+      const hasOriginal = originalCurrency !== 'EUR' && Number.isFinite(Number(row.originalAmount));
+      const originalText = hasOriginal ? ` · ${formatCurrency(row.originalAmount, originalCurrency)}` : '';
+      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrency(row.amount)}${originalText}</strong><span class="finance-row" id="filas-movimiento" >${actionButtons}</span></div>`;
     }).join('') || '<p class="finance-empty">Sin movimientos.</p>'}</div></div>`;
     return;
   }
@@ -12442,7 +12464,7 @@ if (form) {
     const rows = buildDrilldownRows(txType, monthKey);
     const title = txType === 'income' ? 'Ingresos' : 'Gastos';
     const accountName = (id) => escapeHtml(resolvedAccounts.find((a) => a.id === id)?.name || 'Sin cuenta');
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title} · ${monthLabelByKey(monthKey)}</h3><div class="finance-row"><button class="finance-pill" data-drilldown-month="-1">◀</button><button class="finance-pill" data-drilldown-month="1">▶</button><button class="finance-pill" data-drilldown-add="${txType}">+ Añadir</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header><div class="financeTxList financeTxList--scroll" style="max-height:360px;overflow-y:auto;">${rows.map((row) => `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountName(row.accountId)}</span><strong class="${txType === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}</strong></div>`).join('') || '<p class="finance-empty">Sin registros en este mes.</p>'}</div></div>`;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title} · ${monthLabelByKey(monthKey)}</h3><div class="finance-row"><button class="finance-pill" data-drilldown-month="-1">◀</button><button class="finance-pill" data-drilldown-month="1">▶</button><button class="finance-pill" data-drilldown-add="${txType}">+ Añadir</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header><div class="financeTxList financeTxList--scroll" style="max-height:360px;overflow-y:auto;">${rows.map((row) => { const oc=String(row.originalCurrency || row.currency || 'EUR').toUpperCase(); const extra=oc!=='EUR'&&Number.isFinite(Number(row.originalAmount))?` · ${formatCurrency(row.originalAmount, oc)}`:''; return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountName(row.accountId)}</span><strong class="${txType === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}${extra}</strong></div>`; }).join('') || '<p class="finance-empty">Sin registros en este mes.</p>'}</div></div>`;
     return;
   }
   if (state.modal.type === 'calendar-day-edit') {
@@ -15946,6 +15968,8 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       const txId = String(form.get('txId') || '').trim();
       const type = normalizeTxType(String(form.get('type') || 'expense'));
       const amount = parseMoney(String(form.get('amount') || ''));
+      const movementCurrency = String(form.get('currency') || getDefaultCurrency()).toUpperCase();
+      const currencyPayload = normalizeMovementCurrencyPayload({ amount, currency: movementCurrency });
       const dateISO = toIsoDay(String(form.get('dateISO') || dayKeyFromTs(Date.now()))) || dayKeyFromTs(Date.now());
       const pickedCategory = String(form.get('category') || '').trim();
       const category = type === 'transfer' ? 'transfer' : (pickedCategory || 'Sin categoría');
@@ -16070,7 +16094,12 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         ...(prev && typeof prev === 'object' ? clonePlain(prev) : {}),
         id: saveId,
         type,
-        amount,
+        amount: Number(currencyPayload.amountEUR || 0),
+        originalAmount: Number(currencyPayload.originalAmount || amount),
+        originalCurrency: movementCurrency,
+        exchangeRateToEUR: Number(currencyPayload.exchangeRateToEUR || 1),
+        convertedAmountEUR: Number(currencyPayload.convertedAmountEUR || currencyPayload.amountEUR || amount),
+        currency: 'EUR',
         date: dateISO,
         monthKey: dateISO.slice(0, 7),
         accountId: type === 'transfer' ? '' : accountId,
@@ -16115,7 +16144,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         ? {
           ...(linkedRecurringTemplate && typeof linkedRecurringTemplate === 'object' ? linkedRecurringTemplate : {}),
           type,
-          amount,
+          amount: Number(currencyPayload.amountEUR || 0),
           accountId: type === 'transfer' ? '' : accountId,
           fromAccountId: type === 'transfer' ? fromAccountId : '',
           toAccountId: type === 'transfer' ? toAccountId : '',

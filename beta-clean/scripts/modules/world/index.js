@@ -132,61 +132,63 @@ function logWorldClusterZoom(){
   console.log("[world:cluster:zoom]", zoom, visibleMarkers, visibleClusters);
 }
 
+function getItemLatLng(item = {}){
+  const latRaw = item.lat ?? item.latitude ?? item.coords?.lat ?? item.location?.lat ?? item.geo?.lat;
+  const lngRaw = item.lng ?? item.lon ?? item.longitude ?? item.coords?.lng ?? item.location?.lng ?? item.geo?.lng;
+  return { lat:Number(latRaw), lng:Number(lngRaw) };
+}
+
 function renderWorldMarkers(){
   if(!window.L || !state.map) return;
   const L = window.L;
   destroyWorldMapLayers();
 
   const dotIcon = L.divIcon({ className:"notes-map-dot-icon", html:'<span class="notes-map-dot" aria-hidden="true"></span>', iconSize:[12,12], iconAnchor:[6,6] });
-  const allRows = [...state.geography, ...state.places];
+  const allRows = [...state.geography, ...state.places].filter(Boolean);
   const totalItems = allRows.length;
   let withCoords = 0;
   let skipped = 0;
   let addedMarkers = 0;
+  const sampleSkipped = [];
 
-  const layerSupportsClusters = typeof L.markerClusterGroup === "function";
-  if (layerSupportsClusters) {
-    state.worldClusterGroup = L.markerClusterGroup({
+  let fallback = false;
+  const canCluster = typeof L.markerClusterGroup === "function";
+  try {
+    state.worldClusterGroup = canCluster ? L.markerClusterGroup({
       showCoverageOnHover: false,
       spiderfyOnMaxZoom: true,
-      disableClusteringAtZoom: 16,
-      maxClusterRadius: 55,
+      disableClusteringAtZoom: 17,
+      maxClusterRadius: 60,
       iconCreateFunction: (cluster) => createWorldClusterIcon(cluster.getChildCount())
-    });
-  } else {
-    console.warn("[world:cluster] markerClusterGroup plugin missing; falling back to layerGroup");
+    }) : L.layerGroup();
+  } catch (_err) {
+    fallback = true;
     state.worldClusterGroup = L.layerGroup();
   }
+  if (!canCluster) fallback = true;
+  console.log("[world:markers:fallback]", fallback);
 
-  state.worldClusterGroup.addTo(state.map);
-
-  allRows.forEach((r) => {
-    const latRaw = r.lat ?? r.latitude ?? r.coords?.lat ?? r.location?.lat;
-    const lngRaw = r.lon ?? r.lng ?? r.longitude ?? r.coords?.lng ?? r.location?.lng;
-    if (latRaw === undefined || lngRaw === undefined) {
+  allRows.forEach((item) => {
+    const { lat, lng } = getItemLatLng(item);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       skipped += 1;
+      if (sampleSkipped.length < 3) sampleSkipped.push({ id:item.id, keys:Object.keys(item || {}) });
       return;
     }
     withCoords += 1;
-    const lat = Number(latRaw);
-    const lng = Number(lngRaw);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      skipped += 1;
-      console.warn("[world:cluster:skip:invalid-coords]", { id:r.id, lat:latRaw, lng:lngRaw });
-      return;
-    }
     const marker = L.marker([lat, lng], { icon:dotIcon });
-    marker.bindPopup(buildPopup(r));
+    marker.bindPopup(buildPopup(item));
     state.worldClusterGroup.addLayer(marker);
-    state.markers.set(r.id, marker);
-    state.mapMarkersIndex.set(r.id, marker);
+    state.markers.set(item.id, marker);
+    state.mapMarkersIndex.set(item.id, marker);
     addedMarkers += 1;
   });
 
-  if (!state.map.hasLayer(state.worldClusterGroup)) {
-    state.map.addLayer(state.worldClusterGroup);
-  }
-  console.log("[world:cluster:data]", { totalItems, withCoords, skipped, addedMarkers });
+  state.worldClusterGroup.addTo(state.map);
+  console.log("[world:markers:source]", totalItems);
+  console.log("[world:markers:coords]", withCoords, skipped);
+  console.log("[world:markers:added]", addedMarkers);
+  if (addedMarkers === 0) console.warn("[world:markers:empty:samples]", sampleSkipped);
   logWorldClusterZoom();
 }
 function renderMap(){ if(!window.L) return; const host = $id("world-map"); if(!host) return; if(!state.map) state.map = createLeafletMap(host, { center:[state.userCenter.lat, state.userCenter.lon], zoom:5 }); renderWorldMarkers(); }
@@ -207,7 +209,7 @@ function worldGoogleMapsBtn(r = {}, label = "🧭 Cómo llegar", className = "wo
   if (url) console.log("[world:directions:rendered]", r.id || "", hasCoords, url);
   return url ? `<a class="${className}" href="${url}" target="_blank" rel="noopener">${label}</a>` : "";
 }
-function renderLocals(){ const rows=state.places; const mode = $id("world-locals-group")?.value || "type"; if (mode === "type") { const groups = rows.reduce((acc, r)=>{ const normalizedName = normalizeChainName(r); const key = normalizedName.toLowerCase(); (acc[key] ||= { label:normalizedName, emoji:r.emoji || "🏪", rows:[] }).rows.push(r); return acc; }, {}); $id("world-locals-list").innerHTML = Object.values(groups).map((g)=>{ const ratedRows = g.rows.filter((r) => Number.isFinite(Number(r.rating))); const avg = ratedRows.length ? ratedRows.reduce((sum, r) => sum + Number(r.rating || 0), 0) / ratedRows.length : 0; const pricedRows = g.rows.filter((r) => Number.isFinite(Number(r.price))); const avgPrice = pricedRows.length ? pricedRows.reduce((sum, r) => sum + Number(r.price || 0), 0) / pricedRows.length : null; const cheapest = pricedRows.length ? pricedRows.reduce((best, row) => (!best || Number(row.price) < Number(best.price) ? row : best), null) : null; const mostExpensive = pricedRows.length ? pricedRows.reduce((best, row) => (!best || Number(row.price) > Number(best.price) ? row : best), null) : null; return `<details><summary><strong>${g.emoji} ${g.label}</strong> · ${g.rows.length} visitas · ${stars10(avg)} ${avg.toFixed(1)}/10</summary>${avgPrice !== null ? `<div class="world-rich-item"><div><small>Precio medio: ${avgPrice.toFixed(2)} €</small><small>Más barato: ${cheapest?.city || cheapest?.region || cheapest?.name || "Local"} · ${Number(cheapest?.price || 0).toFixed(2)} €</small><small>Más caro: ${mostExpensive?.city || mostExpensive?.region || mostExpensive?.name || "Local"} · ${Number(mostExpensive?.price || 0).toFixed(2)} €</small></div></div>` : ""}${g.rows.map((r)=>`<div class="world-rich-item"><div class="world-local-card"><div class="world-local-line world-local-line-main"><span class="world-local-zone">${r.city || r.region || "Sin ciudad"}</span><span class="world-local-dot">·</span><span class="world-local-rating">${(r.rating ?? 0).toFixed(1)}/10</span><span class="world-local-dot">·</span><span class="world-local-name">${r.name || "Local"}</span></div>${Number.isFinite(Number(r.price)) ? `<div class="world-local-line world-local-line-product"><span class="world-local-product">${r.productName || "Producto"}</span><span class="world-local-approx">≈</span><span class="world-local-price">${Number(r.price).toFixed(2)} €</span></div>` : ""}${worldGoogleMapsBtn(r)}</div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("")}</details>`; }).join("") || "<div>Sin locales.</div>"; return; } if (mode !== "country") { $id("world-locals-list").innerHTML = rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.emoji || "🏪"} ${r.name}</strong><div>${stars10(r.rating || 0)} ${(r.rating ?? 0).toFixed(1)}/10</div><small>${r.category || "Local"} · ${r.city || ""}</small>${worldGoogleMapsBtn(r)}</div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("") || "<div>Sin locales.</div>"; return; } const groups = rows.reduce((acc, r)=>{ const key = r.countryCode || r.country || "XX"; (acc[key] ||= { country:r.country, countryCode:r.countryCode, rows:[] }).rows.push(r); return acc; }, {}); $id("world-locals-list").innerHTML = Object.values(groups).map((g)=>`<details open><summary><strong>${flag(g.countryCode)} ${g.country || getCountryEnglishName(g.countryCode) || "Sin país"}</strong></summary>${g.rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.name}</strong><small>${r.city || r.region || ""}</small>${worldGoogleMapsBtn(r)}</div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("")}</details>`).join("") || "<div>Sin locales.</div>"; }
+function renderLocals(){ const rows=state.places; const mode = $id("world-locals-group")?.value || "type"; if (mode === "type") { const groups = rows.reduce((acc, r)=>{ const normalizedName = normalizeChainName(r); const key = normalizedName.toLowerCase(); (acc[key] ||= { label:normalizedName, emoji:r.emoji || "🏪", rows:[] }).rows.push(r); return acc; }, {}); $id("world-locals-list").innerHTML = Object.values(groups).map((g)=>{ const ratedRows = g.rows.filter((r) => Number.isFinite(Number(r.rating))); const avg = ratedRows.length ? ratedRows.reduce((sum, r) => sum + Number(r.rating || 0), 0) / ratedRows.length : 0; const pricedRows = g.rows.filter((r) => Number.isFinite(Number(r.price))); const avgPrice = pricedRows.length ? pricedRows.reduce((sum, r) => sum + Number(r.price || 0), 0) / pricedRows.length : null; const cheapest = pricedRows.length ? pricedRows.reduce((best, row) => (!best || Number(row.price) < Number(best.price) ? row : best), null) : null; const mostExpensive = pricedRows.length ? pricedRows.reduce((best, row) => (!best || Number(row.price) > Number(best.price) ? row : best), null) : null; return `<details><summary><strong>${g.emoji} ${g.label}</strong> · ${g.rows.length} visitas · ${stars10(avg)} ${avg.toFixed(1)}/10</summary>${avgPrice !== null ? `<div class="world-rich-item"><div><small>Precio medio: ${avgPrice.toFixed(2)} €</small><small>Más barato: ${cheapest?.city || cheapest?.region || cheapest?.name || "Local"} · ${Number(cheapest?.price || 0).toFixed(2)} €</small><small>Más caro: ${mostExpensive?.city || mostExpensive?.region || mostExpensive?.name || "Local"} · ${Number(mostExpensive?.price || 0).toFixed(2)} €</small></div></div>` : ""}${g.rows.map((r)=>`<div class="world-rich-item"><div class="world-local-card"><div class="world-local-line world-local-line-main"><span class="world-local-zone">${r.city || r.region || "Sin ciudad"}</span><span class="world-local-dot">·</span><span class="world-local-rating">${(r.rating ?? 0).toFixed(1)}/10</span><span class="world-local-dot">·</span><span class="world-local-name">${r.name || "Local"}</span></div>${Number.isFinite(Number(r.price)) ? `<div class="world-local-line world-local-line-product"><span class="world-local-product">${r.productName || "Producto"}</span><span class="world-local-approx">≈</span><span class="world-local-price">${Number(r.price).toFixed(2)} €</span></div>` : ""}${worldGoogleMapsBtn(r)}</div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("")}</details>`; }).join("") || "<div>Sin locales.</div>"; return; } if (mode !== "country") { $id("world-locals-list").innerHTML = rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.emoji || "🏪"} ${r.name}</strong><div>${stars10(r.rating || 0)} ${(r.rating ?? 0).toFixed(1)}/10</div><small>${r.category || "Local"} · ${r.city || ""}</small>${worldGoogleMapsBtn(r)}</div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("") || "<div>Sin locales.</div>"; return; } const countries = rows.reduce((acc, r)=>{ const key = r.countryCode || r.country || "XX"; (acc[key] ||= { country:r.country, countryCode:r.countryCode, rows:[] }).rows.push(r); return acc; }, {}); $id("world-locals-list").innerHTML = Object.values(countries).map((country)=>{ const grouped = country.rows.reduce((acc, r)=>{ const label = normalizeChainName(r) || r.category || "Local"; const key = label.toLowerCase(); (acc[key] ||= { label, rows:[] }).rows.push(r); return acc; }, {}); const groupList = Object.values(grouped).map((group)=>{ const rated = group.rows.filter((x) => Number.isFinite(Number(x.rating))); const groupAvg = rated.length ? rated.reduce((sum, x) => sum + Number(x.rating || 0), 0) / rated.length : 0; return { ...group, groupAvg }; }); const ratedGroups = groupList.filter((g) => Number.isFinite(Number(g.groupAvg))); const countryAvg = ratedGroups.length ? ratedGroups.reduce((sum, g) => sum + Number(g.groupAvg || 0), 0) / ratedGroups.length : 0; return `<details open><summary><strong>${flag(country.countryCode)} ${country.country || getCountryEnglishName(country.countryCode) || "Sin país"}</strong> · ${stars10(countryAvg)} ${countryAvg.toFixed(1)}/10</summary>${groupList.map((group)=>`<details><summary><strong>${group.label}</strong> · ${stars10(group.groupAvg)} ${group.groupAvg.toFixed(1)}/10 · ${group.rows.length} locales</summary>${group.rows.map((r)=>`<div class="world-rich-item"><div><strong>${r.name}</strong><small>${r.city || r.region || ""}</small>${worldGoogleMapsBtn(r)}</div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("")}</details>`).join("")}</details>`; }).join("") || "<div>Sin locales.</div>"; }
 function renderStats(){ $id("world-countries").textContent = String(new Set([...state.geography, ...state.places].map((x)=>x.countryCode).filter(Boolean)).size); $id("world-geo-count").textContent = String(state.geography.length); $id("world-rated-locals").textContent = String(state.places.length); }
 function renderAll(){ renderStats(); renderMap(); renderGeoList(); renderLocals(); }
 

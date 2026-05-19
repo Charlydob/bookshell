@@ -5037,6 +5037,7 @@ async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR')
     };
   }
   const draft = readProductsListDraftFromDom(root);
+  const hasLines = Object.keys(draft?.lines || {}).length > 0;
   const ticketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   draft.tickets = { ...(draft.tickets || {}) };
   draft.tickets[ticketId] = normalizeProductsListTicketMeta(ticketId, {
@@ -5053,6 +5054,9 @@ async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR')
   if (fx.approximate) setProductsReceiptError('Usando tasa aproximada');
   syncProductsDraftListLocal(draft);
   syncProductsTicketComposerDom(root);
+  if (!hasLines && code !== 'EUR') {
+    console.info('[finance:fx] converter:persist-empty-ticket', { ticketId, currency: code, exchangeRateFromEUR: Number(fx.fromEUR || 1), exchangeRateToEUR: Number(fx.toEUR || 1) });
+  }
   console.info('[finance:fx] recalculated-ticket', { ticketId, currency: code });
 }
 
@@ -15557,7 +15561,14 @@ view.addEventListener('focusout', async (event) => {
       return;
     }
     if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment], [data-products-ticket-category], [data-products-receipt-currency]')) {
-      if (event.target.matches('[data-products-receipt-currency]')) console.info('[finance:currency] selected', { currency: String(event.target.value || '').toUpperCase() });
+      if (event.target.matches('[data-products-receipt-currency]')) {
+        const currency = String(event.target.value || '').toUpperCase();
+        console.info('[finance:currency] selected', { currency });
+        if (state.productsReceiptError) setProductsReceiptError('');
+        await applyTicketCurrencyRateFromApi(view, currency);
+        console.info('[finance:fx] converter:show-on-select', { currency });
+        return;
+      }
       if (state.productsReceiptError) setProductsReceiptError('');
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
@@ -15705,13 +15716,7 @@ view.addEventListener('focusout', async (event) => {
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;
     }
-    if (event.target.matches('[data-products-receipt-date], [data-products-receipt-payment], [data-products-receipt-currency]')) {
-      if (event.target.matches('[data-products-receipt-currency]')) {
-        const currency = String(event.target.value || '').toUpperCase();
-        console.info('[finance:currency] ticket:selected', { currency });
-        await applyTicketCurrencyRateFromApi(view, currency);
-        return;
-      }
+    if (event.target.matches('[data-products-receipt-date], [data-products-receipt-payment]')) {
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;

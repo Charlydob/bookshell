@@ -10,6 +10,7 @@ const id = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const stars10 = (v = 0) => "★".repeat(Math.round(v)).padEnd(10, "☆");
 const hav = (a, b, c, d) => { const R = 6371000; const to = (x) => x * Math.PI / 180; const d1 = to(c - a), d2 = to(d - b); const q = Math.sin(d1 / 2) ** 2 + Math.cos(to(a)) * Math.cos(to(c)) * Math.sin(d2 / 2) ** 2; return 2 * R * Math.atan2(Math.sqrt(q), Math.sqrt(1 - q)); };
 const countryNameToIso = new Intl.DisplayNames(["en"], { type:"region" });
+const WORLD_LOCATION_PERMISSION_KEY = "worldLocationPermissionAccepted";
 
 const state = { initialized:false, unsub:null, rootRef:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add" };
 
@@ -216,7 +217,23 @@ function bindUI(){
 }
 
 function initMiniMap(){ if(!window.L) return; const host=$id("world-mini-map"); if(!host) return; if(!state.miniMap) state.miniMap=createLeafletMap(host, { center:[state.userCenter.lat,state.userCenter.lon], zoom:15 }); state.miniMap.setView([state.userCenter.lat,state.userCenter.lon],15); renderPlaceResults(); }
-async function getCurrentPositionSafe(){ if (!(window.isSecureContext && navigator.geolocation)) return null; return new Promise((resolve)=>navigator.geolocation.getCurrentPosition((pos)=>resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }), ()=>resolve(null), { enableHighAccuracy:true, maximumAge:60000, timeout:12000 })); }
+async function resolveWorldLocationPermissionState(){
+  if (!navigator.permissions?.query) return "unknown";
+  try {
+    const result = await navigator.permissions.query({ name:"geolocation" });
+    return String(result?.state || "unknown");
+  } catch { return "unknown"; }
+}
+async function getCurrentPositionSafe({ forceRequest = false } = {}){
+  if (!(window.isSecureContext && navigator.geolocation)) return null;
+  const cachedAccepted = localStorage.getItem(WORLD_LOCATION_PERMISSION_KEY) === "true";
+  if (cachedAccepted && !forceRequest) console.log("[world:location] permission:cached");
+  const permissionState = await resolveWorldLocationPermissionState();
+  if (!forceRequest && !cachedAccepted) return null;
+  if (permissionState === "denied") { localStorage.removeItem(WORLD_LOCATION_PERMISSION_KEY); console.log("[world:location] permission:denied"); return null; }
+  console.log("[world:location] permission:request");
+  return new Promise((resolve)=>navigator.geolocation.getCurrentPosition((pos)=>{ localStorage.setItem(WORLD_LOCATION_PERMISSION_KEY, "true"); console.log("[world:location] permission:accepted"); resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }); }, ()=>{ localStorage.removeItem(WORLD_LOCATION_PERMISSION_KEY); console.log("[world:location] permission:denied"); resolve(null); }, { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
+}
 
 export async function init(){ if(state.initialized) return; state.initialized=true; await ensureLeaflet(); bindUI(); renderRatings(); const p=await getCurrentPositionSafe(); if(p) state.userCenter=p; const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; state.rootRef=ref(db, WORLD_PATH(uid)); state.unsub=trackedOnValue(state.rootRef, (snap)=>{ const data=snap.val()||{}; state.geography=Object.values(data.geography||{}).map((x)=>normalize(x,"geography")); state.places=Object.values(data.places||{}).map((x)=>normalize(x,"places")); renderAll(); if (state.map && !state._mapClusterBound) { state._mapClusterBound = true; state.map.on("zoomend", ()=>renderMap()); state.map.on("moveend", ()=>renderMap()); } }, { key:"world-root", path:WORLD_PATH(uid), module:"world", mode:"onValue", reason:"world-sync", viewId:"view-world" }, onValue); }
 export function destroy(){ if(state.unsub) state.unsub(); state.unsub=null; if(state.map){ destroyLeafletMap($id("world-map")); state.map=null; } if(state.miniMap){ destroyLeafletMap($id("world-mini-map")); state.miniMap=null; } state.initialized=false; }

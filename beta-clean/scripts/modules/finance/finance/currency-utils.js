@@ -1,12 +1,30 @@
 export const DEFAULT_CURRENCY = 'EUR';
 export const SUPPORTED_CURRENCIES = Object.freeze([
-  { code: 'EUR', symbol: '€', label: 'EUR €' },
-  { code: 'PEN', symbol: 'S/', label: 'PEN S/' },
-  { code: 'USD', symbol: '$', label: 'USD $' },
+  { code: 'EUR', symbol: '€', label: 'EUR € Euro' },
+  { code: 'PEN', symbol: 'S/', label: 'PEN S/ Sol peruano' },
+  { code: 'USD', symbol: '$', label: 'USD $ Dólar estadounidense' },
+  { code: 'GBP', symbol: '£', label: 'GBP £ Libra esterlina' },
+  { code: 'CHF', symbol: 'CHF', label: 'CHF CHF Franco suizo' },
+  { code: 'JPY', symbol: '¥', label: 'JPY ¥ Yen japonés' },
+  { code: 'CNY', symbol: '¥', label: 'CNY ¥ Yuan chino' },
+  { code: 'MXN', symbol: '$', label: 'MXN $ Peso mexicano' },
+  { code: 'COP', symbol: '$', label: 'COP $ Peso colombiano' },
+  { code: 'ARS', symbol: '$', label: 'ARS $ Peso argentino' },
+  { code: 'BRL', symbol: 'R$', label: 'BRL R$ Real brasileño' },
+  { code: 'CLP', symbol: '$', label: 'CLP $ Peso chileno' },
+  { code: 'CAD', symbol: '$', label: 'CAD $ Dólar canadiense' },
+  { code: 'AUD', symbol: '$', label: 'AUD $ Dólar australiano' },
+  { code: 'NOK', symbol: 'kr', label: 'NOK kr Corona noruega' },
+  { code: 'SEK', symbol: 'kr', label: 'SEK kr Corona sueca' },
+  { code: 'DKK', symbol: 'kr', label: 'DKK kr Corona danesa' },
 ]);
 
 const RATE_KEY = 'bookshell_finance_currency_rates_v1';
-const BASE_RATES = Object.freeze({ EUR: 1, PEN: 0.25, USD: 0.92 });
+const BASE_RATES = Object.freeze({
+  EUR: 1, PEN: 0.247, USD: 0.92, GBP: 1.17, CHF: 1.03, JPY: 0.0059, CNY: 0.127,
+  MXN: 0.051, COP: 0.00022, ARS: 0.001, BRL: 0.17, CLP: 0.001, CAD: 0.67, AUD: 0.61,
+  NOK: 0.086, SEK: 0.087, DKK: 0.134,
+});
 
 export function getDefaultCurrency() { return DEFAULT_CURRENCY; }
 

@@ -26,7 +26,7 @@ import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/serv
 import { logFirebaseRead, logFirebaseWrite, registerViewListener, trackedGet, trackedOnValue } from '../../shared/firebase/read-debug.js';
 import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
-import { SUPPORTED_CURRENCIES, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload } from './finance/currency-utils.js';
+import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload } from './finance/currency-utils.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -303,6 +303,7 @@ function setHomePanelView(nextView = 'hero') {
 }
 function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s])); }
 function fmtCurrency(value) { return formatCurrency(Number(value || 0), 'EUR'); }
+function fmtCurrencyCode(value, currency = 'EUR') { return formatCurrency(Number(value || 0), currency || 'EUR'); }
 function fmtSignedCurrency(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${fmtCurrency(num)}`; }
 function fmtSignedPercent(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${num.toFixed(2)}%`; }
 function toneClass(value) { if (value > 0) return 'is-positive'; if (value < 0) return 'is-negative'; return 'is-neutral'; }
@@ -2200,6 +2201,8 @@ function cloneProductsListRecord(list = {}) {
 
 function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
   const safeId = String(ticketId || payload?.id || createFinanceRecordId('lticket')).trim();
+  const ticketCurrency = String(payload?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const exchangeRateToEUR = Number(payload?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
   return {
     id: safeId,
     label: normalizeProductText(payload?.label || ''),
@@ -2211,6 +2214,8 @@ function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
     notes: normalizeProductText(payload?.notes || ''),
     confirmedAt: normalizeProductNumber(payload?.confirmedAt, 0),
     accountedTxId: normalizeProductText(payload?.accountedTxId || ''),
+    ticketCurrency,
+    exchangeRateToEUR: Number.isFinite(exchangeRateToEUR) && exchangeRateToEUR > 0 ? exchangeRateToEUR : 1,
     confirmedTicketId: normalizeProductText(payload?.confirmedTicketId || ''),
     sortOrder: normalizeProductNumber(payload?.sortOrder, 0),
     createdAt: normalizeProductNumber(payload?.createdAt, nowTs()),
@@ -3434,6 +3439,9 @@ function renderProductsReceiptLineRow(line, model) {
   const selection = state.foodProductsView?.receiptSelections?.[listId] || {};
   const isSelected = !!selection[lineId];
   const normalized = calculateLineTotals(line);
+  const ticketCurrency = String(model?.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const lineRate = Number(model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
+  const lineTotalEUR = normalizeMovementCurrencyPayload({ amount: normalized.actualPrice || 0, currency: ticketCurrency, exchangeRateToEUR: lineRate }).amountEUR;
   const lineDiffMeta = resolveProductsReceiptDiffMeta(normalized.diffSubtotal);
   return `
     <div class="productsWorkbench__receiptRow ${isSelected ? 'is-selected' : ''}" data-products-receipt-row="${escapeHtml(lineId)}">
@@ -3474,11 +3482,12 @@ function renderProductsReceiptLineRow(line, model) {
           class="productsWorkbench__receiptTotal food-control"
           type="text"
           inputmode="decimal"
-          value="${escapeHtml(fmtCurrency(normalized.actualPrice || 0))}"
+          value="${escapeHtml(fmtCurrencyCode(normalized.actualPrice || 0, ticketCurrency))}"
           aria-label="Precio real de ${escapeHtml(line.name || 'producto')}"
           data-money-last-valid="${escapeHtml(String(Number(normalized.actualPrice || 0).toFixed(2)))}"
           data-products-receipt-total="${escapeHtml(lineId)}" />
         <small class="productsWorkbench__receiptLineDiff is-${lineDiffMeta.tone}" data-products-receipt-diff="${escapeHtml(lineId)}">${lineDiffMeta.label}</small>
+        ${ticketCurrency !== 'EUR' ? `<small class="productsWorkbench__receiptLineDiff">≈ ${fmtCurrency(lineTotalEUR)}</small>` : ''}
       </div>
       <button type="button" class="productsWorkbench__receiptRemove" data-products-remove-line="${escapeHtml(lineId)}" aria-label="Eliminar ${escapeHtml(line.name || 'linea')}">❌</button>
     </div>
@@ -3945,6 +3954,9 @@ function renderProductsTicketHero(model, options = {}) {
   const plannedFor = model.activeTicket?.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs());
   const receiptEstimatedTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
   const receiptActualTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
+  const ticketCurrency = String(model.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const exchangeRateToEUR = Number(model.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
+  const receiptTotalEUR = Number(normalizeMovementCurrencyPayload({ amount: receiptActualTotal, currency: ticketCurrency, exchangeRateToEUR }).amountEUR || 0);
   const diffMeta = resolveProductsReceiptDiffMeta(receiptActualTotal - receiptEstimatedTotal);
   const receiptError = normalizeProductText(state.productsReceiptError || '');
   return `
@@ -3980,8 +3992,9 @@ function renderProductsTicketHero(model, options = {}) {
           </div>
           <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--date" type="date" name="plannedFor" value="${escapeHtml(plannedFor)}" data-products-receipt-date aria-label="Fecha del ticket" />
           <select class="food-control productsWorkbench__receiptMetaControl" data-products-receipt-currency aria-label="Moneda ticket">
-            ${SUPPORTED_CURRENCIES.map((row) => `<option value="${row.code}">${escapeHtml(row.label)}</option>`).join('')}
+            ${SUPPORTED_CURRENCIES.map((row) => `<option value="${row.code}" ${ticketCurrency === row.code ? 'selected' : ''}>${escapeHtml(row.label)}</option>`).join('')}
           </select>
+          ${ticketCurrency !== 'EUR' ? `<small class="productsWorkbench__receiptMetaHint">1 EUR ≈ ${(1 / Math.max(0.0000001, exchangeRateToEUR)).toLocaleString('es-ES', { maximumFractionDigits: 3 })} ${escapeHtml(ticketCurrency)}</small>` : ''}
         </header>
         <div class="productsWorkbench__receiptLines">
           ${model.listLines.map((line) => renderProductsReceiptLineRow(line, model)).join('')}
@@ -3991,16 +4004,17 @@ function renderProductsTicketHero(model, options = {}) {
           <div class="productsWorkbench__receiptDivider"></div>
           <div class="productsWorkbench__receiptTotalRow">
             <span>Total</span>
-            <strong data-products-ticket-total-footer>${fmtCurrency(receiptActualTotal)}</strong>
+            <strong data-products-ticket-total-footer>${fmtCurrencyCode(receiptActualTotal, ticketCurrency)}</strong>
           </div>
           <div class="productsWorkbench__receiptTotalRow productsWorkbench__receiptTotalRow--muted">
             <span>Previsto</span>
-            <strong data-products-list-total>${fmtCurrency(receiptEstimatedTotal)}</strong>
+            <strong data-products-list-total>${fmtCurrencyCode(receiptEstimatedTotal, ticketCurrency)}</strong>
           </div>
           <div class="productsWorkbench__receiptTotalRow productsWorkbench__receiptTotalRow--diff is-${diffMeta.tone}" data-products-ticket-diff-row>
             <span>Diferencia</span>
             <strong data-products-ticket-diff>${diffMeta.label}</strong>
           </div>
+          ${ticketCurrency !== 'EUR' ? `<div class="productsWorkbench__receiptTotalRow productsWorkbench__receiptTotalRow--muted"><span>Total en euros</span><strong>≈ ${fmtCurrency(receiptTotalEUR)}</strong></div>` : ''}
           ${renderProductsAccountSelect(model)}
           ${renderProductsTicketCategorySelect(model)}
         </footer>
@@ -6231,6 +6245,12 @@ async function confirmProductsTicketFromDom() {
     ), 0);
     const receiptCurrency = String(document.querySelector('[data-products-receipt-currency]')?.value || getDefaultCurrency()).toUpperCase();
     const receiptCurrencyPayload = normalizeMovementCurrencyPayload({ amount: draftTotal, currency: receiptCurrency });
+    console.info('[finance:currency] rate', { ticketCurrency: receiptCurrency, exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1) });
+    Object.values(activeTicketLines || {}).forEach((line) => {
+      const lineTotalOriginal = Math.max(0.01, Number(line?.qty || 1)) * normalizeProductPositiveNumber(line?.actualPrice, normalizeProductPositiveNumber(line?.estimatedPrice, 0));
+      const lineEUR = normalizeMovementCurrencyPayload({ amount: lineTotalOriginal, currency: receiptCurrency, exchangeRateToEUR: receiptCurrencyPayload.exchangeRateToEUR }).amountEUR;
+      console.info('[finance:currency] item:converted', { item: line?.name || '', original: lineTotalOriginal, currency: receiptCurrency, eur: lineEUR });
+    });
     const draftAccountId = String(
       activeTicketMeta.accountId
       || draft.accountId
@@ -6374,6 +6394,7 @@ async function confirmProductsTicketFromDom() {
       createdAt: confirmedAtTs,
       updatedAt: confirmedAtTs,
     });
+    console.info('[finance:currency] ticket:totals', { ticketCurrency: receiptCurrency, totalOriginal: Number(draftTotal || 0), totalEUR: Number(receiptCurrencyPayload.amountEUR || validation.total) });
     const shoppingHubUpdates = {
       [productsHubPath(`tickets/${ticketRecord.id}`)]: ticketRecord,
       [productsHubPath(`lists/${convertedList.id}`)]: convertedList,
@@ -6402,6 +6423,7 @@ async function confirmProductsTicketFromDom() {
       receiptId: ticketId,
       extraUpdates: shoppingHubUpdates,
     });
+    console.info('[finance:currency] movement:payload', txResult?.payload || null);
     console.log('[ticket:confirm:movementPayload]', txResult?.payload || null);
 
     const primaryCacheKey = getPrimaryFinanceCacheKey();
@@ -15442,7 +15464,8 @@ view.addEventListener('focusout', async (event) => {
       toggleReceiptLineSelection(event.target.dataset.productsReceiptSelect, event.target.checked);
       return;
     }
-    if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment], [data-products-ticket-category]')) {
+    if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment], [data-products-ticket-category], [data-products-receipt-currency]')) {
+      if (event.target.matches('[data-products-receipt-currency]')) console.info('[finance:currency] selected', { currency: String(event.target.value || '').toUpperCase() });
       if (state.productsReceiptError) setProductsReceiptError('');
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
@@ -15590,7 +15613,8 @@ view.addEventListener('focusout', async (event) => {
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;
     }
-    if (event.target.matches('[data-products-receipt-date], [data-products-receipt-payment]')) {
+    if (event.target.matches('[data-products-receipt-date], [data-products-receipt-payment], [data-products-receipt-currency]')) {
+      if (event.target.matches('[data-products-receipt-currency]')) console.info('[finance:currency] selected', { currency: String(event.target.value || '').toUpperCase() });
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;

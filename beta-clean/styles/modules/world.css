@@ -41,11 +41,18 @@
 #view-world .world-geo-item{display:flex;flex-direction:column;gap:3px;border-radius:10px;padding:10px}
 #view-world .world-local-row{padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.08)}
 #view-world .world-rich-item{display:flex;justify-content:space-between;gap:8px;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);margin-top:8px}
+#view-world .world-local-card{display:flex;flex-direction:column;gap:6px;min-width:0;line-height:1.3}
+#view-world .world-local-line{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}
+#view-world .world-local-line-main span,#view-world .world-local-line-product span{min-width:0}
+#view-world .world-local-zone,#view-world .world-local-rating,#view-world .world-local-dot,#view-world .world-local-approx{opacity:.92;white-space:nowrap}
+#view-world .world-local-name,#view-world .world-local-product{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+#view-world .world-local-price{white-space:nowrap}
 #view-world .world-country-average{margin-top:8px;font-size:12px;opacity:.95}
 #view-world .world-geo-title{display:block;font-size:17px;line-height:1.25}
 #view-world .world-geo-rating{display:block;margin-top:4px;font-size:12px;opacity:.9}
 #view-world .world-item-actions{display:flex;gap:6px;align-items:center}
 #view-world .world-item-actions button,#view-world .world-popup-actions button{border:0;border-radius:10px;padding:6px 8px;background:rgba(255,255,255,.12);color:#eef0ff}
+#view-world .world-maps-link,#view-world .world-popup-link{display:inline-flex;align-items:center;gap:4px;border-radius:10px;padding:6px 8px;background:rgba(255,255,255,.12);color:#eef0ff;text-decoration:none;width:fit-content}
 #view-world .world-popup{display:flex;flex-direction:column;gap:4px;min-width:200px}
 #view-world .world-popup-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 #view-world .world-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}

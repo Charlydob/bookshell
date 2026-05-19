@@ -288,7 +288,29 @@ function logNetworkDebug(phase, extra = {}, level = "info") {
   logger.call(console, `[network] ${phase}`, payload);
 }
 
-function renderViewUnavailableFallback(root, viewId, message = "") {
+function getFirstUsefulStackLine(stackValue = "") {
+  const lines = String(stackValue || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.find((line) => line.includes(":"))
+    || lines[1]
+    || lines[0]
+    || "";
+}
+
+function extractStackSourceLocation(line = "") {
+  const value = String(line || "");
+  const match = value.match(/([A-Za-z0-9_./-]+:\d+:\d+)/);
+  return match ? match[1] : "";
+}
+
+function isDebugFallbackEnabled() {
+  return Boolean(window.__BOOKSHELL_DEV__)
+    || ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+}
+
+function renderViewUnavailableFallback(root, viewId, message = "", error = null) {
   if (!root) return;
   const label = NAV_VIEW_META[viewId]?.label || "vista";
   const isOnline = navigator.onLine;
@@ -296,16 +318,33 @@ function renderViewUnavailableFallback(root, viewId, message = "") {
   const fallbackDetail = String(message || "").trim() || (isOnline
     ? "Esta vista no se pudo inicializar en este momento."
     : "El contenido de esta vista no esta disponible sin conexion en este dispositivo.");
+  const errorDebug = error ? describeViewInitError(error) : null;
+  const firstUsefulStackLine = errorDebug ? getFirstUsefulStackLine(errorDebug.stack) : "";
+  const sourceLocation = firstUsefulStackLine ? extractStackSourceLocation(firstUsefulStackLine) : "";
+  const showDebugBlock = Boolean(errorDebug) || isDebugFallbackEnabled();
   logViewInit(viewId, "fallback:rendered", {
     eyebrow,
     message: fallbackDetail,
+    errorName: errorDebug?.errorName || "",
+    errorMessage: errorDebug?.message || "",
+    stackLine: firstUsefulStackLine,
+    sourceLocation,
   }, isOnline ? "warn" : "info");
-  const detail = String(message || "").trim() || "El contenido de esta vista no está disponible sin conexión en este dispositivo.";
+
+  const debugHtml = showDebugBlock ? `
+      <pre class="shell-view-fallback-debug"><strong>Error JS (BOOT)</strong>
+${escapeHtml(errorDebug?.errorName || "Error")}
+${escapeHtml(errorDebug?.message || "Sin detalles adicionales.")}
+${escapeHtml(firstUsefulStackLine || "stack no disponible")}
+${escapeHtml(sourceLocation || "origen no disponible")}</pre>
+  ` : "";
+
   root.innerHTML = `
     <section class="shell-view-fallback">
       <p class="shell-view-fallback-eyebrow">${escapeHtml(eyebrow)}</p>
       <h3>${escapeHtml(label)}</h3>
       <p>${escapeHtml(fallbackDetail)}</p>
+      ${debugHtml}
     </section>
   `;
 }
@@ -1478,6 +1517,7 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
           navigator.onLine
             ? "Esta vista no se pudo inicializar ahora mismo. Si acabas de actualizar la app, recarga para refrescar los modulos en cache."
             : "La shell está disponible, pero esta vista necesita recursos que aíºn no se han cacheado.",
+          error,
         );
         recordViewMetrics(viewId, {
           moduleReadyAt: Date.now(),

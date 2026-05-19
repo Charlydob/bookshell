@@ -3970,13 +3970,16 @@ function renderProductsTicketHero(model, options = {}) {
   const ticketRows = Array.isArray(options.tickets) ? options.tickets : (Array.isArray(model.tickets) ? model.tickets : []);
   const emptyNotice = options.emptyNotice ? `<p class="productsWorkbench__receiptEmptyNotice">${escapeHtml(options.emptyNotice)}</p>` : '';
   const activeList = model.activeList;
+  const activeTicket = model.activeTicket || model.tickets?.find?.((ticket) => ticket?.id === model.activeTicketId) || {};
+  const ticketCountry = String(activeTicket?.ticketCountry || activeList?.ticketCountry || '');
+  const ticketCountryCode = String(activeTicket?.ticketCountryCode || activeList?.ticketCountryCode || '');
+  console.info('[finance:country] resolved-before-render', { ticketCountry: normalizeProductText(ticketCountry), ticketCountryCode: ticketCountryCode.toUpperCase() });
   const selectedCount = Object.keys(state.foodProductsView?.receiptSelections?.[activeList.id] || {}).length;
-  const plannedFor = model.activeTicket?.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs());
+  const plannedFor = activeTicket?.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs());
   const receiptEstimatedTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
   const receiptActualTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
-  const ticketCountry = normalizeProductText(model.activeTicket?.ticketCountry || activeList?.ticketCountry || '');
-  const ticketCurrency = String(model.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
-  const exchangeRateToEUR = Number(model.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
+  const ticketCurrency = String(activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const exchangeRateToEUR = Number(activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
   const converterDraft = resolveProductsConverterDraft(model);
   const receiptTotalEUR = Number(normalizeMovementCurrencyPayload({ amount: receiptActualTotal, currency: ticketCurrency, exchangeRateToEUR }).amountEUR || 0);
   const diffMeta = resolveProductsReceiptDiffMeta(receiptActualTotal - receiptEstimatedTotal);
@@ -16649,7 +16652,3 @@ function getFinanceListenerCount() {
   if (state.toastTimer) count += 1;
   return count;
 }
-document.addEventListener('click', (event) => {
-  console.log('🟡 CLICK GLOBAL:', event.target);
-}, true);
-  const ticketCountry = normalizeProductText(model.activeTicket?.ticketCountry || '');

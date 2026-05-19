@@ -6298,7 +6298,7 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
   const payload = {
     id: saveId,
     type: 'expense',
-    amount: Number(list.totalEUR || totalAmount),
+    amount: Number(options.totalEUR ?? list.totalEUR ?? totalAmount),
     date: dateISO,
     monthKey: dateISO.slice(0, 7),
     accountId,
@@ -6307,8 +6307,8 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     category,
     note,
     currency: 'EUR',
-    originalAmount: Number(list.totalOriginal || totalAmount),
-    originalCurrency: String(list.ticketCurrency || 'EUR').toUpperCase(),
+    originalAmount: Number(options.totalOriginal ?? list.totalOriginal ?? totalAmount),
+    originalCurrency: String(options.ticketCurrency || list.ticketCurrency || 'EUR').toUpperCase(),
     exchangeRateToEUR: Number(list.exchangeRateToEUR || 1),
     exchangeRateFromEUR: Number(list.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(list.exchangeRateToEUR || 1)))),
     source: 'ticket',
@@ -15654,6 +15654,10 @@ view.addEventListener('focusout', async (event) => {
         console.info('[finance:currency] selected', { currency });
         if (state.productsReceiptError) setProductsReceiptError('');
         await applyTicketCurrencyRateFromApi(view, currency);
+        syncProductsTicketComposerDom(view);
+        const refreshedModel = buildCurrentProductsModel();
+        patchProductsShoppingPanel(refreshedModel);
+        patchProductsCatalogSubview(refreshedModel);
         console.info('[finance:fx] converter:show-immediate', { ticketCurrency: currency, exchangeRateFromEUR: Number(resolveActiveProductsList()?.tickets?.[String(resolveActiveProductsList()?.activeTicketId || resolveActiveProductsList()?.primaryTicketId || 'ticket-1')]?.exchangeRateFromEUR || 0) });
         return;
       }

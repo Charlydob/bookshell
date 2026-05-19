@@ -5440,8 +5440,8 @@ margin-bottom: 50px;
   padding: 2px 4px;
   font-size: 12px;
 }
-.financeTab .productsWorkbench__receiptMetaControl[data-products-receipt-currency]{ min-width: 82px; max-width: 110px; }
-.financeTab .productsWorkbench__receiptMetaControl--fx{ width: 68px; max-width: 68px; text-align: right; font-size: 12px; padding: 2px 3px; }
+.financeTab .productsWorkbench__receiptMetaControl[data-products-receipt-currency]{ min-width: 92px; max-width: 120px; }
+.financeTab .productsWorkbench__receiptMetaControl--fx{ width: 56px; max-width: 56px; text-align: right; font-size: 12px; padding: 2px 3px; }
 .financeTab .productsWorkbench__receiptMetaHint{
   display: flex;
   align-items: center;
@@ -5450,21 +5450,8 @@ margin-bottom: 50px;
   font-size: 12px;
   white-space: nowrap;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
+  overflow: hidden;
 }
-.financeTab .productsWorkbench__receiptMetaHint .productsWorkbench__miniAction{ width:22px; min-width:22px; height:22px; padding:0; font-size:12px; }
-.financeTab .productsWorkbench__receiptMetaControl--country{
-  min-width: 84px;
-  max-width: 120px;
-  justify-self: end;
-}
-.financeTab .productsWorkbench__receiptMetaControl--storeName{
-  min-width: 110px;
-  max-width: 170px;
-}
-.financeTab .productsWorkbench__receiptCountryHint{ font-size:11px; color:rgba(32,38,47,.7); }
 
 .financeTab .productsWorkbench__receiptMetaControl:hover{
   background: rgba(32, 38, 47, .045);
@@ -5478,7 +5465,8 @@ margin-bottom: 50px;
 }
 
 .financeTab .productsWorkbench__receiptMetaControl--store{
-  width: min(100%, 340px);
+  min-width: 170px;
+  width: min(100%, 320px);
   font-size: 1rem;
   font-weight: 800;
 }

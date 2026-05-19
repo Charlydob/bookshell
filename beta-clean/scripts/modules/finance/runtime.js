@@ -2211,8 +2211,6 @@ function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
     accountId: normalizeProductText(payload?.accountId || ''),
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
     ticketCategoryId: normalizeProductText(payload?.ticketCategoryId || ''),
-    ticketCountry: normalizeProductText(payload?.ticketCountry || ''),
-    ticketCountryCode: normalizeProductText(payload?.ticketCountryCode || '').toUpperCase(),
     plannedFor: toIsoDay(String(payload?.plannedFor || '')) || dayKeyFromTs(nowTs()),
     notes: normalizeProductText(payload?.notes || ''),
     confirmedAt: normalizeProductNumber(payload?.confirmedAt, 0),
@@ -2233,7 +2231,6 @@ function ensureProductsListTickets(list = {}) {
   const baseMeta = normalizeProductsListTicketMeta(primaryTicketId, {
     label: 'Sin asignar',
     store: nextList.store,
-    storeName: nextList.storeName,
     accountId: nextList.accountId,
     paymentMethod: nextList.paymentMethod,
     ticketCategoryId: normalizeProductText(nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || ''),
@@ -3445,11 +3442,10 @@ function renderProductsReceiptLineRow(line, model) {
   const isSelected = !!selection[lineId];
   const normalized = calculateLineTotals(line);
   const ticketCurrency = String(model?.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
-  const lineCurrency = String(line?.currency || ticketCurrency).toUpperCase();
-  const lineRate = Number(line?.exchangeRateToEUR || model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
+  const lineRate = Number(model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
   const lineTotalOriginal = Number(line?.priceOriginal ?? normalized.actualPrice ?? 0);
   const lineTotalEUR = Number(Number(lineTotalOriginal || 0) * Math.max(0.0000001, Number(lineRate || 1)));
-  console.info('[finance:currency] item-render-currency', { itemId: lineId, item: line?.name || '', currency: lineCurrency, ticketCurrency, exchangeRateToEUR: lineRate });
+  console.info('[finance:currency] item-price-eur', { itemId: lineId, item: line?.name || '', original: lineTotalOriginal, currency: ticketCurrency, exchangeRateToEUR: lineRate, eur: lineTotalEUR });
   const lineDiffMeta = resolveProductsReceiptDiffMeta(normalized.diffSubtotal);
   return `
     <div class="productsWorkbench__receiptRow ${isSelected ? 'is-selected' : ''}" data-products-receipt-row="${escapeHtml(lineId)}">
@@ -3490,12 +3486,12 @@ function renderProductsReceiptLineRow(line, model) {
           class="productsWorkbench__receiptTotal food-control"
           type="text"
           inputmode="decimal"
-          value="${escapeHtml(fmtCurrencyCode(lineTotalOriginal || 0, lineCurrency))}"
+          value="${escapeHtml(fmtCurrencyCode(lineTotalOriginal || 0, ticketCurrency))}"
           aria-label="Precio real de ${escapeHtml(line.name || 'producto')}"
           data-money-last-valid="${escapeHtml(String(Number(normalized.actualPrice || 0).toFixed(2)))}"
           data-products-receipt-total="${escapeHtml(lineId)}" />
         <small class="productsWorkbench__receiptLineDiff is-${lineDiffMeta.tone}" data-products-receipt-diff="${escapeHtml(lineId)}">${lineDiffMeta.label}</small>
-        ${lineCurrency !== 'EUR' ? `<small class="productsWorkbench__receiptLineDiff">≈ ${fmtCurrency(lineTotalEUR)}</small>` : ''}
+        ${ticketCurrency !== 'EUR' ? `<small class="productsWorkbench__receiptLineDiff">≈ ${fmtCurrency(lineTotalEUR)}</small>` : ''}
       </div>
       <button type="button" class="productsWorkbench__receiptRemove" data-products-remove-line="${escapeHtml(lineId)}" aria-label="Eliminar ${escapeHtml(line.name || 'linea')}">❌</button>
     </div>
@@ -3971,18 +3967,12 @@ function renderProductsTicketHero(model, options = {}) {
   const ticketRows = Array.isArray(options.tickets) ? options.tickets : (Array.isArray(model.tickets) ? model.tickets : []);
   const emptyNotice = options.emptyNotice ? `<p class="productsWorkbench__receiptEmptyNotice">${escapeHtml(options.emptyNotice)}</p>` : '';
   const activeList = model.activeList;
-  const activeTicket = model.activeTicket || model.tickets?.find?.((ticket) => ticket?.id === model.activeTicketId) || {};
-  const ticketCountry = String(activeTicket?.ticketCountry || activeList?.ticketCountry || '');
-  const storeName = String(activeTicket?.storeName || activeTicket?.store || activeList?.storeName || activeList?.store || '');
-  const ticketCountryCode = String(activeTicket?.ticketCountryCode || activeList?.ticketCountryCode || '');
-  console.info('[finance:country] resolved-before-render', { ticketCountry: normalizeProductText(ticketCountry), ticketCountryCode: ticketCountryCode.toUpperCase() });
   const selectedCount = Object.keys(state.foodProductsView?.receiptSelections?.[activeList.id] || {}).length;
-  const plannedFor = activeTicket?.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs());
+  const plannedFor = model.activeTicket?.plannedFor || activeList.plannedFor || dayKeyFromTs(nowTs());
   const receiptEstimatedTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
   const receiptActualTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
-  const ticketCurrency = String(activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
-  const exchangeRateToEUR = Number(activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
-  const shouldShowFxConverter = !!ticketCurrency && ticketCurrency !== 'EUR';
+  const ticketCurrency = String(model.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const exchangeRateToEUR = Number(model.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
   const converterDraft = resolveProductsConverterDraft(model);
   const receiptTotalEUR = Number(normalizeMovementCurrencyPayload({ amount: receiptActualTotal, currency: ticketCurrency, exchangeRateToEUR }).amountEUR || 0);
   const diffMeta = resolveProductsReceiptDiffMeta(receiptActualTotal - receiptEstimatedTotal);
@@ -4022,21 +4012,14 @@ function renderProductsTicketHero(model, options = {}) {
           <select class="food-control productsWorkbench__receiptMetaControl" data-products-receipt-currency aria-label="Moneda ticket">
             ${SUPPORTED_CURRENCIES.map((row) => `<option value="${row.code}" title="${escapeHtml(row.label)}" ${ticketCurrency === row.code ? 'selected' : ''}>${escapeHtml(`${row.code} ${row.symbol || ''}`.trim())}</option>`).join('')}
           </select>
-          ${shouldShowFxConverter ? `
+          ${ticketCurrency !== 'EUR' ? `
             <div class="productsWorkbench__receiptMetaHint">
               <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--fx" type="number" step="0.01" value="${escapeHtml(Number(converterDraft.eur || 1).toFixed(2))}" data-products-converter-eur aria-label="EUR" />
               <span>€ ≈</span>
               <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--fx" type="number" step="0.01" value="${escapeHtml(Number(converterDraft.foreign || converterDraft.rateFromEUR).toFixed(2))}" data-products-converter-foreign aria-label="${escapeHtml(ticketCurrency)}" />
               <span>${escapeHtml(ticketCurrency)}</span>
-              <button type="button" class="productsWorkbench__miniAction" data-products-converter-reset aria-label="Reset conversor">↺</button>
             </div>
           ` : ''}
-          <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--storeName" type="text" value="${escapeHtml(storeName)}" placeholder="Supermercado" data-products-store-name aria-label="Supermercado" />
-          <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--country" type="text" list="products-country-suggest" value="${escapeHtml(ticketCountry)}" placeholder="País" data-products-ticket-country aria-label="País del ticket" />
-          <datalist id="products-country-suggest">
-            <option value="Perú"></option><option value="España"></option><option value="México"></option><option value="Colombia"></option><option value="Argentina"></option>
-          </datalist>
-          ${ticketCountry ? `<small class="productsWorkbench__receiptCountryHint">País: ${escapeHtml(ticketCountry)}</small>` : ''}
         </header>
         <div class="productsWorkbench__receiptLines">
           ${model.listLines.map((line) => renderProductsReceiptLineRow(line, model)).join('')}
@@ -5040,27 +5023,10 @@ function syncProductsReceiptLineToBacking(root = document, lineId = '') {
 }
 
 async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR') {
-  const scope = root?.querySelector?.('[data-products-receipt]') || root;
-  if (!scope?.querySelector?.('[data-products-list-form]')) {
-    console.info('[finance:fx] init-safe-fallback', { reason: 'missing-receipt-dom' });
-    return;
-  }
   const code = String(currency || 'EUR').toUpperCase();
-  let fx;
-  try {
-    fx = await resolveExchangeRateFromEUR(code);
-  } catch (error) {
-    console.info('[finance:fx] init-safe-fallback', { reason: 'fetch-failed', currency: code, error: String(error?.message || error) });
-    fx = {
-      fromEUR: 1,
-      toEUR: 1,
-      updatedAt: new Date().toISOString(),
-      source: 'fallback-safe',
-      approximate: true,
-    };
-  }
+  let fx = await resolveExchangeRateFromEUR(code);
   if (code !== 'EUR' && (!(Number(fx?.fromEUR) > 0) || Number(fx?.fromEUR) === 1)) {
-    console.info('[finance:fx] invalid-1to1-rate', { currency: code, fromEUR: Number(fx?.fromEUR || 0), source: String(fx?.source || 'unknown') });
+    console.info('[finance:fx] invalid-rate', { currency: code, fromEUR: Number(fx?.fromEUR || 0), source: String(fx?.source || 'unknown') });
     fx = {
       fromEUR: code === 'PEN' ? 3.98 : Math.max(0.0000001, Number(fx?.fromEUR || 0)),
       toEUR: code === 'PEN' ? (1 / 3.98) : 1,
@@ -5069,7 +5035,7 @@ async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR')
       approximate: true,
     };
   }
-  const draft = readProductsListDraftFromDom(scope);
+  const draft = readProductsListDraftFromDom(root);
   const hasLines = Object.keys(draft?.lines || {}).length > 0;
   const ticketId = String(draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   draft.tickets = { ...(draft.tickets || {}) };
@@ -5086,7 +5052,7 @@ async function applyTicketCurrencyRateFromApi(root = document, currency = 'EUR')
   console.info('[finance:fx] applied', { ticketId, currency: code, exchangeRateFromEUR: fx.fromEUR, exchangeRateToEUR: fx.toEUR, source: fx.source });
   if (fx.approximate) setProductsReceiptError('Usando tasa aproximada');
   syncProductsDraftListLocal(draft);
-  syncProductsTicketComposerDom(scope);
+  syncProductsTicketComposerDom(root);
   if (!hasLines && code !== 'EUR') {
     console.info('[finance:fx] converter:persist-empty-ticket', { ticketId, currency: code, exchangeRateFromEUR: Number(fx.fromEUR || 1), exchangeRateToEUR: Number(fx.toEUR || 1) });
   }
@@ -5108,31 +5074,23 @@ function readProductsListDraftFromDom(root = document) {
   nextList.accountId = String(scope.querySelector('[name="accountId"]')?.value || nextList.accountId || '').trim();
   nextList.paymentMethod = normalizeProductText(scope.querySelector('[name="paymentMethod"]')?.value || nextList.paymentMethod || 'Tarjeta') || 'Tarjeta';
   nextList.ticketCategoryId = String(scope.querySelector('[name="ticketCategoryId"]')?.value || nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '').trim();
-  nextList.ticketCountry = normalizeProductText(scope.querySelector('[data-products-ticket-country]')?.value || nextList.ticketCountry || '');
-  nextList.storeName = normalizeFoodName(scope.querySelector('[data-products-store-name]')?.value || nextList.storeName || nextList.store || '');
   nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
-  const prevActiveTicket = nextList.tickets?.[activeTicketId] || {};
-  const ticketCurrency = String(scope.querySelector('[data-products-receipt-currency]')?.value || prevActiveTicket.ticketCurrency || getDefaultCurrency()).toUpperCase();
-  const converterEur = Number(scope.querySelector('[data-products-converter-eur]')?.value || 1);
-  const converterForeign = Number(scope.querySelector('[data-products-converter-foreign]')?.value || 0);
-  const derivedFromConverter = converterEur > 0 && converterForeign > 0 ? (converterForeign / converterEur) : 0;
+  const ticketCurrency = String(scope.querySelector('[data-products-receipt-currency]')?.value || nextList.tickets?.[activeTicketId]?.ticketCurrency || getDefaultCurrency()).toUpperCase();
   const derivedFromEUR = ticketCurrency === 'EUR'
     ? 1
-    : Number(derivedFromConverter || prevActiveTicket.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(prevActiveTicket.exchangeRateToEUR || 0))));
+    : Number(nextList.tickets?.[activeTicketId]?.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(nextList.tickets?.[activeTicketId]?.exchangeRateToEUR || 0))));
   const exchangeRateFromEUR = ticketCurrency === 'EUR' ? 1 : Math.max(0.0000001, Number(derivedFromEUR || 0));
   const exchangeRateToEUR = ticketCurrency === 'EUR' ? 1 : Math.max(0.0000001, Number(1 / exchangeRateFromEUR));
   nextList.activeTicketId = activeTicketId;
   nextList.tickets = { ...(nextList.tickets || {}) };
   nextList.tickets[activeTicketId] = normalizeProductsListTicketMeta(activeTicketId, {
-    ...prevActiveTicket,
+    ...(nextList.tickets?.[activeTicketId] || {}),
     store: nextList.store,
     plannedFor: nextList.plannedFor,
     accountId: nextList.accountId,
     paymentMethod: nextList.paymentMethod,
     ticketCategoryId: nextList.ticketCategoryId,
-    ticketCountry: nextList.ticketCountry,
-    ticketCountryCode: String(nextList.ticketCountry || '').trim().toLowerCase() === 'perú' || String(nextList.ticketCountry || '').trim().toLowerCase() === 'peru' ? 'PE' : String(nextList.tickets?.[activeTicketId]?.ticketCountryCode || '').toUpperCase(),
     ticketCurrency,
     exchangeRateToEUR,
     exchangeRateFromEUR,
@@ -5159,9 +5117,9 @@ function readProductsListDraftFromDom(root = document) {
       unit: normalizeProductUnit(rowEl.querySelector(`[data-products-line-unit="${lineId}"]`)?.value || baseList.lines?.[lineId]?.unit || 'ud'),
       estimatedPrice,
       actualPrice,
-      currency: String(baseLine.currency || ticketCurrency).toUpperCase(),
-      priceOriginal: Math.max(0, normalizeProductPositiveNumber(actualPrice, actualPrice)),
-      priceEUR: Math.max(0, normalizeProductPositiveNumber(normalizeMovementCurrencyPayload({ amount: actualPrice, currency: String(baseLine.currency || ticketCurrency).toUpperCase(), exchangeRateToEUR }).amountEUR, actualPrice)),
+      currency: ticketCurrency,
+      priceOriginal: actualPrice,
+      priceEUR: normalizeMovementCurrencyPayload({ amount: actualPrice, currency: ticketCurrency, exchangeRateToEUR }).amountEUR,
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
       checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
       ticketId: lineTicketId,
@@ -5513,21 +5471,13 @@ async function addProductToActiveProductsListFromReceipt(productId = '') {
   const addQty = Number(document.querySelector('[data-products-receipt-add-qty]')?.value || 1);
   const addUnit = Number(document.querySelector('[data-products-receipt-add-unit]')?.value || 0);
   if (addedLine?.id) {
-    const ticketMeta = nextList.tickets?.[activeTicketId] || {};
-    const lineCurrency = String(ticketMeta.ticketCurrency || 'EUR').toUpperCase();
-    const lineRate = Number(ticketMeta.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
-    const originalAmount = Math.max(0, addUnit || nextList.lines[addedLine.id].actualPrice || nextList.lines[addedLine.id].estimatedPrice || 0);
     nextList.lines[addedLine.id] = {
       ...nextList.lines[addedLine.id],
       qty: Math.max(0.01, addQty || nextList.lines[addedLine.id].qty || 1),
-      actualPrice: originalAmount,
+      actualPrice: Math.max(0, addUnit || nextList.lines[addedLine.id].actualPrice || nextList.lines[addedLine.id].estimatedPrice || 0),
       estimatedPrice: Math.max(0, nextList.lines[addedLine.id].estimatedPrice || addUnit || 0),
-      currency: lineCurrency,
-      priceOriginal: originalAmount,
-      priceEUR: Number(normalizeMovementCurrencyPayload({ amount: originalAmount, currency: lineCurrency, exchangeRateToEUR: lineRate }).amountEUR || 0),
       updatedAt: nowTs(),
     };
-    console.info('[finance:item] add-with-currency', { currency: lineCurrency, priceOriginal: originalAmount, priceEUR: nextList.lines[addedLine.id].priceEUR });
   }
   await persistProductsListRecord(nextList, { activate: true });
   const model = buildCurrentProductsModel();
@@ -6372,7 +6322,7 @@ async function confirmProductsTicketFromDom() {
     Object.values(activeTicketLines || {}).forEach((line) => {
       const lineTotalOriginal = Number(line?.priceOriginal ?? line?.actualPrice ?? 0);
       const lineEUR = Number(line?.priceEUR ?? normalizeMovementCurrencyPayload({ amount: lineTotalOriginal, currency: receiptCurrency, exchangeRateToEUR: receiptCurrencyPayload.exchangeRateToEUR }).amountEUR);
-      console.info('[finance:item] add-currency', { item: line?.name || '', original: lineTotalOriginal, currency: receiptCurrency, eur: lineEUR });
+      console.info('[finance:currency] item:converted', { item: line?.name || '', original: lineTotalOriginal, currency: receiptCurrency, eur: lineEUR });
     });
     const draftAccountId = String(
       activeTicketMeta.accountId
@@ -15592,41 +15542,20 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-food-products-food-only]')) { state.foodProductsView = { ...state.foodProductsView, onlyFood: !!event.target.checked }; applyProductsFiltersDirectDom(); }
     if (event.target.matches('[data-food-products-custom-start]')) { state.foodProductsView = { ...state.foodProductsView, customStart: event.target.value }; applyProductsFiltersDirectDom(); }
     if (event.target.matches('[data-food-products-custom-end]')) { state.foodProductsView = { ...state.foodProductsView, customEnd: event.target.value }; applyProductsFiltersDirectDom(); }
-    if (event.target.matches('[data-products-converter-reset]')) {
-      const formEl = view.querySelector('[data-products-list-form]');
-      const ticketId = String(formEl?.dataset.productsActiveTicketId || resolveActiveProductsList()?.activeTicketId || '').trim();
-      const currency = String(view.querySelector('[data-products-receipt-currency]')?.value || 'EUR').toUpperCase();
-      const rateFromEUR = Math.max(0.0000001, Number(resolveActiveProductsList()?.tickets?.[ticketId]?.exchangeRateFromEUR || 1));
-      state.productsReceiptConverterTemp = { ...(state.productsReceiptConverterTemp || {}), [ticketId]: { currency, eur: 1, foreign: rateFromEUR } };
-      const eurInput = view.querySelector('[data-products-converter-eur]');
-      const foreignInput = view.querySelector('[data-products-converter-foreign]');
-      if (eurInput) eurInput.value = '1.00';
-      if (foreignInput) foreignInput.value = Number(rateFromEUR).toFixed(2);
-      console.info('[finance:fx] converter-reset', { currency, eur: 1, foreign: rateFromEUR });
-      return;
-    }
     if (event.target.matches('[data-products-receipt-select]')) {
       toggleReceiptLineSelection(event.target.dataset.productsReceiptSelect, event.target.checked);
       return;
     }
-    if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment], [data-products-ticket-category], [data-products-receipt-currency], [data-products-ticket-country]')) {
+    if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment], [data-products-ticket-category], [data-products-receipt-currency]')) {
       if (event.target.matches('[data-products-receipt-currency]')) {
         const currency = String(event.target.value || '').toUpperCase();
-        console.info('[finance:currency] select', { currency });
+        console.info('[finance:currency] selected', { currency });
         if (state.productsReceiptError) setProductsReceiptError('');
-        syncProductsTicketComposerDom(view);
-        syncProductsDraftListLocal(readProductsListDraftFromDom(view));
+        await applyTicketCurrencyRateFromApi(view, currency);
         console.info('[finance:fx] converter:show-on-select', { currency });
-        applyTicketCurrencyRateFromApi(view, currency)
-          .catch((error) => {
-            console.info('[finance:fx] init-safe-fallback', { reason: 'converter-apply-failed', currency, error: String(error?.message || error) });
-          });
         return;
       }
       if (state.productsReceiptError) setProductsReceiptError('');
-      if (event.target.matches('[data-products-ticket-country]')) {
-        console.info('[finance:country] update-without-currency-reset', { country: normalizeProductText(event.target.value || '') });
-      }
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;
@@ -15784,12 +15713,7 @@ view.addEventListener('focusout', async (event) => {
       const ticketId = String(formEl?.dataset.productsActiveTicketId || resolveActiveProductsList()?.activeTicketId || '').trim();
       const eurInput = root.querySelector('[data-products-converter-eur]');
       const foreignInput = root.querySelector('[data-products-converter-foreign]');
-      const currencySelector = root.querySelector('[data-products-receipt-currency]');
-      if (!eurInput || !foreignInput || !currencySelector) {
-        console.info('[finance:fx] init-safe-fallback', { reason: 'missing-converter-dom' });
-        return;
-      }
-      const currency = String(currencySelector.value || 'EUR').toUpperCase();
+      const currency = String(root.querySelector('[data-products-receipt-currency]')?.value || 'EUR').toUpperCase();
       const rateFromEUR = Math.max(0.0000001, Number(resolveActiveProductsList()?.tickets?.[ticketId]?.exchangeRateFromEUR || 1));
       let eurValue = Math.max(0.0000001, Number(eurInput?.value || 1));
       let foreignValue = Math.max(0.0000001, Number(foreignInput?.value || rateFromEUR));
@@ -16671,3 +16595,6 @@ function getFinanceListenerCount() {
   if (state.toastTimer) count += 1;
   return count;
 }
+document.addEventListener('click', (event) => {
+  console.log('🟡 CLICK GLOBAL:', event.target);
+}, true);

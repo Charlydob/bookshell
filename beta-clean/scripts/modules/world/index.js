@@ -135,29 +135,58 @@ function logWorldClusterZoom(){
 function renderWorldMarkers(){
   if(!window.L || !state.map) return;
   const L = window.L;
-  if (typeof L.markerClusterGroup !== "function") {
-    console.warn("[world:cluster] markerClusterGroup plugin missing");
-    return;
-  }
   destroyWorldMapLayers();
-  const rows = [...state.geography, ...state.places].filter((r)=>Number.isFinite(r.lat)&&Number.isFinite(r.lon));
+
   const dotIcon = L.divIcon({ className:"notes-map-dot-icon", html:'<span class="notes-map-dot" aria-hidden="true"></span>', iconSize:[12,12], iconAnchor:[6,6] });
-  state.worldClusterGroup = L.markerClusterGroup({
-    showCoverageOnHover: false,
-    spiderfyOnMaxZoom: true,
-    disableClusteringAtZoom: 16,
-    maxClusterRadius: 55,
-    iconCreateFunction: (cluster) => createWorldClusterIcon(cluster.getChildCount())
-  });
-  rows.forEach((r) => {
-    const marker = L.marker([r.lat, r.lon], { icon:dotIcon });
+  const allRows = [...state.geography, ...state.places];
+  const totalItems = allRows.length;
+  let withCoords = 0;
+  let skipped = 0;
+  let addedMarkers = 0;
+
+  const layerSupportsClusters = typeof L.markerClusterGroup === "function";
+  if (layerSupportsClusters) {
+    state.worldClusterGroup = L.markerClusterGroup({
+      showCoverageOnHover: false,
+      spiderfyOnMaxZoom: true,
+      disableClusteringAtZoom: 16,
+      maxClusterRadius: 55,
+      iconCreateFunction: (cluster) => createWorldClusterIcon(cluster.getChildCount())
+    });
+  } else {
+    console.warn("[world:cluster] markerClusterGroup plugin missing; falling back to layerGroup");
+    state.worldClusterGroup = L.layerGroup();
+  }
+
+  state.worldClusterGroup.addTo(state.map);
+
+  allRows.forEach((r) => {
+    const latRaw = r.lat ?? r.latitude ?? r.coords?.lat ?? r.location?.lat;
+    const lngRaw = r.lon ?? r.lng ?? r.longitude ?? r.coords?.lng ?? r.location?.lng;
+    if (latRaw === undefined || lngRaw === undefined) {
+      skipped += 1;
+      return;
+    }
+    withCoords += 1;
+    const lat = Number(latRaw);
+    const lng = Number(lngRaw);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      skipped += 1;
+      console.warn("[world:cluster:skip:invalid-coords]", { id:r.id, lat:latRaw, lng:lngRaw });
+      return;
+    }
+    const marker = L.marker([lat, lng], { icon:dotIcon });
     marker.bindPopup(buildPopup(r));
     state.worldClusterGroup.addLayer(marker);
     state.markers.set(r.id, marker);
     state.mapMarkersIndex.set(r.id, marker);
+    addedMarkers += 1;
   });
-  state.map.addLayer(state.worldClusterGroup);
-  console.log("[world:cluster:add]", rows.length);
+
+  if (!state.map.hasLayer(state.worldClusterGroup)) {
+    state.map.addLayer(state.worldClusterGroup);
+  }
+  console.log("[world:cluster:data]", { totalItems, withCoords, skipped, addedMarkers });
   logWorldClusterZoom();
 }
 function renderMap(){ if(!window.L) return; const host = $id("world-map"); if(!host) return; if(!state.map) state.map = createLeafletMap(host, { center:[state.userCenter.lat, state.userCenter.lon], zoom:5 }); renderWorldMarkers(); }

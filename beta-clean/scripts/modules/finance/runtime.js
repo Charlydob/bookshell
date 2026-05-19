@@ -2233,6 +2233,7 @@ function ensureProductsListTickets(list = {}) {
   const baseMeta = normalizeProductsListTicketMeta(primaryTicketId, {
     label: 'Sin asignar',
     store: nextList.store,
+    storeName: nextList.storeName,
     accountId: nextList.accountId,
     paymentMethod: nextList.paymentMethod,
     ticketCategoryId: normalizeProductText(nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || ''),
@@ -3972,6 +3973,7 @@ function renderProductsTicketHero(model, options = {}) {
   const activeList = model.activeList;
   const activeTicket = model.activeTicket || model.tickets?.find?.((ticket) => ticket?.id === model.activeTicketId) || {};
   const ticketCountry = String(activeTicket?.ticketCountry || activeList?.ticketCountry || '');
+  const storeName = String(activeTicket?.storeName || activeTicket?.store || activeList?.storeName || activeList?.store || '');
   const ticketCountryCode = String(activeTicket?.ticketCountryCode || activeList?.ticketCountryCode || '');
   console.info('[finance:country] resolved-before-render', { ticketCountry: normalizeProductText(ticketCountry), ticketCountryCode: ticketCountryCode.toUpperCase() });
   const selectedCount = Object.keys(state.foodProductsView?.receiptSelections?.[activeList.id] || {}).length;
@@ -4029,6 +4031,7 @@ function renderProductsTicketHero(model, options = {}) {
               <button type="button" class="productsWorkbench__miniAction" data-products-converter-reset aria-label="Reset conversor">↺</button>
             </div>
           ` : ''}
+          <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--storeName" type="text" value="${escapeHtml(storeName)}" placeholder="Supermercado" data-products-store-name aria-label="Supermercado" />
           <input class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--country" type="text" list="products-country-suggest" value="${escapeHtml(ticketCountry)}" placeholder="País" data-products-ticket-country aria-label="País del ticket" />
           <datalist id="products-country-suggest">
             <option value="Perú"></option><option value="España"></option><option value="México"></option><option value="Colombia"></option><option value="Argentina"></option>
@@ -5106,6 +5109,7 @@ function readProductsListDraftFromDom(root = document) {
   nextList.paymentMethod = normalizeProductText(scope.querySelector('[name="paymentMethod"]')?.value || nextList.paymentMethod || 'Tarjeta') || 'Tarjeta';
   nextList.ticketCategoryId = String(scope.querySelector('[name="ticketCategoryId"]')?.value || nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '').trim();
   nextList.ticketCountry = normalizeProductText(scope.querySelector('[data-products-ticket-country]')?.value || nextList.ticketCountry || '');
+  nextList.storeName = normalizeFoodName(scope.querySelector('[data-products-store-name]')?.value || nextList.storeName || nextList.store || '');
   nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   const prevActiveTicket = nextList.tickets?.[activeTicketId] || {};
@@ -5156,8 +5160,8 @@ function readProductsListDraftFromDom(root = document) {
       estimatedPrice,
       actualPrice,
       currency: String(baseLine.currency || ticketCurrency).toUpperCase(),
-      priceOriginal: Math.max(0, normalizeProductPositiveNumber(baseLine.priceOriginal, actualPrice)),
-      priceEUR: Math.max(0, normalizeProductPositiveNumber(baseLine.priceEUR, normalizeMovementCurrencyPayload({ amount: actualPrice, currency: String(baseLine.currency || ticketCurrency).toUpperCase(), exchangeRateToEUR }).amountEUR)),
+      priceOriginal: Math.max(0, normalizeProductPositiveNumber(actualPrice, actualPrice)),
+      priceEUR: Math.max(0, normalizeProductPositiveNumber(normalizeMovementCurrencyPayload({ amount: actualPrice, currency: String(baseLine.currency || ticketCurrency).toUpperCase(), exchangeRateToEUR }).amountEUR, actualPrice)),
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
       checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
       ticketId: lineTicketId,
@@ -5509,13 +5513,21 @@ async function addProductToActiveProductsListFromReceipt(productId = '') {
   const addQty = Number(document.querySelector('[data-products-receipt-add-qty]')?.value || 1);
   const addUnit = Number(document.querySelector('[data-products-receipt-add-unit]')?.value || 0);
   if (addedLine?.id) {
+    const ticketMeta = nextList.tickets?.[activeTicketId] || {};
+    const lineCurrency = String(ticketMeta.ticketCurrency || 'EUR').toUpperCase();
+    const lineRate = Number(ticketMeta.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
+    const originalAmount = Math.max(0, addUnit || nextList.lines[addedLine.id].actualPrice || nextList.lines[addedLine.id].estimatedPrice || 0);
     nextList.lines[addedLine.id] = {
       ...nextList.lines[addedLine.id],
       qty: Math.max(0.01, addQty || nextList.lines[addedLine.id].qty || 1),
-      actualPrice: Math.max(0, addUnit || nextList.lines[addedLine.id].actualPrice || nextList.lines[addedLine.id].estimatedPrice || 0),
+      actualPrice: originalAmount,
       estimatedPrice: Math.max(0, nextList.lines[addedLine.id].estimatedPrice || addUnit || 0),
+      currency: lineCurrency,
+      priceOriginal: originalAmount,
+      priceEUR: Number(normalizeMovementCurrencyPayload({ amount: originalAmount, currency: lineCurrency, exchangeRateToEUR: lineRate }).amountEUR || 0),
       updatedAt: nowTs(),
     };
+    console.info('[finance:item] add-with-currency', { currency: lineCurrency, priceOriginal: originalAmount, priceEUR: nextList.lines[addedLine.id].priceEUR });
   }
   await persistProductsListRecord(nextList, { activate: true });
   const model = buildCurrentProductsModel();

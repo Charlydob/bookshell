@@ -1,11 +1,18 @@
 import { auth, db, firebasePaths, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
-import { ref, onValue, set, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ref, get, onValue, set, update, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { createLeafletMap, DEFAULT_MAP_CENTER_SPAIN, destroyLeafletMap, ensureLeaflet, invalidateLeafletMap } from "../../shared/vendors/leaflet.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 import { getCountryEnglishName } from "./countries.js";
 
 const $id = (id) => document.getElementById(id);
 const WORLD_PATH = (uid) => firebasePaths.world(uid);
+const LEGACY_WORLD_PATH_CANDIDATES = (uid) => [
+  WORLD_PATH(uid),
+  `${WORLD_PATH(uid)}/places`,
+  `${WORLD_PATH(uid)}/locales`,
+  `${firebasePaths.userRoot(uid)}/places`,
+  `${firebasePaths.userRoot(uid)}/locations`
+];
 const id = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const stars10 = (v = 0) => "★".repeat(Math.round(v)).padEnd(10, "☆");
 const hav = (a, b, c, d) => { const R = 6371000; const to = (x) => x * Math.PI / 180; const d1 = to(c - a), d2 = to(d - b); const q = Math.sin(d1 / 2) ** 2 + Math.cos(to(a)) * Math.cos(to(c)) * Math.sin(d2 / 2) ** 2; return 2 * R * Math.atan2(Math.sqrt(q), Math.sqrt(1 - q)); };
@@ -69,6 +76,39 @@ function normalizeCountryFromAddress(address = {}) {
 }
 
 function renderGeoAddMode(){ $id("world-geo-mode").hidden = false; $id("world-place-mode").hidden = true; }
+
+function arrayFromNode(node = {}) {
+  if (!node) return [];
+  if (Array.isArray(node)) return node.filter(Boolean);
+  if (typeof node === "object") return Object.values(node).filter(Boolean);
+  return [];
+}
+
+function extractWorldPayload(data = {}, sourcePath = "") {
+  const raw = data && typeof data === "object" ? data : {};
+  const geographyNode = raw.geography ?? raw.countries ?? raw.map ?? {};
+  const placesNode = raw.places ?? raw.locales ?? raw.locations ?? {};
+  const localesNode = raw.locales ?? raw.places ?? raw.locations ?? {};
+  return {
+    geography: arrayFromNode(geographyNode).map((x) => normalize(x, "geography")),
+    places: arrayFromNode(placesNode).map((x) => normalize({ ...x, lng:x.lng ?? x.lon, googleMapsDirectionsUrl:x.googleMapsDirectionsUrl || x.googleMapsUrl || createGoogleMapsUrl(x.lat, x.lon ?? x.lng), googleMapsUrl:x.googleMapsUrl || x.googleMapsDirectionsUrl || createGoogleMapsUrl(x.lat, x.lon ?? x.lng) }, "places")),
+    locales: arrayFromNode(localesNode),
+    stays: arrayFromNode(raw.stays || {}),
+    sourcePath
+  };
+}
+
+async function loadWorldDataWithFallback(uid) {
+  const paths = LEGACY_WORLD_PATH_CANDIDATES(uid);
+  for (const path of paths) {
+    const snap = await get(ref(db, path));
+    if (!snap.exists()) continue;
+    const payload = extractWorldPayload(snap.val(), path);
+    if (payload.geography.length || payload.places.length || payload.stays.length) return payload;
+  }
+  return { geography: [], places: [], locales: [], stays: [], sourcePath: WORLD_PATH(uid) };
+}
+
 function computeStaySummary(stays = []){
   const byCountry = {};
   stays.forEach((stay) => {
@@ -265,7 +305,7 @@ function renderLocals(){ const rows=state.places; const mode = $id("world-locals
 function renderStats(){ $id("world-countries").textContent = String(new Set([...state.geography, ...state.places].map((x)=>x.countryCode).filter(Boolean)).size); $id("world-geo-count").textContent = String(state.geography.length); $id("world-rated-locals").textContent = String(state.places.length); }
 function renderAll(){ renderStats(); renderMap(); renderGeoList(); renderLocals(); renderStays(); }
 
-async function persistWorld(){ if(!state.rootRef) return; await set(state.rootRef, { geography:Object.fromEntries(state.geography.map((r)=>[r.id,r])), places:Object.fromEntries(state.places.map((r)=>[r.id,r])), stays:Object.fromEntries(state.stays.map((r)=>[r.id,r])), updatedAt:Date.now() }); }
+async function persistWorld(){ if(!state.rootRef) return; await update(state.rootRef, { geography:Object.fromEntries(state.geography.map((r)=>[r.id,r])), places:Object.fromEntries(state.places.map((r)=>[r.id,r])), stays:Object.fromEntries(state.stays.map((r)=>[r.id,r])), updatedAt:Date.now() }); }
 
 function openAddLocalModal(){
   resetWorldAddModalState();
@@ -456,7 +496,7 @@ async function getCurrentPositionSafe({ forceRequest = false } = {}){
   return new Promise((resolve)=>navigator.geolocation.getCurrentPosition((pos)=>{ localStorage.setItem(WORLD_LOCATION_PERMISSION_KEY, "true"); console.log("[world:location] permission:accepted"); resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }); }, ()=>{ localStorage.removeItem(WORLD_LOCATION_PERMISSION_KEY); console.log("[world:location] permission:denied"); resolve(null); }, { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
 }
 
-export async function init(){ if(state.initialized) return; state.initialized=true; await ensureLeaflet(); bindUI(); renderRatings(); const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; state.rootRef=ref(db, WORLD_PATH(uid)); state.unsub=trackedOnValue(state.rootRef, (snap)=>{ const data=snap.val()||{}; state.geography=Object.values(data.geography||{}).map((x)=>normalize(x,"geography")); state.places=Object.values(data.places||{}).map((x)=>normalize({ ...x, lng:x.lng ?? x.lon, googleMapsDirectionsUrl:x.googleMapsDirectionsUrl || x.googleMapsUrl || createGoogleMapsUrl(x.lat, x.lon ?? x.lng), googleMapsUrl:x.googleMapsUrl || x.googleMapsDirectionsUrl || createGoogleMapsUrl(x.lat, x.lon ?? x.lng) },"places")); state.stays=Object.values(data.stays||{}); renderAll(); if (state.map && !state._mapClusterBound) { state._mapClusterBound = true; state.map.on("zoomend", ()=>renderWorldMarkers()); } }, { key:"world-root", path:WORLD_PATH(uid), module:"world", mode:"onValue", reason:"world-sync", viewId:"view-world" }, onValue); }
+export async function init(){ if(state.initialized) return; state.initialized=true; await ensureLeaflet(); bindUI(); renderRatings(); const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; const worldPath=WORLD_PATH(uid); const placesPath=`${worldPath}/places`; const localesPath=`${worldPath}/locales`; const staysPath=`${worldPath}/stays`; console.debug("[world:paths]", { userKey:uid, worldPath, placesPath, localesPath, staysPath }); state.rootRef=ref(db, worldPath); const initial = await loadWorldDataWithFallback(uid); state.geography=initial.geography; state.places=initial.places; state.stays=initial.stays; console.debug("[world:data:loaded]", { countriesCount:new Set([...state.geography, ...state.places].map((x)=>x.countryCode).filter(Boolean)).size, placesCount:state.geography.length, localesCount:state.places.length, staysCount:state.stays.length, sourcePath:initial.sourcePath }); renderAll(); if (!initial.stays.length) { const staysSnap = await get(ref(db, staysPath)); if (!staysSnap.exists()) await set(ref(db, staysPath), {}); } state.unsub=trackedOnValue(state.rootRef, (snap)=>{ const data=snap.val()||{}; const payload = extractWorldPayload(data, worldPath); state.geography=payload.geography; state.places=payload.places; state.stays=payload.stays; console.debug("[world:data:loaded]", { countriesCount:new Set([...state.geography, ...state.places].map((x)=>x.countryCode).filter(Boolean)).size, placesCount:state.geography.length, localesCount:state.places.length, staysCount:state.stays.length, sourcePath:worldPath }); renderAll(); if (state.map && !state._mapClusterBound) { state._mapClusterBound = true; state.map.on("zoomend", ()=>renderWorldMarkers()); } }, { key:"world-root", path:worldPath, module:"world", mode:"onValue", reason:"world-sync", viewId:"view-world" }, onValue); }
 export function destroy(){ if(state.unsub) state.unsub(); state.unsub=null; if(state.map){ destroyWorldMapLayers(); destroyLeafletMap($id("world-map")); state.map=null; } if(state.miniMap){ destroyLeafletMap($id("world-mini-map")); state.miniMap=null; } state.initialized=false; }
 export async function onShow(){ if(!state.initialized) await init(); setWindow(state.activeWindow); invalidateLeafletMap(state.map,70); maybeTrackAutoLocation().catch((e)=>console.log("[world:stays:auto-location:error]", e)); }
 export async function onHide(){ destroy(); }

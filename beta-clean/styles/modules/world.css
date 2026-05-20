@@ -103,3 +103,7 @@
 #view-world .world-stays-empty{padding:10px;border-radius:12px;background:rgba(255,255,255,.05)}
 
 #view-world .world-stays-warning{font-size:12px;opacity:.92;color:#ffd0d0;background:rgba(255,120,120,.12);border:1px solid rgba(255,120,120,.35);padding:6px 8px;border-radius:10px;margin-top:6px}
+[data-world-stay-modal]{position:fixed;inset:0;z-index:9999;display:flex;align-items:flex-end;justify-content:center}
+[data-world-stay-modal].is-open{visibility:visible;opacity:1}
+[data-world-stay-modal] .world-stay-modal__backdrop{position:absolute;inset:0;background:rgba(0,0,0,.45)}
+[data-world-stay-modal] .world-stay-modal__sheet{position:relative;z-index:1;width:min(100%,calc(100vw - 24px));max-height:82vh;overflow-y:auto;margin:0 12px 12px}

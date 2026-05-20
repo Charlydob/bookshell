@@ -294,6 +294,22 @@ export function world(userKey = "") {
   return joinPath(userRoot(userKey), "world");
 }
 
+export function worldRoot(userKey = "") {
+  return world(userKey);
+}
+
+export function worldGeography(userKey = "") {
+  return joinPath(world(userKey), "geography");
+}
+
+export function worldPlaces(userKey = "") {
+  return joinPath(world(userKey), "places");
+}
+
+export function worldStays(userKey = "") {
+  return joinPath(world(userKey), "stays");
+}
+
 export function worldWatch(userKey = "") {
   return joinPath(world(userKey), "watch");
 }
@@ -414,6 +430,10 @@ export const firebasePaths = Object.freeze({
   recipesFoodItems,
   recipesNutrition,
   world,
+  worldRoot,
+  worldGeography,
+  worldPlaces,
+  worldStays,
   worldWatch,
   legacyWorldTrips,
   notes,

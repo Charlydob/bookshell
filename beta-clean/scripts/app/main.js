@@ -526,8 +526,6 @@ function normalizeSyncIndicatorShortcuts(indicator) {
   hideLegacyThemeControl();
   indicator.querySelector("[data-hard-reset-app]")?.remove();
 
-  }
-
   const generalBtn = indicator.querySelector("#app-general-btn");
   if (generalBtn instanceof HTMLElement) {
     generalBtn.setAttribute("title", "Misiones");

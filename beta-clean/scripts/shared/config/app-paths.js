@@ -21,8 +21,6 @@ const MODULE_SEGMENTS = Object.freeze({
   [MODULE_ALIASES.VIDEOS]: "videos",
   [MODULE_ALIASES.RECIPES]: "recipes",
   [MODULE_ALIASES.HABITS]: "habits",
-  [MODULE_ALIASES.GAMES]: "games",
-  [MODULE_ALIASES.MOVIES]: "movies",
   [MODULE_ALIASES.TRIPS]: "trips",
   [MODULE_ALIASES.FINANCE]: "finance",
   [MODULE_ALIASES.GYM]: "gym",

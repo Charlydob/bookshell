@@ -20,11 +20,6 @@ import {
   notifySyncUserChanged,
   subscribeSyncState,
 } from "../shared/services/sync-manager.js?v=2026-04-05-v5";
-import {
-  initAchievementsService,
-  trackAchievementViewVisit,
-} from "../shared/services/achievements/index.js";
-import { initGeneralCenterService } from "../shared/services/general-center/index.js";
 import { applyTheme, getAvailableThemes, getCurrentTheme, initThemeService } from "../shared/services/theme/index.js";
 import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
 import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, getFirebaseMetricsSnapshot, logFirebaseRead, registerViewListener } from "../shared/firebase/read-debug.js";
@@ -40,7 +35,6 @@ const ECHARTS_LIKELY_VIEW_IDS = new Set([
   "view-finance",
   "view-habits",
   "view-gym",
-  "view-improvements",
   "view-world",
 ]);
 const loadedStyles = new Map();
@@ -58,7 +52,6 @@ const NAV_VIEW_META = {
   "view-habits": { label: "Habitos", shortLabel: "Hoy" },
   "view-world": { label: "Mundo", shortLabel: "Mundo" },
   "view-finance": { label: "Cuentas", shortLabel: "Gastos" },
-  "view-improvements": { label: "Mejoras", shortLabel: "Fix" },
   "view-gym": { label: "Gym", shortLabel: "Gym" },
 };
 const LEGACY_DEFAULT_NAV_ORDER = Object.freeze([
@@ -68,7 +61,6 @@ const LEGACY_DEFAULT_NAV_ORDER = Object.freeze([
   "view-habits",
   "view-world",
   "view-finance",
-  "view-improvements",
   "view-gym",
 ]);
 const RECOMMENDED_NAV_ORDER = Object.freeze([
@@ -89,7 +81,7 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
     id: "group-more",
     label: "Mas",
     emoji: "+",
-    items: ["view-recipes", "view-finance", "view-improvements", "view-gym"],
+    items: ["view-recipes", "view-finance", "view-gym"],
   },
 });
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
@@ -97,7 +89,6 @@ const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
-  { key: "improvements", label: "Fix", viewId: "view-improvements" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
   { key: "gym", label: "Gym", viewId: "view-gym" },
   { key: "recipes", label: "Comida", viewId: "view-recipes" },
@@ -116,15 +107,6 @@ function getGlobalQuickFabIconMarkup(actionKey) {
       </svg>
     `;
   }
-
-  if (actionKey === "improvements") {
-    return `
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M14.5 6.5a4.5 4.5 0 0 0 2.8 4.16l-6.14 6.14a2 2 0 1 1-2.83-2.83l6.14-6.14A4.5 4.5 0 0 0 17.5 3l-2.09 2.09-.91-.59-.59-.91L16 1.5a4.48 4.48 0 0 0-1.5 5Z" />
-      </svg>
-    `;
-  }
-
 
   if (actionKey === "notes") {
     return `
@@ -451,9 +433,7 @@ const SYNC_METRIC_MODULE_ORDER = Object.freeze([
   { key: "books", label: "Libros" },
   { key: "games", label: "Juegos" },
   { key: "notes", label: "Notas/Recordatorios" },
-  { key: "videos-hub", label: "Videos" },
   { key: "media", label: "Media" },
-  { key: "improvements", label: "Mejoras" },
   { key: "shell", label: "Shell" },
 ]);
 
@@ -528,10 +508,6 @@ function normalizeSyncIndicatorShortcuts(indicator) {
   hideLegacyThemeControl();
   indicator.querySelector("[data-hard-reset-app]")?.remove();
 
-  const achievementsBtn = indicator.querySelector("#app-achievements-btn");
-  if (achievementsBtn instanceof HTMLElement) {
-    achievementsBtn.setAttribute("title", "Logros");
-    achievementsBtn.setAttribute("aria-label", "Abrir logros");
   }
 
   const generalBtn = indicator.querySelector("#app-general-btn");
@@ -547,7 +523,6 @@ function orderSyncIndicatorActions(indicator) {
   const actionsNode = ensureSyncIndicatorActionsNode(indicator);
   if (!(actionsNode instanceof HTMLElement)) return;
   [
-    "#app-achievements-btn",
     "#app-general-btn",
     "#app-reminder-notifications-btn",
     "#app-sync-settings-btn",
@@ -1204,11 +1179,6 @@ const viewModules = {
     cssUrl: "../../styles/modules/finance.css",
     htmlUrl: "../../views/finance.html",
     moduleLoader: () => import("../modules/finance/index.js"),
-  },
-  "view-improvements": {
-    cssUrl: "../../styles/modules/improvements.css",
-    htmlUrl: "../../views/improvements.html",
-    moduleLoader: () => import("../modules/improvements/index.js"),
   },
   "view-gym": {
     cssUrl: "../../styles/modules/gym.css",
@@ -2814,7 +2784,6 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
   state.currentViewId = viewId;
   window.localStorage.setItem(LAST_VIEW_KEY, viewId);
   scheduleLikelyVendorWarmup(viewId);
-  trackAchievementViewVisit(viewId);
 
   if (pushHash) {
     const nextHash = `#${viewId}`;
@@ -2968,14 +2937,6 @@ async function runGlobalQuickFabAction(actionKey) {
       return clickWhenReady(() => document.getElementById("books-start-session"));
     });
   }
-
-  if (actionKey === "improvements") {
-    return openViewAndRunQuickAction("view-improvements", async () => {
-      const openEditor = await waitForValue(() => window.__bookshellImprovements?.openEditorModal || null);
-      if (typeof openEditor === "function") {
-        openEditor({ focus: true });
-        return true;
-      }
       return clickWhenReady(() => document.getElementById("improvements-open-editor-btn"));
     });
   }
@@ -3330,18 +3291,12 @@ async function ensureUserSchema(authUid) {
   await update(ref(db, root), {
     meta: { schemaVersion: 2, createdAt: now },
     books: { _init: true },
-    videos: { _init: true },
-    videosHub: { _init: true },
     recipes: { _init: true },
     habits: { _init: true },
-    games: { _init: true },
-    movies: { _init: true },
-    trips: { _init: true },
+    world: { _init: true },
     finance: { _init: true },
-    improvements: {
-      items: { _init: true },
-    },
     gym: { _init: true },
+    notes: { _init: true },
   });
 }
 
@@ -3527,8 +3482,6 @@ void initSyncManager({
 });
 initThemeService();
 hideLegacyThemeControl();
-initAchievementsService();
-initGeneralCenterService();
 bindSyncIndicatorToggles();
 exposeShellApis();
 bindAuthGate();

@@ -1220,7 +1220,6 @@ function getBookLinkedQuotes(bookId, book) {
 function openQuoteInVideos(item) {
   if (!item) return;
   const rawItem = item?.raw ? { id: item.id, ...(item.raw || {}) } : { id: item.id, ...item };
-  window.__bookshellSetView?.("view-videos-hub");
   window.__bookshellVideos?.openLinksNewView?.(rawItem);
 }
 

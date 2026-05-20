@@ -49,11 +49,6 @@ const TAB_RESETTERS = {
   "view-books": () => {
     closeByIds(["book-modal-backdrop", "book-detail-backdrop"]);
   },
-  "view-videos-hub": () => {
-    clickByIds(["videos-hub-back-btn"]);
-    const listTab = document.querySelector('#view-videos-hub .videosHub__tab[data-hub-tab="list"]');
-    if (listTab) listTab.click();
-  },
   "view-recipes": () => {
     closeByIds([
       "recipe-modal-backdrop",
@@ -69,16 +64,6 @@ const TAB_RESETTERS = {
     closeByIds(["habit-modal-backdrop", "habit-entry-modal-backdrop", "habit-session-overlay"]);
     const todayTab = document.querySelector('#view-habits .habit-subtab[data-tab="today"]');
     if (todayTab) todayTab.click();
-  },
-  "view-games": () => {
-    document.querySelectorAll("#view-games .modal-backdrop:not(.hidden)").forEach(hideElement);
-    hideElement(document.getElementById("game-detail-modal"));
-    const countersTab = document.getElementById("game-tab-counters");
-    if (countersTab) countersTab.click();
-  },
-  "view-media": () => {
-    document.querySelectorAll("#view-media .media-modal-shell:not(.hidden)").forEach(hideElement);
-    clickByIds(["media-add-close", "media-country-close"]);
   },
   "view-world": () => {
     const mainTab = document.querySelector('#view-world .world-window-tab[data-window="main"]');
@@ -96,13 +81,6 @@ const TAB_RESETTERS = {
       backdrop.innerHTML = "";
     }
     document.body.classList.remove("finance-modal-open");
-  },
-  "view-improvements": () => {
-    try {
-      window.__bookshellImprovements?.closeEditorModal?.({ reset: true });
-    } catch (_) {}
-    hideElement(document.getElementById("improvements-editor-backdrop"));
-    document.body.classList.remove("has-open-modal");
   },
   "view-gym": () => {
     clickByIds(["gym-back", "gym-stats-back"]);

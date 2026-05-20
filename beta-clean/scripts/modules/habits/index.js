@@ -14,6 +14,7 @@ function logHabitsModule(phase, extra = {}, level = "info") {
 }
 
 export async function init() {
+  console.debug("[view:init]", "view-habits");
   if (runtimeModule) {
     logHabitsModule("runtime:reuse");
     return;
@@ -28,6 +29,8 @@ export async function init() {
       exports: Object.keys(runtimeModule || {}),
     });
   } catch (error) {
+    console.error("[habits:init:error]", error);
+    console.error("[view:error]", { viewId: "view-habits", error });
     logHabitsModule("runtime:import:error", {
       runtimeVersion: HABITS_RUNTIME_VERSION,
       message: error?.message || String(error || ""),
@@ -38,10 +41,16 @@ export async function init() {
 }
 
 export async function onShow() {
-  await runtimeModule?.onShow?.();
+  console.debug("[view:onShow]", "view-habits");
   try {
-    window.dispatchEvent(new Event("resize"));
-  } catch (_) {}
+    await runtimeModule?.onShow?.();
+    try {
+      window.dispatchEvent(new Event("resize"));
+    } catch (_) {}
+  } catch (error) {
+    console.error("[habits:onShow:error]", error);
+    console.error("[view:error]", { viewId: "view-habits", error });
+  }
 }
 
 export async function onHide() {

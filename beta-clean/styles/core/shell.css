@@ -433,6 +433,30 @@
   box-shadow:0 2px 8px rgba(0,0,0,.35);
 }
 
+.app-settings-modal,
+.app-metrics-modal,
+.app-sync-indicator.is-open,
+.boot-splash,
+.app-console-list {
+  max-width: calc(100vw - 24px);
+  width: min(100%, calc(100vw - 24px));
+  box-sizing: border-box;
+  overflow-x: hidden;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.app-console-list,
+.app-settings-modal pre,
+.app-metrics-modal pre,
+.boot-splash pre,
+.boot-splash code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
 .bottom-nav .nav-btn.nav-btn-active,
 .bottom-nav .nav-group-toggle.nav-btn-active {
   background: var(--app-nav-active-bg);

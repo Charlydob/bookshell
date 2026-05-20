@@ -27,6 +27,7 @@ export async function readModuleSnapshot({ moduleName, uid }) {
   const key = buildSnapshotKey(moduleName, uid);
   if (!key) return null;
   const record = await getSnapshotRecord(key);
+  console.info("[offline:cache:read]", { moduleName, uid: String(uid || "").trim(), hit: !!record?.data });
   if (record?.data) {
     registerCacheMetric({
       module: moduleName,
@@ -51,6 +52,7 @@ export async function writeModuleSnapshot({ moduleName, uid, data, updatedAt = D
     data,
   };
   const result = await putSnapshotRecord(record);
+  console.info("[offline:cache:write]", { moduleName, uid: String(uid || "").trim(), updatedAt: record.updatedAt });
   registerCacheMetric({
     module: moduleName,
     key,

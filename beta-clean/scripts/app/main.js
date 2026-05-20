@@ -1191,9 +1191,9 @@ async function registerAppServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   try {
     const swUrl = new URL("../../service-worker.js", import.meta.url);
-    return await navigator.serviceWorker.register(swUrl, {
-      scope: new URL("../../", import.meta.url).pathname,
-    });
+    const scope = new URL("../../", import.meta.url).pathname;
+    console.info("[offline:init] service-worker", { swUrl: swUrl.href, scope });
+    return await navigator.serviceWorker.register(swUrl, { scope });
   } catch (error) {
     console.warn("[shell] no se pudo registrar el service worker", error);
     return null;

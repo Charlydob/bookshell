@@ -101,3 +101,5 @@
 #view-world .world-stays-city-main,#view-world .world-stays-city-meta{overflow-wrap:anywhere}
 #view-world .world-stays-city-meta{opacity:.84;font-size:12px}
 #view-world .world-stays-empty{padding:10px;border-radius:12px;background:rgba(255,255,255,.05)}
+
+#view-world .world-stays-warning{font-size:12px;opacity:.92;color:#ffd0d0;background:rgba(255,120,120,.12);border:1px solid rgba(255,120,120,.35);padding:6px 8px;border-radius:10px;margin-top:6px}

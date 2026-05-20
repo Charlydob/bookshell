@@ -1,10 +1,11 @@
 import { auth, db, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
-import { ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ref, onValue, set, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 let ctx = { root:null };
 let stays = [];
 let unsub = null;
+let autoStayTried = false;
 const collapsedCountries = new Set();
 
 const DAY_MS = 86400000;
@@ -115,7 +116,7 @@ function render() {
       const cityLife = alive ? pct(city.days, alive) : null;
       return `<li class="world-stays-city-item"><span class="world-stays-city-main">${esc(city.city)} · ${city.days} día${city.days === 1 ? "" : "s"}</span><span class="world-stays-city-meta">${cityOfCountry.toFixed(1)}% de ${esc(country.country)}${cityLife !== null ? ` · ${cityLife.toFixed(2)}% vida` : ""}</span></li>`;
     }).join("");
-    return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)} · ${country.days} día${country.days === 1 ? "" : "s"}</span><span class="world-stays-country-meta">${countryPct.toFixed(1)}% viajes${lifePct !== null ? ` · ${lifePct.toFixed(2)}% vida` : ""}</span></summary><ul class="world-stays-city-list">${cities || "<li class=\"world-stays-city-item\">Sin ciudad registrada.</li>"}</ul></details>`;
+    return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)} · ${country.days} día${country.days === 1 ? "" : "s"}</span><span class="world-stays-country-meta">${countryPct.toFixed(1)}% registros${lifePct !== null ? ` · ${lifePct.toFixed(2)}% vida` : ""}</span></summary><ul class="world-stays-city-list">${cities || "<li class=\"world-stays-city-item\">Sin ciudad registrada.</li>"}</ul></details>`;
   }).join("");
 
   mount.innerHTML = `
@@ -123,6 +124,7 @@ function render() {
       <h3>Estancias</h3>
       <button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button>
     </div>
+    <div class="world-stays-warning" data-world-stays-warning aria-live="polite"></div>
 
     <div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div>
 
@@ -163,6 +165,46 @@ function openModal() {
   if (modal) modal.hidden = false;
 }
 function closeModal() { const modal = $("[data-world-stay-modal]"); if (modal) modal.hidden = true; }
+function openWorldStayModal() { openModal(); }
+function showCompactWarning(message = "") { const node = $("[data-world-stays-warning]"); if (node) node.textContent = message; }
+function normalizeCityId(value = "") { return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "unknown-city"; }
+async function reverseGeocode(lat, lon) {
+  const u = new URL("https://nominatim.openstreetmap.org/reverse");
+  u.searchParams.set("lat", String(lat)); u.searchParams.set("lon", String(lon)); u.searchParams.set("format", "jsonv2"); u.searchParams.set("addressdetails", "1");
+  const raw = await (await fetch(u)).json();
+  const a = raw?.address || {};
+  return { city:String(a.city || a.town || a.village || a.municipality || "").trim(), region:String(a.state || a.region || "").trim(), country:String(a.country || "").trim(), countryCode:String(a.country_code || "").trim().toUpperCase() };
+}
+async function ensureAutoStayToday() {
+  if (autoStayTried) return;
+  autoStayTried = true;
+  console.debug("[world:stays:auto:start]");
+  try {
+    if (!window.isSecureContext || !navigator.geolocation) throw new Error("permiso denegado");
+    const permission = navigator.permissions?.query ? await navigator.permissions.query({ name:"geolocation" }) : null;
+    if (permission?.state === "denied") throw new Error("permiso denegado");
+    const coords = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition((pos) => resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }), () => reject(new Error("permiso denegado")), { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
+    console.debug("[world:stays:auto:location]", coords);
+    const place = await reverseGeocode(coords.lat, coords.lon);
+    console.debug("[world:stays:auto:resolved]", place);
+    if (!place.countryCode || !place.country) throw new Error("geocoder falló");
+    if (!place.city) throw new Error("sin ciudad");
+    const uid = getCurrentUserDataRootKey() || auth.currentUser?.uid;
+    if (!uid) throw new Error("Firebase error");
+    const today = new Date().toISOString().slice(0, 10);
+    const key = `auto_${today}_${place.countryCode}_${normalizeCityId(place.city)}`;
+    if (stays.some((st) => st.id === key)) return console.warn("[world:stays:auto:skip]", "exists");
+    const now = Date.now();
+    const stay = { id:key, source:"auto-location", date:today, city:place.city, region:place.region, country:place.country, countryCode:place.countryCode, flagEmoji:flagFromCountryCode(place.countryCode), daysTotal:1, createdAt:now, updatedAt:now };
+    await update(ref(db, `v2/users/${uid}/world/stays`), { [key]: stay });
+    console.debug("[world:stays:auto:saved]", stay);
+  } catch (error) {
+    const reason = String(error?.message || "Firebase error");
+    console.warn("[world:stays:auto:skip]", reason);
+    showCompactWarning(`No se pudo registrar ubicación automática (${reason})`);
+  }
+}
+
 
 export function renderWorldStays() { render(); }
 
@@ -173,6 +215,8 @@ export function initWorldStays({ root }) {
     const path = `v2/users/${uid}/world/stays`;
     unsub = trackedOnValue(ref(db, path), (snap) => { stays = Object.values(snap.val() || {}); render(); }, { key:"world-stays", path, module:"world", mode:"onValue", reason:"world-stays", viewId:"view-world" }, onValue);
   }
+  ensureAutoStayToday();
+  console.debug("[world:stays:add-button:bound]");
 
   root.addEventListener("click", async (e) => {
     const btn = e.target.closest("button,[data-world-stay-close]");
@@ -180,7 +224,7 @@ export function initWorldStays({ root }) {
 
     if (btn.dataset.worldStayAction === "open-modal") {
       console.debug("[world:stays:add-click]");
-      openModal();
+      openWorldStayModal();
     }
     if (btn.dataset.worldStayClose !== undefined) closeModal();
     if (btn.dataset.worldSetBirthdate !== undefined) {

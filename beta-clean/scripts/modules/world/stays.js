@@ -165,30 +165,34 @@ function openModal() {
   const modal = document.createElement("div");
   modal.setAttribute("data-world-stay-modal", "");
   modal.className = "world-stay-modal is-open";
-  modal.innerHTML = `<div class="world-stay-modal__backdrop"></div>
-    <div class="world-sheet world-stay-modal__sheet">
-      <div class="world-sheet-header"><h3>Nueva estancia</h3><button type="button" data-world-stay-close>Cerrar</button></div>
+  modal.innerHTML = `<div class="world-stay-modal__backdrop" data-world-stay-close></div>
+    <section class="world-sheet world-stay-modal__sheet">
+      <div class="world-sheet-header"><h3>Añadir estancia</h3><button type="button" data-world-stay-close aria-label="Cerrar">Cerrar</button></div>
       <div class="world-edit-grid">
-        <input data-world-stay-source placeholder="Origen (auto/manual)">
+        <input data-world-stay-source placeholder="Buscador lugar">
         <input data-world-stay-city placeholder="Ciudad">
         <input data-world-stay-region placeholder="Región/provincia">
         <input data-world-stay-country placeholder="País">
         <input data-world-stay-country-code placeholder="Código país (ej: PE)">
-        <input data-world-stay-flag placeholder="Bandera emoji (opcional)">
+        <input data-world-stay-flag placeholder="Bandera">
         <input type="date" data-world-stay-start>
         <input type="date" data-world-stay-end>
-        <input inputmode="numeric" data-world-stay-total-days placeholder="Días manuales">
+        <input inputmode="numeric" data-world-stay-total-days placeholder="Días totales">
       </div>
-      <button type="button" class="world-save" data-world-stay-save>Guardar estancia</button>
-    </div>`;
+      <button type="button" class="world-save" data-world-stay-save>Guardar</button>
+    </section>`;
+  if (!modal.innerHTML.trim()) {
+    console.error("[world:stays:modal-empty]");
+    return;
+  }
   document.body.appendChild(modal);
+  const sheet = modal.querySelector(".world-stay-modal__sheet");
+  const exists = !!document.querySelector("[data-world-stay-modal]");
   console.debug("[world:stays:modal-dom]", {
-    exists: !!document.querySelector("[data-world-stay-modal]"),
-    className: modal?.className,
-    display: getComputedStyle(modal).display,
-    visibility: getComputedStyle(modal).visibility,
-    opacity: getComputedStyle(modal).opacity,
-    zIndex: getComputedStyle(modal).zIndex
+    exists,
+    innerHTMLLength: modal.innerHTML.length,
+    rect: modal.getBoundingClientRect(),
+    sheetRect: sheet?.getBoundingClientRect()
   });
 }
 function closeModal() { const modal = document.querySelector("[data-world-stay-modal]"); if (modal) modal.remove(); }

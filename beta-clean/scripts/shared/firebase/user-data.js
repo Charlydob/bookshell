@@ -168,11 +168,15 @@ async function trySetUserIndex(context, user = auth.currentUser) {
       status: "done",
     });
   } catch (error) {
+    if (isPermissionDenied(error)) {
+      console.warn("[userIndex:write:skipped]", error);
+      return;
+    }
     console.info("[user-key:index:set]", {
       path,
       uid: authUid,
       emailKey,
-      status: isPermissionDenied(error) ? "skip" : "error",
+      status: "error",
       reason: error?.message || String(error || ""),
     });
   }

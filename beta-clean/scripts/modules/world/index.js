@@ -4,6 +4,8 @@ import { createLeafletMap, DEFAULT_MAP_CENTER_SPAIN, destroyLeafletMap, ensureLe
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 import { getCountryEnglishName } from "./countries.js";
 
+console.debug("[world:index:loaded]", { version: "world-fix-2026-05-20-1525" });
+
 const $id = (id) => document.getElementById(id);
 const WORLD_PATH = (uid) => firebasePaths.world(uid);
 const LEGACY_WORLD_PATH_CANDIDATES = (uid) => [

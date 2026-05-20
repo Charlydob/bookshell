@@ -897,6 +897,37 @@ export function trackedOnValue(targetRef, handler, options = {}, onValueImpl = n
   return registerViewListener(safeOptions.viewId, unsubscribe, safeOptions)
 }
 
+
+export const activeListenersByKey = state.listenerKeys
+
+export function startListenerOnce(key, targetRef, handler, options = {}, onValueImpl = null) {
+  const safeKey = String(key || options.key || '').trim()
+  const path = String(options.path || targetRef?.toString?.() || '').trim()
+  if (!safeKey) throw new Error('startListenerOnce requiere key')
+  const viewId = String(options.viewId || 'global').trim() || 'global'
+  const existingId = state.listenerKeys.get(`${viewId}:${safeKey}`)
+  if (existingId) {
+    console.debug('[firebase:listener:skip-duplicate]', { scope: viewId, key: safeKey, path })
+    return () => stopListener(safeKey, viewId)
+  }
+  console.debug('[firebase:listener:start]', { scope: viewId, key: safeKey, path })
+  return trackedOnValue(targetRef, handler, { ...options, key: safeKey, viewId }, onValueImpl)
+}
+
+export function stopListener(key, scope = 'global') {
+  const safeKey = String(key || '').trim()
+  const safeScope = String(scope || 'global').trim() || 'global'
+  const id = state.listenerKeys.get(`${safeScope}:${safeKey}`)
+  if (!id) return
+  const entry = state.activeListeners.get(id)
+  console.debug('[firebase:listener:stop]', { scope: safeScope, key: safeKey, path: String(entry?.path || '') })
+  detachListenerId(id, { invoke: true, stopReason: 'manual' })
+}
+
+export function stopListenersByScope(scope = 'global') {
+  cleanupViewListeners(scope)
+}
+
 export function getFirebaseMetricsSnapshot(rangeKey = "since-start") {
   const samples = filterSamplesByRange(rangeKey)
   const modules = buildModuleMetricsSummary(samples, rangeKey)

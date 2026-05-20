@@ -38,9 +38,7 @@ const SHELL_STATE_KEY = "__bookshellCleanShellState";
 const APP_BOOT_TS = performance.now();
 const ECHARTS_LIKELY_VIEW_IDS = new Set([
   "view-finance",
-  "view-games",
   "view-habits",
-  "view-media",
   "view-gym",
   "view-improvements",
   "view-world",
@@ -56,11 +54,8 @@ const NAV_MENU_MARGIN = 10;
 const NAV_VIEW_META = {
   "view-books": { label: "Libros", shortLabel: "Libros" },
   "view-notes": { label: "Notas", shortLabel: "Notas" },
-  "view-videos-hub": { label: "Videos", shortLabel: "Videos" },
   "view-recipes": { label: "Recetas", shortLabel: "Comida" },
   "view-habits": { label: "Habitos", shortLabel: "Hoy" },
-  "view-games": { label: "Juegos", shortLabel: "Juegos" },
-  "view-media": { label: "Media", shortLabel: "Media" },
   "view-world": { label: "Mundo", shortLabel: "Mundo" },
   "view-finance": { label: "Cuentas", shortLabel: "Gastos" },
   "view-improvements": { label: "Mejoras", shortLabel: "Fix" },
@@ -69,11 +64,8 @@ const NAV_VIEW_META = {
 const LEGACY_DEFAULT_NAV_ORDER = Object.freeze([
   "view-books",
   "view-notes",
-  "view-videos-hub",
   "view-recipes",
   "view-habits",
-  "view-games",
-  "view-media",
   "view-world",
   "view-finance",
   "view-improvements",
@@ -91,7 +83,7 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
     id: "group-media",
     label: "Media",
     emoji: "M",
-    items: ["view-videos-hub", "view-media", "view-games", "view-world"],
+    items: ["view-world"],
   },
   "group-more": {
     id: "group-more",
@@ -106,9 +98,7 @@ const NOTES_MODULE_VERSION = "2026-05-15-v1";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "improvements", label: "Fix", viewId: "view-improvements" },
-  { key: "media", label: "Media", viewId: "view-media" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
-  { key: "videos", label: "Video", viewId: "view-videos-hub" },
   { key: "gym", label: "Gym", viewId: "view-gym" },
   { key: "recipes", label: "Comida", viewId: "view-recipes" },
   { key: "finance", label: "Gasto", viewId: "view-finance" },
@@ -135,14 +125,6 @@ function getGlobalQuickFabIconMarkup(actionKey) {
     `;
   }
 
-  if (actionKey === "media") {
-    return `
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <rect x="4" y="5" width="16" height="14" rx="2" />
-        <path d="M8 5v14M16 5v14M4 9h4M4 15h4M16 9h4M16 15h4" />
-      </svg>
-    `;
-  }
 
   if (actionKey === "notes") {
     return `
@@ -153,14 +135,6 @@ function getGlobalQuickFabIconMarkup(actionKey) {
     `;
   }
 
-  if (actionKey === "videos") {
-    return `
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <rect x="4" y="6" width="12" height="12" rx="2" />
-        <path d="m16 10 4-2v8l-4-2M10 10.5l3 1.9-3 1.9Z" />
-      </svg>
-    `;
-  }
 
   if (actionKey === "gym") {
     return `
@@ -1211,20 +1185,10 @@ const viewModules = {
     htmlUrl: `../../views/notes.html?v=${NOTES_MODULE_VERSION}`,
     moduleLoader: () => import(`../modules/notes/index.js?v=${NOTES_MODULE_VERSION}`),
   },
-  "view-videos-hub": {
-    cssUrl: "../../styles/modules/videos-hub.css",
-    htmlUrl: "../../views/videos-hub.html",
-    moduleLoader: () => import("../modules/videos-hub/index.js"),
-  },
   "view-world": {
     cssUrl: "../../styles/modules/world.css",
     htmlUrl: "../../views/world.html",
     moduleLoader: () => import("../modules/world/index.js"),
-  },
-  "view-media": {
-    cssUrl: "../../styles/modules/media.css",
-    htmlUrl: "../../views/media.html",
-    moduleLoader: () => import("../modules/media/index.js"),
   },
   "view-recipes": {
     cssUrl: "../../styles/modules/recipes.css",
@@ -1235,11 +1199,6 @@ const viewModules = {
     cssUrl: `../../styles/modules/habits.css?v=${HABITS_MODULE_VERSION}`,
     htmlUrl: `../../views/habits.html?v=${HABITS_MODULE_VERSION}`,
     moduleLoader: () => import(`../modules/habits/index.js?v=${HABITS_MODULE_VERSION}`),
-  },
-  "view-games": {
-    cssUrl: "../../styles/modules/games.css",
-    htmlUrl: "../../views/games.html",
-    moduleLoader: () => import("../modules/games/index.js"),
   },
   "view-finance": {
     cssUrl: "../../styles/modules/finance.css",
@@ -3021,11 +2980,6 @@ async function runGlobalQuickFabAction(actionKey) {
     });
   }
 
-  if (actionKey === "media") {
-    return openViewAndRunQuickAction("view-media", () => {
-      return clickWhenReady(() => document.getElementById("media-fab-add"));
-    });
-  }
 
   if (actionKey === "notes") {
     return openViewAndRunQuickAction("view-notes", async () => {
@@ -3038,11 +2992,6 @@ async function runGlobalQuickFabAction(actionKey) {
     });
   }
 
-  if (actionKey === "videos") {
-    return openViewAndRunQuickAction("view-videos-hub", () => {
-      return clickWhenReady(() => document.getElementById("videos-hub-create-btn"));
-    });
-  }
 
   if (actionKey === "gym") {
     return openViewAndRunQuickAction("view-gym", () => {

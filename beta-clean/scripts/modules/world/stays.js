@@ -1,5 +1,5 @@
 import { auth, db, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
-import { ref, onValue, set, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ref, onValue, set, update, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 let ctx = { root:null };
@@ -8,6 +8,10 @@ let unsub = null;
 let autoStayTried = false;
 const collapsedCountries = new Set();
 let globalStayModalHandlerBound = false;
+let activeEditStayId = null;
+let searchAbortController = null;
+let searchDebounceTimer = null;
+let searchResults = [];
 
 const DAY_MS = 86400000;
 const toId = () => `stay_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -57,8 +61,9 @@ function computeStats() {
     row.days += stayDays;
     if (s.city) {
       const cityKey = `${s.city}`.trim().toLowerCase();
-      const city = row.cities.get(cityKey) || { city:s.city, days:0 };
+      const city = row.cities.get(cityKey) || { city:s.city, days:0, stays:[] };
       city.days += stayDays;
+      city.stays.push(s);
       row.cities.set(cityKey, city);
       citiesSet.add(`${cityKey}__${key}`);
     }
@@ -110,14 +115,19 @@ function render() {
 
   const countries = stats.byCountry.map((country) => {
     const isCollapsed = !collapsedCountries.has(country.key);
-    const countryPct = pct(country.days, stats.totalDays);
     const lifePct = alive ? pct(country.days, alive) : null;
     const cities = country.cities.map((city) => {
-      const cityOfCountry = pct(city.days, country.days);
-      const cityLife = alive ? pct(city.days, alive) : null;
-      return `<li class="world-stays-city-item"><span class="world-stays-city-main">${esc(city.city)} · ${city.days} día${city.days === 1 ? "" : "s"}</span><span class="world-stays-city-meta">${cityOfCountry.toFixed(1)}% de ${esc(country.country)}${cityLife !== null ? ` · ${cityLife.toFixed(2)}% vida` : ""}</span></li>`;
+      const rows = (city.stays || []).sort((a, b) => Number(b.startDate || 0) - Number(a.startDate || 0)).map((stay) => `
+        <li class="world-stays-entry">
+          <span>${esc(stay.city || "Sin ciudad")} · ${Number(stay.daysTotal || 0)} día${Number(stay.daysTotal || 0) === 1 ? "" : "s"}</span>
+          <div class="world-stays-entry-actions">
+            <button type="button" data-world-stay-edit="${esc(stay.id)}">Editar</button>
+            <button type="button" data-world-stay-delete="${esc(stay.id)}">Eliminar</button>
+          </div>
+        </li>`).join("");
+      return `<li class="world-stays-city-item"><span class="world-stays-city-main">${esc(city.city)} · ${city.days} día${city.days === 1 ? "" : "s"}</span><ul class="world-stays-entry-list">${rows}</ul></li>`;
     }).join("");
-    return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)} · ${country.days} día${country.days === 1 ? "" : "s"}</span><span class="world-stays-country-meta">${countryPct.toFixed(1)}% registros${lifePct !== null ? ` · ${lifePct.toFixed(2)}% vida` : ""}</span></summary><ul class="world-stays-city-list">${cities || "<li class=\"world-stays-city-item\">Sin ciudad registrada.</li>"}</ul></details>`;
+    return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)} · ${country.days} día${country.days === 1 ? "" : "s"} · ${lifePct !== null ? `${lifePct.toFixed(2)}% vida` : "0% vida"} ▾</span></summary><ul class="world-stays-city-list">${cities || "<li class=\"world-stays-city-item\">Sin ciudad registrada.</li>"}</ul></details>`;
   }).join("");
 
   mount.innerHTML = `
@@ -159,7 +169,51 @@ function bindStaysUI(root) {
   console.debug("[world:stays:add-button:bound]");
 }
 
-function openModal() {
+function fillStayForm(payload = {}) {
+  const setField = (selector, value = "") => {
+    const input = document.querySelector(selector);
+    if (input) input.value = value;
+  };
+  setField("[data-world-stay-source]", payload.source || "manual");
+  setField("[data-world-stay-city]", payload.city || "");
+  setField("[data-world-stay-region]", payload.region || "");
+  setField("[data-world-stay-country]", payload.country || "");
+  setField("[data-world-stay-country-code]", payload.countryCode || "");
+  setField("[data-world-stay-flag]", payload.flagEmoji || flagFromCountryCode(payload.countryCode || ""));
+  setField("[data-world-stay-start]", payload.startDate || "");
+  setField("[data-world-stay-end]", payload.endDate || "");
+  setField("[data-world-stay-total-days]", payload.daysTotal || "");
+}
+
+function renderSearchResults(items = []) {
+  searchResults = items;
+  const box = document.querySelector("[data-world-stay-search-results]");
+  if (!box) return;
+  if (!items.length) {
+    box.innerHTML = "";
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = items.map((r, idx) => `<button type="button" class="world-stay-search-item" data-world-stay-suggest="${idx}">${esc(r.display_name)}</button>`).join("");
+}
+
+async function searchPlace(query) {
+  if (searchAbortController) searchAbortController.abort();
+  searchAbortController = new AbortController();
+  const u = new URL("https://nominatim.openstreetmap.org/search");
+  u.searchParams.set("q", query);
+  u.searchParams.set("format", "jsonv2");
+  u.searchParams.set("addressdetails", "1");
+  u.searchParams.set("limit", "6");
+  console.debug("[world:stays:search:start]", { query });
+  const raw = await (await fetch(u, { signal:searchAbortController.signal })).json();
+  console.debug("[world:stays:search:results]", { query, total:raw.length });
+  return raw;
+}
+
+function openModal(stay = null) {
+  activeEditStayId = stay?.id || null;
   console.debug("[world:stays:modal-open]");
   if (document.querySelector("[data-world-stay-modal]")) return;
   const modal = document.createElement("div");
@@ -167,9 +221,10 @@ function openModal() {
   modal.className = "world-stay-modal is-open";
   modal.innerHTML = `<div class="world-stay-modal__backdrop" data-world-stay-close></div>
     <section class="world-sheet world-stay-modal__sheet">
-      <div class="world-sheet-header"><h3>Añadir estancia</h3><button type="button" data-world-stay-close aria-label="Cerrar">Cerrar</button></div>
+      <div class="world-sheet-header"><h3>Añadir estancia</h3><button type="button" class="world-stay-close-x" data-world-stay-close aria-label="Cerrar">✕</button></div>
       <div class="world-edit-grid">
         <input data-world-stay-source placeholder="Buscador lugar">
+        <div class="world-stay-search-results" data-world-stay-search-results hidden></div>
         <input data-world-stay-city placeholder="Ciudad">
         <input data-world-stay-region placeholder="Región/provincia">
         <input data-world-stay-country placeholder="País">
@@ -194,9 +249,10 @@ function openModal() {
     rect: modal.getBoundingClientRect(),
     sheetRect: sheet?.getBoundingClientRect()
   });
+  fillStayForm(stay || {});
 }
 function closeModal() { const modal = document.querySelector("[data-world-stay-modal]"); if (modal) modal.remove(); }
-function openWorldStayModal() { openModal(); }
+function openWorldStayModal(stay = null) { openModal(stay); }
 function showCompactWarning(message = "") { const node = $("[data-world-stays-warning]"); if (node) node.textContent = message; }
 function normalizeCityId(value = "") { return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "unknown-city"; }
 async function reverseGeocode(lat, lon) {
@@ -261,10 +317,26 @@ export function initWorldStays({ root }) {
     document.addEventListener("click", async (e) => {
       const btn = e.target.closest("button,[data-world-stay-close]");
       if (!btn) return;
-      if (btn.dataset.worldStayClose === undefined && btn.dataset.worldStaySave === undefined) return;
+      if (btn.dataset.worldStayClose === undefined && btn.dataset.worldStaySave === undefined && btn.dataset.worldStaySuggest === undefined) return;
       e.preventDefault();
       e.stopPropagation();
       if (btn.dataset.worldStayClose !== undefined) closeModal();
+      if (btn.dataset.worldStaySuggest !== undefined) {
+        const selected = searchResults[Number(btn.dataset.worldStaySuggest)];
+        if (selected) {
+          const a = selected.address || {};
+          fillStayForm({
+            source: selected.display_name || "manual",
+            city: a.city || a.town || a.village || a.municipality || "",
+            region: a.state || a.region || a.county || "",
+            country: a.country || "",
+            countryCode: String(a.country_code || "").toUpperCase(),
+            flagEmoji: flagFromCountryCode(String(a.country_code || "").toUpperCase())
+          });
+          console.debug("[world:stays:search:select]", { display:selected.display_name });
+          renderSearchResults([]);
+        }
+      }
       if (btn.dataset.worldStaySave !== undefined) {
         const city = String(document.querySelector("[data-world-stay-city]")?.value || "").trim();
         const country = String(document.querySelector("[data-world-stay-country]")?.value || "").trim();
@@ -275,10 +347,11 @@ export function initWorldStays({ root }) {
         const computed = calcInclusiveDays(startDate, endDate, manualDays);
         const finalDays = computed || (String(document.querySelector("[data-world-stay-source]")?.value || "").trim().toLowerCase() === "auto" ? 1 : null);
         if (!country || !finalDays) return;
-        const dup = stays.some((s) => String(s.startDate || "") === startDate && String(s.city || "").toLowerCase() === city.toLowerCase() && String(s.country || "").toLowerCase() === country.toLowerCase());
-        if (dup) return;
         const now = Date.now();
-        stays.push({ id:toId(), source:String(document.querySelector("[data-world-stay-source]")?.value || "manual").trim() || "manual", city, region:String(document.querySelector("[data-world-stay-region]")?.value || "").trim(), country, countryCode, flagEmoji:String(document.querySelector("[data-world-stay-flag]")?.value || "").trim() || flagFromCountryCode(countryCode), startDate, endDate, daysTotal:finalDays, createdAt:now, updatedAt:now });
+        const prev = activeEditStayId ? stays.find((s) => s.id === activeEditStayId) : null;
+        const payload = { id:activeEditStayId || toId(), source:String(document.querySelector("[data-world-stay-source]")?.value || "manual").trim() || "manual", city, region:String(document.querySelector("[data-world-stay-region]")?.value || "").trim(), country, countryCode, flagEmoji:String(document.querySelector("[data-world-stay-flag]")?.value || "").trim() || flagFromCountryCode(countryCode), startDate, endDate, daysTotal:finalDays, createdAt:prev?.createdAt || now, updatedAt:now };
+        if (activeEditStayId) stays = stays.map((s) => (s.id === activeEditStayId ? payload : s));
+        else stays.push(payload);
         await persistStays();
         closeModal();
         render();
@@ -289,11 +362,36 @@ export function initWorldStays({ root }) {
   root.addEventListener("click", async (e) => {
     const btn = e.target.closest("button,[data-world-stay-close]");
     if (!btn) return;
+    if (btn.dataset.worldStayEdit) {
+      const stay = stays.find((s) => s.id === btn.dataset.worldStayEdit);
+      if (stay) openWorldStayModal(stay);
+      return;
+    }
+    if (btn.dataset.worldStayDelete) {
+      if (!window.confirm("¿Eliminar esta estancia?")) return;
+      const uid = getCurrentUserDataRootKey() || auth.currentUser?.uid;
+      if (!uid) return;
+      await remove(ref(db, `v2/users/${uid}/world/stays/${btn.dataset.worldStayDelete}`));
+      stays = stays.filter((s) => s.id !== btn.dataset.worldStayDelete);
+      render();
+      return;
+    }
 
     if (btn.dataset.worldSetBirthdate !== undefined) {
       const val = window.prompt("Fecha de nacimiento (YYYY-MM-DD)", getBirthDate());
       if (val) { persistBirthDate(val.trim()); render(); }
     }
+  });
+
+  document.addEventListener("input", (e) => {
+    const sourceInput = e.target.closest?.("[data-world-stay-source]");
+    if (!sourceInput) return;
+    const query = String(sourceInput.value || "").trim();
+    if (searchDebounceTimer) window.clearTimeout(searchDebounceTimer);
+    if (query.length < 3) return renderSearchResults([]);
+    searchDebounceTimer = window.setTimeout(async () => {
+      try { renderSearchResults(await searchPlace(query)); } catch (_) { renderSearchResults([]); }
+    }, 280);
   });
 
   root.addEventListener("toggle", (e) => {

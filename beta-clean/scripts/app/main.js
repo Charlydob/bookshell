@@ -2953,10 +2953,6 @@ async function runGlobalQuickFabAction(actionKey) {
       return clickWhenReady(() => document.getElementById("books-start-session"));
     });
   }
-      return clickWhenReady(() => document.getElementById("improvements-open-editor-btn"));
-    });
-  }
-
 
   if (actionKey === "notes") {
     return openViewAndRunQuickAction("view-notes", async () => {

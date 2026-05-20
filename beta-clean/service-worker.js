@@ -9,25 +9,25 @@ const LOCAL_PRECACHE_ASSETS = [
   "./assets/geo/world.json",
   "./styles/core/themes.css",
   "./styles/core/shell.css",
-  "./styles/core/achievements.css",
+  
   "./styles/modules/books.css",
   "./styles/modules/finance.css",
-  "./styles/modules/games.css",
+  
   "./styles/modules/gym.css",
   "./styles/modules/habits.css",
   "./styles/modules/improvements.css",
-  "./styles/modules/media.css",
+  
   "./styles/modules/notes.css",
   "./styles/modules/recipes.css",
   "./styles/modules/videos-hub.css",
   "./styles/modules/world.css",
   "./views/books.html",
   "./views/finance.html",
-  "./views/games.html",
+  
   "./views/gym.html",
   "./views/habits.html",
   "./views/improvements.html",
-  "./views/media.html",
+  
   "./views/notes.html",
   "./views/recipes.html",
   "./views/videos-hub.html",
@@ -40,8 +40,8 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/finance/index.js",
   "./scripts/modules/finance/runtime.js",
   "./scripts/modules/finance/finance/data.js",
-  "./scripts/modules/games/index.js",
-  "./scripts/modules/games/runtime.js",
+  
+  
   "./scripts/modules/gym/index.js",
   "./scripts/modules/gym/runtime.js",
   "./scripts/modules/habits/index.js",
@@ -51,7 +51,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/habits/schedule-credits.js",
   "./scripts/modules/improvements/index.js",
   "./scripts/modules/improvements/performance-audit.js",
-  "./scripts/modules/media/index.js",
+  
   "./scripts/modules/notes/index.js",
   "./scripts/modules/notes/runtime.js",
   "./scripts/modules/notes/domain/store.js",
@@ -75,10 +75,10 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/shared/firebase/index.js",
   "./scripts/shared/firebase/offline-rtdb.js",
   "./scripts/shared/services/sync-manager.js",
-  "./scripts/shared/services/achievements/index.js",
-  "./scripts/shared/services/achievements/catalog.js",
-  "./scripts/shared/services/achievements/model.js",
-  "./scripts/shared/services/achievements/metrics.js",
+  
+  
+  
+  
   "./scripts/shared/services/general-center/index.js",
   "./scripts/shared/services/theme/index.js",
   "./scripts/shared/storage/offline-db.js",

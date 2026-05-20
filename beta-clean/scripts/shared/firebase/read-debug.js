@@ -22,10 +22,8 @@ const MODULE_LABELS = Object.freeze({
   gym: "Gym",
   world: "Mundo",
   books: "Libros",
-  games: "Juegos",
   notes: "Notas",
   reminders: "Recordatorios",
-  media: "Media",
   general: "General",
   unknown: "Otros",
 })
@@ -47,7 +45,6 @@ const PATH_MODULE_RULES = Object.freeze([
   { test: /\/world(?:\/|$)/i, module: "world" },
   { test: /\/books(?:\/|$)|\/readingLog(?:\/|$)/i, module: "books" },
   { test: /\/notes(?:\/|$)|\/reminders(?:\/|$)/i, module: "notes" },
-  { test: /\/games(?:\/|$)/i, module: "games" },
 ])
 
 function nowTs() {

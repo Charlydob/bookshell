@@ -3,7 +3,6 @@ const QUICKSTART_MODAL_ID = "quickstart-session-modal";
 const QUICKSTART_BUTTONS = {
   "books-start-session": { source: "books", defaultName: "Leer" },
   "videos-start-session": { source: "videos", defaultName: "YouTube" },
-  "media-start-session": { source: "media", defaultName: "Pelis" },
   "gym-start-session": { source: "gym", defaultName: "Gym" },
   "recipes-start-session": { source: "recipes", defaultName: "Cooking" },
 };
@@ -185,7 +184,7 @@ async function startFromConfig(config, ensureHabitsApi) {
   }
 
   let resolvedName = config.defaultName;
-  if (config.source === "media") {
+  if (false) {
     const selected = await chooseHabitNameForMedia();
     if (!selected) return;
     resolvedName = selected;

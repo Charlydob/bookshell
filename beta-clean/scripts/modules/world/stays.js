@@ -5,6 +5,7 @@ import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 let ctx = { root:null };
 let stays = [];
 let unsub = null;
+const collapsedCountries = new Set();
 
 const DAY_MS = 86400000;
 const toId = () => `stay_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -45,17 +46,56 @@ async function persistStays() {
 
 function computeStats() {
   const totalDays = stays.reduce((sum, s) => sum + Number(s.daysTotal || 0), 0);
-  const countries = new Map();
-  const cities = new Set();
-  stays.forEach((s) => {
-    const key = `${s.country || ""}__${s.countryCode || ""}`;
-    const item = countries.get(key) || { country:s.country || "Sin país", countryCode:s.countryCode || "", days:0 };
-    item.days += Number(s.daysTotal || 0);
-    countries.set(key, item);
-    if (s.city) cities.add(`${s.city}__${s.country || ""}`);
-  });
-  const byCountry = Array.from(countries.values()).sort((a, b) => b.days - a.days);
-  return { totalDays, countriesCount:byCountry.length, citiesCount:cities.size, dominant:byCountry[0] || null, byCountry };
+  const countriesMap = new Map();
+  const citiesSet = new Set();
+  for (const s of stays) {
+    const key = `${s.country || "Sin país"}__${s.countryCode || ""}`;
+    const row = countriesMap.get(key) || { key, country:s.country || "Sin país", countryCode:s.countryCode || "", days:0, cities:new Map() };
+    const stayDays = Number(s.daysTotal || 0);
+    row.days += stayDays;
+    if (s.city) {
+      const cityKey = `${s.city}`.trim().toLowerCase();
+      const city = row.cities.get(cityKey) || { city:s.city, days:0 };
+      city.days += stayDays;
+      row.cities.set(cityKey, city);
+      citiesSet.add(`${cityKey}__${key}`);
+    }
+    countriesMap.set(key, row);
+  }
+
+  const byCountry = Array.from(countriesMap.values()).map((country) => ({
+    ...country,
+    cities:Array.from(country.cities.values()).sort((a, b) => b.days - a.days || a.city.localeCompare(b.city, "es"))
+  })).sort((a, b) => b.days - a.days || a.country.localeCompare(b.country, "es"));
+
+  return {
+    totalDays,
+    countriesCount:byCountry.length,
+    citiesCount:citiesSet.size,
+    dominant:byCountry[0] || null,
+    byCountry
+  };
+}
+
+function pct(numerator, denominator) {
+  if (!denominator) return 0;
+  const value = (numerator / denominator) * 100;
+  return Number.isFinite(value) ? value : 0;
+}
+
+function renderDistribution(byCountry, totalDays) {
+  if (!byCountry.length || !totalDays) return "<div class=\"world-stays-empty\">Sin estancias todavía.</div>";
+  const segs = byCountry.slice(0, 8).map((country, idx) => {
+    const percent = pct(country.days, totalDays);
+    return `<div class="world-dist-seg world-dist-color-${(idx % 8) + 1}" style="width:${Math.max(1, percent).toFixed(2)}%"><span>${flagFromCountryCode(country.countryCode)}</span></div>`;
+  }).join("");
+
+  const legend = byCountry.slice(0, 8).map((country, idx) => {
+    const percent = pct(country.days, totalDays);
+    return `<li class="world-dist-legend-item"><span class="world-dot world-dist-color-${(idx % 8) + 1}"></span><span class="world-dist-label">${flagFromCountryCode(country.countryCode)} ${esc(country.country)}</span><span class="world-dist-pct">${percent.toFixed(1)}%</span></li>`;
+  }).join("");
+
+  return `<div class="world-dist-wrap"><div class="world-dist-bar" role="img" aria-label="Distribución de estancias por país">${segs}</div><ul class="world-dist-legend">${legend}</ul></div>`;
 }
 
 function render() {
@@ -64,26 +104,39 @@ function render() {
   const stats = computeStats();
   const born = getBirthDate();
   const alive = daysAlive(born);
-  const bars = stats.byCountry.slice(0, 8).map((row) => {
-    const pct = stats.totalDays ? (row.days / stats.totalDays) * 100 : 0;
-    const lifePct = alive ? ` · ${(row.days / alive * 100).toFixed(2)}% vida` : "";
-    return `<div class="world-rich-item"><div><strong>${flagFromCountryCode(row.countryCode)} ${esc(row.country)}</strong><small>${row.days} días · ${pct.toFixed(1)}%${lifePct}</small><div style="height:8px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden;margin-top:6px"><div style="height:100%;width:${Math.max(2, pct).toFixed(1)}%;background:linear-gradient(90deg,#5ec7ff,#8cf6c6)"></div></div></div></div>`;
+  const birthLine = born || "No definida";
+
+  const countries = stats.byCountry.map((country) => {
+    const isCollapsed = !collapsedCountries.has(country.key);
+    const countryPct = pct(country.days, stats.totalDays);
+    const lifePct = alive ? pct(country.days, alive) : null;
+    const cities = country.cities.map((city) => {
+      const cityOfCountry = pct(city.days, country.days);
+      const cityLife = alive ? pct(city.days, alive) : null;
+      return `<li class="world-stays-city-item"><span class="world-stays-city-main">${esc(city.city)} · ${city.days} día${city.days === 1 ? "" : "s"}</span><span class="world-stays-city-meta">${cityOfCountry.toFixed(1)}% de ${esc(country.country)}${cityLife !== null ? ` · ${cityLife.toFixed(2)}% vida` : ""}</span></li>`;
+    }).join("");
+    return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)} · ${country.days} día${country.days === 1 ? "" : "s"}</span><span class="world-stays-country-meta">${countryPct.toFixed(1)}% viajes${lifePct !== null ? ` · ${lifePct.toFixed(2)}% vida` : ""}</span></summary><ul class="world-stays-city-list">${cities || "<li class=\"world-stays-city-item\">Sin ciudad registrada.</li>"}</ul></details>`;
   }).join("");
-  const list = stays.slice().sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0)).map((s) => `<div class="world-rich-item"><div><strong>${flagFromCountryCode(s.countryCode)} ${esc(s.country || "Sin país")} · ${Number(s.daysTotal || 0)} día${Number(s.daysTotal || 0) === 1 ? "" : "s"}</strong><small>${esc(s.city || "")} ${s.region ? `· ${esc(s.region)}` : ""}${s.startDate ? ` · ${s.startDate}` : ""}${s.endDate ? ` → ${s.endDate}` : ""}</small></div></div>`).join("");
+
   mount.innerHTML = `
-    <div class="world-stays-head" style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:12px;">
-      <h3 style="margin:0;">Estancias</h3>
-      <button type="button" class="world-add-btn" data-world-stay-open>+ Añadir estancia</button>
+    <div class="world-stays-head">
+      <h3>Estancias</h3>
+      <button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button>
     </div>
-    <div class="world-kpis" style="margin-bottom:12px;">
-      <div class="world-pill"><span>📆 Días registrados</span><strong>${stats.totalDays}</strong></div>
-      <div class="world-pill"><span>🌍 Países</span><strong>${stats.countriesCount}</strong></div>
-      <div class="world-pill"><span>🏙️ Ciudades</span><strong>${stats.citiesCount}</strong></div>
-      <div class="world-pill"><span>👑 País dominante</span><strong>${stats.dominant ? `${flagFromCountryCode(stats.dominant.countryCode)} ${esc(stats.dominant.country)} (${stats.dominant.days})` : "-"}</strong></div>
+
+    <div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div>
+
+    <div class="world-kpis world-kpis-compact">
+      <div class="world-pill"><span>📅 ${stats.totalDays} día${stats.totalDays === 1 ? "" : "s"}</span></div>
+      <div class="world-pill"><span>🌍 ${stats.countriesCount} país${stats.countriesCount === 1 ? "" : "es"}</span></div>
+      <div class="world-pill"><span>🏙️ ${stats.citiesCount} ciudad${stats.citiesCount === 1 ? "" : "es"}</span></div>
+      <div class="world-pill"><span>👑 ${stats.dominant ? `${flagFromCountryCode(stats.dominant.countryCode)} ${esc(stats.dominant.country)}` : "-"}</span></div>
     </div>
-    <div class="world-rich-list">${bars || "<div>Sin estancias todavía.</div>"}</div>
-    <div class="world-rich-list" style="margin-top:10px;">${list || ""}</div>
-    <div class="world-rich-item" style="margin-top:10px;"><div><strong>Fecha de nacimiento (opcional)</strong><small>${born || "No definida"}</small></div><button type="button" data-world-set-birthdate>Editar</button></div>
+
+    ${renderDistribution(stats.byCountry, stats.totalDays)}
+
+    <div class="world-stays-countries">${countries || "<div class=\"world-stays-empty\">Sin estancias todavía.</div>"}</div>
+
     <div class="world-modal" data-world-stay-modal hidden>
       <div class="world-backdrop" data-world-stay-close></div>
       <div class="world-sheet">
@@ -104,12 +157,14 @@ function render() {
     </div>`;
 }
 
-function openModal() { const modal = $("[data-world-stay-modal]"); if (modal) modal.hidden = false; }
+function openModal() {
+  console.debug("[world:stays:modal-open]");
+  const modal = $("[data-world-stay-modal]");
+  if (modal) modal.hidden = false;
+}
 function closeModal() { const modal = $("[data-world-stay-modal]"); if (modal) modal.hidden = true; }
 
 export function renderWorldStays() { render(); }
-export function openWorldStayModal() { openModal(); }
-export function closeWorldStayModal() { closeModal(); }
 
 export function initWorldStays({ root }) {
   ctx = { root };
@@ -122,7 +177,11 @@ export function initWorldStays({ root }) {
   root.addEventListener("click", async (e) => {
     const btn = e.target.closest("button,[data-world-stay-close]");
     if (!btn) return;
-    if (btn.dataset.worldStayOpen !== undefined) openModal();
+
+    if (btn.dataset.worldStayAction === "open-modal") {
+      console.debug("[world:stays:add-click]");
+      openModal();
+    }
     if (btn.dataset.worldStayClose !== undefined) closeModal();
     if (btn.dataset.worldSetBirthdate !== undefined) {
       const val = window.prompt("Fecha de nacimiento (YYYY-MM-DD)", getBirthDate());
@@ -146,6 +205,15 @@ export function initWorldStays({ root }) {
       closeModal();
       render();
     }
+  });
+
+  root.addEventListener("toggle", (e) => {
+    const details = e.target;
+    if (!(details instanceof HTMLDetailsElement) || !details.matches(".world-stays-country")) return;
+    const key = details.dataset.countryKey || "";
+    if (!key) return;
+    if (details.open) collapsedCountries.delete(key);
+    else collapsedCountries.add(key);
   });
 
   render();

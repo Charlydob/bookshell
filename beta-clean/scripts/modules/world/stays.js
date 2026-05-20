@@ -157,6 +157,24 @@ function render() {
         <button type="button" class="world-save" data-world-stay-save>Guardar estancia</button>
       </div>
     </div>`;
+  bindStaysUI(ctx.root);
+}
+
+function bindStaysUI(root) {
+  const btn = root?.querySelector("[data-world-stay-action='open-modal']");
+  if (!btn) {
+    console.warn("[world:stays:add-button:missing]");
+    return;
+  }
+
+  btn.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    console.debug("[world:stays:add-click]");
+    openWorldStayModal();
+  };
+
+  console.debug("[world:stays:add-button:bound]");
 }
 
 function openModal() {
@@ -216,16 +234,11 @@ export function initWorldStays({ root }) {
     unsub = trackedOnValue(ref(db, path), (snap) => { stays = Object.values(snap.val() || {}); render(); }, { key:"world-stays", path, module:"world", mode:"onValue", reason:"world-stays", viewId:"view-world" }, onValue);
   }
   ensureAutoStayToday();
-  console.debug("[world:stays:add-button:bound]");
 
   root.addEventListener("click", async (e) => {
     const btn = e.target.closest("button,[data-world-stay-close]");
     if (!btn) return;
 
-    if (btn.dataset.worldStayAction === "open-modal") {
-      console.debug("[world:stays:add-click]");
-      openWorldStayModal();
-    }
     if (btn.dataset.worldStayClose !== undefined) closeModal();
     if (btn.dataset.worldSetBirthdate !== undefined) {
       const val = window.prompt("Fecha de nacimiento (YYYY-MM-DD)", getBirthDate());

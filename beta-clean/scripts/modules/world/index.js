@@ -322,7 +322,59 @@ async function saveEdit(){
 }
 
 async function searchGeo(q){ const u = new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q", q); u.searchParams.set("format", "jsonv2"); u.searchParams.set("addressdetails", "1"); u.searchParams.set("limit", "8"); const rows = await (await fetch(u)).json(); state.geoResults = (Array.isArray(rows) ? rows : []).map((r) => normalizeLocationAddress(r)).filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon)); renderGeoResults(); }
-async function searchPlace(q){ const c=state.userCenter; const radiusRaw=$id("world-place-radius").value||"1000"; const radius=radiusRaw === "none" ? null : Number(radiusRaw); console.log("[world:local-search:start]", { query:q, radius:radiusRaw }); const u=new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q",q); u.searchParams.set("format","jsonv2"); u.searchParams.set("addressdetails","1"); u.searchParams.set("limit","24"); if (radius) { const dLat=radius/111320, dLng=radius/(111320*Math.cos((c.lat*Math.PI)/180)); u.searchParams.set("bounded","1"); u.searchParams.set("viewbox",`${c.lon-dLng},${c.lat+dLat},${c.lon+dLng},${c.lat-dLat}`); } const rows=await (await fetch(u)).json(); state.placeResults=(Array.isArray(rows)?rows:[]).map((raw)=>{ const r=normalizeLocationAddress(raw); const addressLine = [r.address?.road, r.address?.house_number].filter(Boolean).join(" ") || [r.address?.suburb, r.address?.county].filter(Boolean).join(", "); return ({ ...r, distance:radius ? hav(c.lat,c.lon,Number(r.lat),Number(r.lon)) : null, addressLine }); }).filter((r)=>!radius || r.distance<=radius).sort((a,b)=>(a.distance ?? 0)-(b.distance ?? 0)); const hasAddressLike = /\d|,|\b(?:calle|avenida|av\.?|road|street|st\.?|plaza|paseo|camino|autopista)\b/i.test(q); if (hasAddressLike && state.placeResults[0]) { const top = state.placeResults[0]; console.log("[world:local-search:address-result]", { query:q, label:top.label || top.addressLine || "", lat:top.lat, lon:top.lon }); } if (state.placeResults[0]) { const top = state.placeResults[0]; console.log("[world:local-search:place-result]", { query:q, name:top.name || "", label:top.label || "", lat:top.lat, lon:top.lon }); } state.selectedPlace = null; state.selectedPlaceIndex = -1; renderPlaceResults(); if (hasAddressLike && state.placeResults[0]) pickPlace(0); }
+function isAddressQuery(query = "") {
+  const q = String(query || "").trim();
+  return /\d/.test(q) && /,/.test(q) && /\b(?:calle|avenida|av\.?|jr\.?|jiron|street|st\.?|road|rd\.?|per[uú]|miraflores|\d{4,6})\b/i.test(q);
+}
+function rankAddressResult(row, query = "") {
+  const q = String(query || "").toLowerCase();
+  const a = row?.address || {};
+  const road = String(a.road || a.pedestrian || "").toLowerCase();
+  const suburb = String(a.suburb || a.city_district || "").toLowerCase();
+  const city = String(a.city || a.town || a.village || "").toLowerCase();
+  const country = String(a.country || "").toLowerCase();
+  const house = String(a.house_number || "").toLowerCase();
+  const queryNumber = (q.match(/\b\d+[a-zA-Z]?\b/) || [])[0] || "";
+  let score = 0;
+  if (queryNumber && house === queryNumber) score += 100;
+  if (road && q.includes(road)) score += 40;
+  if ((suburb && q.includes(suburb)) || (city && q.includes(city))) score += 20;
+  if (country && q.includes(country)) score += 10;
+  return score;
+}
+async function searchPlace(q){
+  const c = state.userCenter;
+  const radiusRaw = $id("world-place-radius").value || "1000";
+  const radius = radiusRaw === "none" ? null : Number(radiusRaw);
+  const mode = isAddressQuery(q) ? "address" : "poi";
+  console.debug("[world:local-search:start]", { query:q });
+  console.debug("[world:local-search:mode]", { mode });
+  const u = new URL("https://nominatim.openstreetmap.org/search");
+  u.searchParams.set("q", q);
+  u.searchParams.set("format", "jsonv2");
+  u.searchParams.set("addressdetails", "1");
+  u.searchParams.set("limit", mode === "address" ? "5" : "24");
+  if (mode !== "address" && radius) {
+    const dLat=radius/111320, dLng=radius/(111320*Math.cos((c.lat*Math.PI)/180));
+    u.searchParams.set("bounded","1");
+    u.searchParams.set("viewbox",`${c.lon-dLng},${c.lat+dLat},${c.lon+dLng},${c.lat-dLat}`);
+  }
+  const rows = await (await fetch(u)).json();
+  state.placeResults = (Array.isArray(rows) ? rows : []).map((raw) => {
+    const r = normalizeLocationAddress(raw);
+    const addressLine = [r.address?.road, r.address?.house_number].filter(Boolean).join(" ") || [r.address?.suburb, r.address?.county].filter(Boolean).join(", ");
+    return ({ ...r, distance:radius ? hav(c.lat,c.lon,Number(r.lat),Number(r.lon)) : null, addressLine });
+  }).filter((r) => mode === "address" ? true : (!radius || r.distance<=radius));
+  if (mode === "address") state.placeResults.sort((a,b)=>rankAddressResult(b,q)-rankAddressResult(a,q));
+  else state.placeResults.sort((a,b)=>(a.distance ?? 0)-(b.distance ?? 0));
+  state.selectedPlace = null;
+  state.selectedPlaceIndex = -1;
+  renderPlaceResults();
+  if (!state.placeResults[0]) return console.warn("[world:local-search:no-results]", { query:q });
+  const top = state.placeResults[0];
+  console.debug("[world:local-search:result]", { lat:top.lat, lng:top.lon, displayName:top.label || top.name || "", address:top.addressLine || "" });
+  if (mode === "address") pickPlace(0, { mode });
+}
 async function reverseGeocode(lat, lon){
   const u = new URL("https://nominatim.openstreetmap.org/reverse");
   u.searchParams.set("lat", String(lat));
@@ -336,7 +388,17 @@ async function reverseGeocode(lat, lon){
 }
 
 function pickGeo(i){ const row = state.geoResults[i]; if(!row) return; const normalizedCountry = normalizeCountryFromAddress(row.address); if (!normalizedCountry.countryCode) return showToast("País inválido, selecciona otro resultado"); state.selectedGeoIndex = i; state.selectedGeo = normalize({ id:`geo_${Date.now()}_${Math.random().toString(36).slice(2,8)}`, name:row.name, label:row.label, city:row.city || row.municipality, region:row.region, category:row.address?.type || "", country:normalizedCountry.country, countryCode:normalizedCountry.countryCode, postalCode:row.postalCode, lat:row.lat, lon:row.lon, note:$id("world-geo-note").value, rating:state.geoRating }, "geography"); console.log("[world:geo:select]", state.selectedGeo); $id("world-form-name").value = state.selectedGeo.name || ""; $id("world-form-country").value = state.selectedGeo.country || ""; $id("world-form-region").value = state.selectedGeo.region || ""; $id("world-form-city").value = state.selectedGeo.city || ""; $id("world-form-category").value = state.selectedGeo.category || ""; $id("world-form-emoji").value = state.selectedGeo.emoji || "📍"; console.log("[world:geo:autofill]", { country:state.selectedGeo.country, region:state.selectedGeo.region, city:state.selectedGeo.city, category:state.selectedGeo.category }); if (state.map && Number.isFinite(state.selectedGeo.lat) && Number.isFinite(state.selectedGeo.lon)) state.map.setView([state.selectedGeo.lat, state.selectedGeo.lon], 9); renderGeoResults(); }
-function pickPlace(i){ const row = state.placeResults[i]; if(!row) return; const normalizedCountry = normalizeCountryFromAddress(row.address); state.selectedPlaceIndex = i; state.selectedPlace = normalize({ id:`place_${Date.now()}_${Math.random().toString(36).slice(2,8)}`, name:row.name, label:row.label, city:row.city || row.municipality, country:normalizedCountry.country, countryCode:normalizedCountry.countryCode, region:row.region, postalCode:row.postalCode, category:$id("world-place-q").value, lat:row.lat, lon:row.lon, address:row.addressLine || row.label, rating:state.placeRating, note:$id("world-place-note").value }, "places"); $id("world-place-form-name").value = state.selectedPlace.name || ""; $id("world-place-form-emoji").value = state.selectedPlace.emoji || "🏪"; $id("world-place-form-category").value = state.selectedPlace.category || ""; $id("world-place-form-country").value = state.selectedPlace.country || ""; $id("world-place-form-region").value = state.selectedPlace.region || ""; $id("world-place-form-city").value = state.selectedPlace.city || ""; if (state.miniMap) state.miniMap.setView([row.lat, row.lon], 17); renderPlaceResults(); }
+function pickPlace(i, opts = {}){
+  const row = state.placeResults[i]; if(!row) return;
+  const mode = opts.mode || (isAddressQuery($id("world-place-q").value) ? "address" : "poi");
+  const normalizedCountry = normalizeCountryFromAddress(row.address);
+  state.selectedPlaceIndex = i;
+  const query = String($id("world-place-q").value || "").trim();
+  const addressValue = row.addressLine || row.label || "";
+  state.selectedPlace = normalize({ id:`place_${Date.now()}_${Math.random().toString(36).slice(2,8)}`, name:mode === "address" ? "" : row.name, label:row.label, city:row.city || row.municipality, country:normalizedCountry.country, countryCode:normalizedCountry.countryCode, region:row.region, postalCode:row.postalCode, category:query, lat:row.lat, lon:row.lon, address:addressValue, rating:state.placeRating, note:$id("world-place-note").value }, "places");
+  $id("world-place-form-name").value = mode === "address" ? "" : (state.selectedPlace.name || "");
+  $id("world-place-form-emoji").value = state.selectedPlace.emoji || "🏪"; $id("world-place-form-category").value = state.selectedPlace.category || ""; $id("world-place-form-country").value = state.selectedPlace.country || ""; $id("world-place-form-region").value = state.selectedPlace.region || ""; $id("world-place-form-city").value = state.selectedPlace.city || ""; if (state.miniMap) state.miniMap.setView([row.lat, row.lon], 17); renderPlaceResults();
+}
 async function useCurrentLocationForNewPlace(){
   console.log("[world:modal:geo:start]");
   try {

@@ -120,14 +120,39 @@
     .boot-splash-progress > i { display: block; height: 100%; width: 20%; border-radius: inherit; background: var(--app-progress-fill); transform-origin: 0 50%; transform: scaleX(.08); transition: transform .32s ease; }
     .boot-splash-note { font-size: 12px; color: var(--app-date-text); opacity: 0; transition: opacity .2s ease; min-height: 1.3em; }
     #boot-splash[data-slow='1'] .boot-splash-note { opacity: .95; }
+    .boot-debug-panel {
+      border: 1px solid var(--app-border);
+      background: color-mix(in srgb, var(--app-panel-bg) 82%, #000 18%);
+      border-radius: 12px;
+      padding: 10px;
+      display: grid;
+      gap: 6px;
+      max-height: 220px;
+      overflow: auto;
+      font-size: 11px;
+    }
+    .boot-debug-title { font-weight: 700; font-size: 12px; }
+    .boot-debug-line { white-space: pre-wrap; word-break: break-word; line-height: 1.35; }
+    .boot-debug-line[data-level="error"] { color: #ffb4b4; }
+    .boot-debug-line[data-level="warn"] { color: #ffe08f; }
+    .boot-debug-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .boot-debug-actions button {
+      font: inherit; border-radius: 8px; border: 1px solid var(--app-border);
+      background: transparent; color: var(--app-text); padding: 6px 8px; cursor: pointer;
+    }
   </style>
 
   <script>
     (function () {
-      var splash, statusEl, progressEl;
+      var splash, statusEl, progressEl, debugLogEl, bootDebugStatusEl;
       var value = 0;
       var timer = null;
       var done = false;
+      var events = [];
+      var pendingEvents = [];
+      var startedAt = Date.now();
+      var watchdogSlowTimer = null;
+      var watchdogFailTimer = null;
       var phases = [
         { at: 0, text: 'Inicializando…' },
         { at: 24, text: 'Conectando…' },
@@ -141,7 +166,100 @@
         if (!splash) return false;
         statusEl = splash.querySelector('[data-role="status"]');
         progressEl = splash.querySelector('[data-role="bar"]');
+        debugLogEl = splash.querySelector('[data-role="boot-debug-log"]');
+        bootDebugStatusEl = splash.querySelector('[data-role="boot-debug-status"]');
+        var retryBtn = splash.querySelector('[data-role="boot-retry"]');
+        if (retryBtn && !retryBtn.dataset.bound) {
+          retryBtn.dataset.bound = '1';
+          retryBtn.addEventListener('click', function () { window.location.reload(); });
+        }
+        var clearBtn = splash.querySelector('[data-role="boot-clear-cache"]');
+        if (clearBtn && !clearBtn.dataset.bound) {
+          clearBtn.dataset.bound = '1';
+          clearBtn.addEventListener('click', function () {
+            Promise.resolve().then(function () {
+              return navigator.serviceWorker && navigator.serviceWorker.getRegistrations ? navigator.serviceWorker.getRegistrations() : [];
+            }).then(function (regs) {
+              return Promise.all((regs || []).map(function (reg) { return reg.unregister(); }));
+            }).then(function () {
+              return caches && caches.keys ? caches.keys() : [];
+            }).then(function (keys) {
+              return Promise.all((keys || []).map(function (key) { return caches.delete(key); }));
+            }).then(function () {
+              try {
+                Object.keys(localStorage).forEach(function (key) {
+                  if (/module|cache|preload/i.test(key)) localStorage.removeItem(key);
+                });
+              } catch (_) {}
+              window.location.reload();
+            });
+          });
+        }
+        flushPending();
         return true;
+      }
+      function toHumanError(value) {
+        var text = String(value || '');
+        if (!text) return '';
+        if (/Failed to fetch dynamically imported module/i.test(text)) return 'No se pudo cargar un archivo JS. Puede estar borrado, mal referenciado o cacheado por la PWA.';
+        if (/permission_denied/i.test(text)) return 'Firebase rechazó la lectura/escritura por reglas o ruta incorrecta.';
+        if (/NetworkError|offline|Failed to fetch/i.test(text)) return 'No hay conexión o Firebase no responde.';
+        if (/SyntaxError/i.test(text)) return 'Hay un error de sintaxis en un archivo JS.';
+        if (/ReferenceError/i.test(text)) return 'El código usa una variable/función que ya no existe.';
+        if (/TypeError/i.test(text)) return 'El código intenta usar algo undefined/null.';
+        return 'Error de arranque no clasificado. Revisar mensaje técnico.';
+      }
+      function relativeTs() { return '+' + (((Date.now() - startedAt) / 1000).toFixed(1)) + 's'; }
+      function renderEvent(event) {
+        var base = event.icon + ' ' + event.label + ' (' + event.ts + ')';
+        var details = [];
+        if (event.detailsText) details.push('Detalles: ' + event.detailsText);
+        if (event.file) details.push('Archivo: ' + event.file);
+        if (event.line) details.push('Línea: ' + event.line + (event.column ? ':' + event.column : ''));
+        if (event.message) details.push('Motivo: ' + event.message);
+        if (event.human) details.push('Explicación: ' + event.human);
+        return [base].concat(details).join('\n');
+      }
+      function appendEvent(event) {
+        events.push(event);
+        if (events.length > 50) events.shift();
+        if (!ensure() || !debugLogEl) {
+          pendingEvents.push(event);
+          if (pendingEvents.length > 50) pendingEvents.shift();
+          return;
+        }
+        var line = document.createElement('div');
+        line.className = 'boot-debug-line';
+        line.dataset.level = event.level;
+        line.textContent = renderEvent(event);
+        debugLogEl.appendChild(line);
+        while (debugLogEl.children.length > 50) debugLogEl.removeChild(debugLogEl.firstChild);
+        debugLogEl.scrollTop = debugLogEl.scrollHeight;
+      }
+      function flushPending() {
+        if (!debugLogEl || !pendingEvents.length) return;
+        var backlog = pendingEvents.slice();
+        pendingEvents = [];
+        for (var i = 0; i < backlog.length; i++) appendEvent(backlog[i]);
+      }
+      function stringifyDetails(details) {
+        if (!details) return '';
+        try { return typeof details === 'string' ? details : JSON.stringify(details); } catch (_) { return String(details); }
+      }
+      function record(level, label, error, details) {
+        var icon = level === 'error' ? '❌' : (level === 'warn' ? '⚠️' : (level === 'ok' ? '✅' : '⏳'));
+        var message = String(error && (error.message || error.reason?.message || error.reason || error) || '');
+        var source = error && (error.filename || error.fileName || '') || '';
+        var lineNo = error && (error.lineno || error.lineNumber || 0);
+        var colNo = error && (error.colno || error.columnNumber || 0);
+        var detailsText = stringifyDetails(details);
+        var human = toHumanError(message || String(error?.name || ''));
+        var event = { level: level, icon: icon, label: label, message: message, file: source, line: lineNo, column: colNo, detailsText: detailsText, human: human, ts: relativeTs() };
+        appendEvent(event);
+        if (bootDebugStatusEl) {
+          bootDebugStatusEl.textContent = 'Paso actual: ' + label + ' · Último completado: ' + (window.__bookshellLastOkStep || '—');
+        }
+        if (level === 'ok') window.__bookshellLastOkStep = label;
       }
 
       function apply() {
@@ -190,12 +308,39 @@
       }
 
       window.__bookshellBootSplash = { setPhase: setPhase, done: finish, markSlow: markSlow };
+      window.bootDebug = {
+        step: function (label, details) { console.debug('[boot:step]', label, details || ''); record('step', String(label || 'Paso'), null, details); },
+        ok: function (label, details) { console.debug('[boot:ok]', label, details || ''); record('ok', String(label || 'OK'), null, details); },
+        warn: function (label, details) { console.warn('[boot:warn]', label, details || ''); record('warn', String(label || 'Aviso'), null, details); },
+        error: function (label, error, details) { console.error('[boot:error]', label, error, details || ''); record('error', String(label || 'Error'), error, details); },
+        hide: function () { finish(); },
+      };
+      window.addEventListener('error', function (event) {
+        window.bootDebug.error('Error global capturado', event.error || event, {
+          source: event.filename, line: event.lineno, column: event.colno, stack: event.error && event.error.stack ? String(event.error.stack).slice(0, 400) : ''
+        });
+      });
+      window.addEventListener('unhandledrejection', function (event) {
+        window.bootDebug.error('Promesa rechazada sin catch', event.reason || event, {
+          reason: String(event.reason && (event.reason.message || event.reason) || ''),
+          promise: String(event.promise || ''),
+          stack: event.reason && event.reason.stack ? String(event.reason.stack).slice(0, 400) : ''
+        });
+      });
 
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function () {
           document.body.classList.add('boot-loading');
           tick();
           window.setTimeout(markSlow, 9000);
+          watchdogSlowTimer = window.setTimeout(function () {
+            splash.dataset.slow = '1';
+            window.bootDebug.warn('La carga está tardando', { ultimoPaso: window.__bookshellLastOkStep || 'sin pasos OK' });
+          }, 6000);
+          watchdogFailTimer = window.setTimeout(function () {
+            window.bootDebug.error('Boot bloqueado. Se intentará cargar vista segura.', null, { ultimoPaso: window.__bookshellLastOkStep || 'sin pasos OK' });
+            window.dispatchEvent(new CustomEvent('bookshell:boot-watchdog-timeout'));
+          }, 12000);
         }, { once: true });
       } else {
         document.body.classList.add('boot-loading');
@@ -212,6 +357,15 @@
       <div class="boot-splash-status" data-role="status">Inicializando…</div>
       <div class="boot-splash-progress" aria-hidden="true"><i data-role="bar"></i></div>
       <div class="boot-splash-note">La carga está tardando más de lo normal…</div>
+      <div class="boot-debug-panel" aria-live="polite">
+        <div class="boot-debug-title">Diagnóstico de carga</div>
+        <div data-role="boot-debug-status">Paso actual: Inicializando · Último completado: —</div>
+        <div data-role="boot-debug-log"></div>
+        <div class="boot-debug-actions">
+          <button type="button" data-role="boot-retry">Reintentar</button>
+          <button type="button" data-role="boot-clear-cache">Limpiar caché y recargar</button>
+        </div>
+      </div>
     </div>
   </div>
 

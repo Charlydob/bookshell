@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-05-20-offline-v2";
+const APP_VERSION = "2026-05-20-offline-v3";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -15,22 +15,18 @@ const LOCAL_PRECACHE_ASSETS = [
   
   "./styles/modules/gym.css",
   "./styles/modules/habits.css",
-  "./styles/modules/improvements.css",
   
   "./styles/modules/notes.css",
   "./styles/modules/recipes.css",
-  "./styles/modules/videos-hub.css",
   "./styles/modules/world.css",
   "./views/books.html",
   "./views/finance.html",
   
   "./views/gym.html",
   "./views/habits.html",
-  "./views/improvements.html",
   
   "./views/notes.html",
   "./views/recipes.html",
-  "./views/videos-hub.html",
   "./views/world.html",
   "./scripts/app/main.js",
   "./scripts/app/nav-root-reset.js",
@@ -49,8 +45,6 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/habits/time-by-habit.js",
   "./scripts/modules/habits/export-utils.js",
   "./scripts/modules/habits/schedule-credits.js",
-  "./scripts/modules/improvements/index.js",
-  "./scripts/modules/improvements/performance-audit.js",
   
   "./scripts/modules/notes/index.js",
   "./scripts/modules/notes/runtime.js",
@@ -64,7 +58,6 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/recipes/finance-data.js",
   "./scripts/modules/recipes/met-catalog.js",
   "./scripts/modules/recipes/foodrepo.js",
-  "./scripts/modules/videos-hub/index.js",
   "./scripts/modules/world/index.js",
   "./scripts/shared/cache/processed-json-cache.js",
   "./scripts/shared/config/app-paths.js",
@@ -79,7 +72,6 @@ const LOCAL_PRECACHE_ASSETS = [
   
   
   
-  "./scripts/shared/services/general-center/index.js",
   "./scripts/shared/services/theme/index.js",
   "./scripts/shared/storage/offline-db.js",
   "./scripts/shared/storage/offline-queue.js",

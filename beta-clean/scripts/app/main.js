@@ -27,7 +27,9 @@ import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, ge
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
 const NAV_LAYOUT_VERSION = 4;
-const DEFAULT_VIEW_ID = "view-books";
+const DEFAULT_VIEW_ID = "view-habits";
+const SAFE_VIEW_FALLBACKS = Object.freeze(["view-habits", "view-notes", "view-finance", "view-world"]);
+const BOOT_RELEASE_TIMEOUT_MS = 5000;
 const HABITS_VIEW_ID = "view-habits";
 const SHELL_STATE_KEY = "__bookshellCleanShellState";
 const APP_BOOT_TS = performance.now();
@@ -241,6 +243,18 @@ function logNetworkDebug(phase, extra = {}, level = "info") {
 
   const logger = typeof console[level] === "function" ? console[level] : console.log;
   logger.call(console, `[network] ${phase}`, payload);
+}
+
+function logBootStep(step, extra = {}) {
+  console.debug("[boot:step]", step, extra);
+}
+
+function logBootError(error, extra = {}) {
+  console.error("[boot:error]", error, extra);
+}
+
+function logBootMissingModule(viewId, extra = {}) {
+  console.warn("[boot:missing-module]", viewId, extra);
 }
 
 function getFirstUsefulStackLine(stackValue = "") {
@@ -1515,12 +1529,17 @@ function getInitialView() {
   if (isValidView(hashViewId)) return hashViewId;
 
   const storedViewId = window.localStorage.getItem(LAST_VIEW_KEY);
+  if (storedViewId && !isValidView(storedViewId)) {
+    logBootMissingModule(storedViewId, { stage: "restore-last-view" });
+    try { window.localStorage.setItem(LAST_VIEW_KEY, DEFAULT_VIEW_ID); } catch (_) {}
+  }
   if (isValidView(storedViewId)) {
     logRestoreLastViewOnce(storedViewId);
     return storedViewId;
   }
 
-  return DEFAULT_VIEW_ID;
+  const safeView = SAFE_VIEW_FALLBACKS.find((viewId) => isValidView(viewId));
+  return safeView || DEFAULT_VIEW_ID;
 }
 
 function sanitizeNavGroupLabel(value) {
@@ -3314,6 +3333,10 @@ async function hasRemoteActiveHabitSession(authUid) {
 }
 
 function preloadViewModule(viewId) {
+  if (!viewModules[viewId]) {
+    logBootMissingModule(viewId, { stage: "preload" });
+    return Promise.resolve(null);
+  }
   const state = getShellState();
   if (!state.preloadPromises) state.preloadPromises = {};
   if (state.preloadPromises[viewId]) return state.preloadPromises[viewId];
@@ -3388,13 +3411,27 @@ function schedulePostBootTask(task, delayMs = 0) {
   });
 }
 
+function startBootReleaseTimeout() {
+  const state = getShellState();
+  if (state.bootReleaseTimer) return;
+  state.bootReleaseTimer = window.setTimeout(() => {
+    if (state.bootSplashReleased) return;
+    logBootStep("boot-timeout-release", { timeoutMs: BOOT_RELEASE_TIMEOUT_MS });
+    finishBootSplash();
+  }, BOOT_RELEASE_TIMEOUT_MS);
+}
+
 function bindAuthGate() {
   const state = getShellState();
   if (state.authBound) return;
 
   setBootPhase("Inicializando…", 12);
+  logBootStep("bind-auth-gate");
+  startBootReleaseTimeout();
 
   onUserChange(async (user) => {
+    logBootStep("auth-state-changed", { authenticated: !!user });
+    try {
     if (!user) {
       void notifySyncUserChanged();
       if (state.currentViewId) {
@@ -3438,6 +3475,15 @@ function bindAuthGate() {
     try {
       await setView(viewId, { pushHash: true, highPriority: true });
       setBootPhase("Preparando interfaz…", 78);
+      logBootStep("initial-view-ready", { viewId });
+    } catch (error) {
+      logBootError(error, { stage: "set-initial-view", viewId });
+      const fallbackViewId = SAFE_VIEW_FALLBACKS.find((candidate) => isValidView(candidate));
+      if (fallbackViewId && fallbackViewId !== viewId) {
+        await setView(fallbackViewId, { pushHash: true, highPriority: true }).catch((fallbackError) => {
+          logBootError(fallbackError, { stage: "set-fallback-view", fallbackViewId });
+        });
+      }
     } finally {
       requestAnimationFrame(() => finishBootSplash());
     }
@@ -3467,17 +3513,22 @@ function bindAuthGate() {
     });
     console.log("[auth] uid", user.uid);
     console.log("[perf] app-initial-load-ms", Math.round(performance.now() - APP_BOOT_TS));
+    } catch (error) {
+      logBootError(error, { stage: "auth-change" });
+      finishBootSplash();
+    }
   });
 
   state.authBound = true;
 }
 
 warmInitialViewShell();
-void initSyncManager({
+Promise.resolve().then(() => initSyncManager({
   db,
   getUserId: () => auth.currentUser?.uid || "",
-});
-initThemeService();
+})).catch((error) => logBootError(error, { stage: "init-sync-manager" }));
+
+Promise.resolve().then(() => initThemeService()).catch((error) => logBootError(error, { stage: "init-theme" }));
 hideLegacyThemeControl();
 bindSyncIndicatorToggles();
 exposeShellApis();
@@ -3502,3 +3553,4 @@ window.addEventListener("bookshell:reminder-notifications", (event) => {
 scheduleIdleTask(() => registerAppServiceWorker(), { delayMs: 600, timeout: 3000 });
 window.__bookshellEnsureHabitsApi = ensureHabitsApiReady;
 schedulePostBootTask(() => preloadViewModule("view-notes"), 1200);
+logBootStep("boot-wired");

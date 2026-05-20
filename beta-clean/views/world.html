@@ -1,4 +1,4 @@
-<div class="world-shell" id="world-root-shell" data-world-active-tab="map">
+<div class="world-shell" id="world-root-shell" data-view-root="world" data-world-active-tab="map">
   <header class="world-topbar">
     <div class="world-kpis">
       <div class="world-pill"><span>🌍 Países</span><strong id="world-countries">0</strong></div>
@@ -8,11 +8,11 @@
     </div>
     <div class="world-top-actions">
       <div class="world-tabs">
-        <button type="button" class="world-tab active is-active" data-window="map" data-world-tab="map">Mapa</button>
-        <button type="button" class="world-tab" data-window="locals" data-world-tab="locals">Locales</button>
-        <button type="button" class="world-tab" data-window="stays" data-world-tab="stays">Estancias</button>
+        <button type="button" class="world-tab active is-active" data-world-tab="map">Mapa</button>
+        <button type="button" class="world-tab" data-world-tab="locals">Locales</button>
+        <button type="button" class="world-tab" data-world-tab="stays">Estancias</button>
       </div>
-      <button type="button" class="world-add-btn" id="world-open-add" data-world-add>+ Añadir</button>
+      <button type="button" class="world-add-btn" id="world-open-add" data-world-action="add">+ Añadir</button>
     </div>
   </header>
 
@@ -39,7 +39,7 @@
   <section class="world-window" data-window-panel="stays">
     <div class="world-stays-header">
       <input id="world-birth-date" type="date" class="world-birth-date" aria-label="Fecha de nacimiento">
-      <button type="button" class="world-add-btn" id="world-open-add-stay">Añadir estancia</button>
+      <button type="button" class="world-add-btn" id="world-open-add-stay" data-world-action="add">Añadir estancia</button>
     </div>
     <div id="world-stays-life-stats" class="world-stays-life-stats"></div>
     <div class="world-stays-list" id="world-stays-list"></div>

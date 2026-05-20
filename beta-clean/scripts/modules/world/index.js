@@ -76,6 +76,11 @@ function closeAllWorldModals() {
   worldRoot?.classList.remove("is-modal-open");
   document.body.classList.remove("modal-open", "world-modal-open");
 }
+function closeAllAppModalsNow() {
+  closeAllWorldModals();
+  document.querySelectorAll(".modal-backdrop, .world-backdrop, [data-modal-backdrop]").forEach((el) => el.classList.add("hidden"));
+  document.body.classList.remove("modal-open", "is-modal-open", "no-scroll", "has-open-modal");
+}
 function normalizeWorldSubtab(raw = "") {
   const value = String(raw || "").trim().toLowerCase();
   if (value === "mapa" || value === "map") return "map";
@@ -97,16 +102,23 @@ function getWorldActiveSubtab(){
 function openStayModal(){
   const activeSubtab = getWorldActiveSubtab();
   if (activeSubtab !== "stays") {
-    console.warn("[world:stay-modal:block-not-active-tab]", { activeSubtab });
+    console.warn("[world:modal:block]", { modal:"stay", activeTab:activeSubtab });
     return;
   }
-  console.trace("[world:modal:open]", { modal:"stay", activeSubtab: state?.activeSubtab, caller:"openStayModal" });
+  console.trace("[world:modal:open]", { modal:"stay", activeTab:activeSubtab });
+  closeAllWorldModals();
   const stayToggle = $id("world-stay-add-toggle");
   if (stayToggle) stayToggle.checked = true;
 }
 
 function openWorldAddChooserModal(){
-  console.trace("[world:modal:open]", { modal:"chooser", activeSubtab: state?.activeSubtab, caller:"openWorldAddChooserModal" });
+  const activeSubtab = getWorldActiveSubtab();
+  if (activeSubtab === "stays") {
+    console.warn("[world:modal:block]", { modal:"chooser", activeTab:activeSubtab });
+    return;
+  }
+  console.trace("[world:modal:open]", { modal:"chooser", activeTab:activeSubtab });
+  closeAllWorldModals();
   const addToggle = $id("world-add-toggle");
   if (!addToggle) return;
   addToggle.checked = true;
@@ -118,23 +130,13 @@ function openWorldAddChooserModal(){
 }
 
 function handleWorldTopAddClick(event) {
-  console.trace("[world:top-add:click]", {
-    activeSubtab: state?.activeSubtab,
-    target: event?.target,
-    currentTarget: event?.currentTarget
-  });
-  event.preventDefault();
-  event.stopPropagation();
-  event.stopImmediatePropagation?.();
-
+  event?.preventDefault();
+  event?.stopPropagation();
+  event?.stopImmediatePropagation?.();
   closeAllWorldModals();
-  const activeSubtab = getWorldActiveSubtab();
-  console.debug("[world:top-add:resolved]", { activeSubtab });
-
-  if (activeSubtab === "stays") {
-    openStayModal();
-    return;
-  }
+  const tab = getWorldActiveSubtab();
+  console.debug("[world:add:resolved]", { tab });
+  if (tab === "stays") return openStayModal();
   openWorldAddChooserModal();
 }
 
@@ -371,7 +373,7 @@ function renderWorldMarkers(){
   logWorldClusterZoom();
 }
 function renderMap(){ if(!window.L) return; const host = $id("world-map"); if(!host) return; if(!state.map) state.map = createLeafletMap(host, { center:[state.userCenter.lat, state.userCenter.lon], zoom:5 }); renderWorldMarkers(); }
-function setWorldActiveSubtab(mode){ state.activeSubtab = normalizeWorldSubtab(mode) || "map"; const worldRootShell = $id("world-root-shell"); if (worldRootShell) worldRootShell.dataset.worldActiveTab = state.activeSubtab; document.querySelectorAll("#view-world .world-tab").forEach((b)=>{ const isActive = b.dataset.window===state.activeSubtab; b.classList.toggle("active", isActive); b.classList.toggle("is-active", isActive); }); document.querySelectorAll("#view-world [data-window-panel]").forEach((p)=>p.classList.toggle("active", p.dataset.windowPanel===state.activeSubtab)); invalidateLeafletMap(state.map, 60); }
+function setWorldActiveSubtab(mode){ state.activeSubtab = normalizeWorldSubtab(mode) || "map"; const worldRootShell = $id("world-root-shell"); if (worldRootShell) worldRootShell.dataset.worldActiveTab = state.activeSubtab; document.querySelectorAll("#view-world .world-tab").forEach((b)=>{ const isActive = b.dataset.worldTab===state.activeSubtab; b.classList.toggle("active", isActive); b.classList.toggle("is-active", isActive); }); document.querySelectorAll("#view-world [data-window-panel]").forEach((p)=>p.classList.toggle("active", p.dataset.windowPanel===state.activeSubtab)); invalidateLeafletMap(state.map, 60); }
 
 function renderGeoList(){
   const groups = state.geography.reduce((acc, r) => { const key = r.countryCode || r.country || "XX"; acc[key] = acc[key] || { country:r.country, countryCode:r.countryCode, rows:[] }; acc[key].rows.push(r); return acc; }, {});
@@ -534,13 +536,11 @@ async function maybeTrackAutoLocation(){ const pos = await getCurrentPositionSaf
 function bindUI(){
   if (state.uiBound) return;
   state.uiBound = true;
-  const root=$id("view-world");
-  const addButton = root?.querySelector("[data-world-add]");
-  if (addButton) {
-    addButton.onclick = handleWorldTopAddClick;
-  }
-  root.addEventListener("click", async (e)=>{ const t=e.target.closest("button,label"); if(!t) return; if(t.matches(".world-tab")) return setWorldActiveSubtab(t.dataset.window);
-    if(t.id==="world-open-add-stay") { openStayModal(); }
+  const root = document.querySelector("[data-view-root='world']");
+  root.onclick = async (e)=>{ const t=e.target.closest("[data-world-action], [data-world-tab], [data-world-close-modal], [data-world-add-choice], button, label"); if(!t || !root.contains(t)) return;
+    console.debug("[world:click]", { worldTarget:t?.outerHTML?.slice(0, 200), activeTab:getWorldActiveSubtab(), action:t?.dataset?.worldAction, tab:t?.dataset?.worldTab, choice:t?.dataset?.worldAddChoice });
+    if (t.dataset.worldTab) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation?.(); return setWorldActiveSubtab(t.dataset.worldTab); }
+    if (t.dataset.worldAction === "add" || t.id === "world-open-add-stay") { return handleWorldTopAddClick(e); }
     if(t.id==="world-open-add-place") { openAddLocalModal(); }
     if(t.id==="world-place-use-current-location") { await useCurrentLocationForNewPlace(); }
     if(t.id==="world-add-mode-geo") setAddMode("geo"); if(t.id==="world-add-mode-place") { if (state.editing) setAddMode("place"); else openAddLocalModal(); invalidateMiniMapSafe(); }
@@ -565,6 +565,7 @@ function bindUI(){
   $id("world-place-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedPlace) return; state.selectedPlace.rating = state.placeRating; state.selectedPlace.note = $id("world-place-note").value.trim(); state.selectedPlace.name = $id("world-place-form-name").value.trim() || state.selectedPlace.name; state.selectedPlace.emoji = $id("world-place-form-emoji").value.trim() || state.selectedPlace.emoji; state.selectedPlace.category = $id("world-place-form-category").value.trim(); state.selectedPlace.country = $id("world-place-form-country").value.trim() || state.selectedPlace.country; state.selectedPlace.region = $id("world-place-form-region").value.trim() || state.selectedPlace.region; state.selectedPlace.city = $id("world-place-form-city").value.trim() || state.selectedPlace.city; state.selectedPlace.productName = $id("world-place-form-product").value.trim(); state.selectedPlace.price = parsePrice($id("world-place-form-price").value); state.selectedPlace.currency = "EUR"; state.selectedPlace.lng = Number(state.selectedPlace.lon); state.selectedPlace.googleMapsDirectionsUrl = createGoogleMapsUrl(state.selectedPlace.lat, state.selectedPlace.lon); state.selectedPlace.googleMapsUrl = state.selectedPlace.googleMapsDirectionsUrl; if ((!String(state.selectedPlace.name || "").trim() || String(state.selectedPlace.name || "").trim() === "Nuevo local") && String(state.selectedPlace.address || "").trim()) state.selectedPlace.name = state.selectedPlace.address; if (!String(state.selectedPlace.label || "").trim() && String(state.selectedPlace.address || "").trim()) state.selectedPlace.label = state.selectedPlace.address; state.places.push(state.selectedPlace); await persistWorld(); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
   $id("world-place-edit-save").addEventListener("click", async ()=>{ if (!state.editing || state.editing.kind !== "places") return; await saveEdit(); });
   ["world-rating-stars","world-geo-rating-stars","world-place-edit-rating-stars"].forEach((rid)=>{ const rating = $id(rid); rating.addEventListener("pointerdown",(e)=>{ const move=(ev)=>{ const value=ratingFromPointer(rating, ev.clientX); if (rid === "world-geo-rating-stars") state.geoRating=value; else state.placeRating=value; renderRatings(); }; move(e); window.addEventListener("pointermove", move); const up=()=>{ window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); }; window.addEventListener("pointerup", up); }); });
+  window.__closeAllModalsNow = closeAllAppModalsNow;
 }
 
 function initMiniMap(){ if(!window.L) return; const host=$id("world-mini-map"); if(!host) return; if(!state.miniMap) state.miniMap=createLeafletMap(host, { center:[state.userCenter.lat,state.userCenter.lon], zoom:15 }); state.miniMap.setView([state.userCenter.lat,state.userCenter.lon],15); renderPlaceResults(); }

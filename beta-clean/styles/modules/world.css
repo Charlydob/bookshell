@@ -115,6 +115,13 @@
 #view-world .world-stay-search-results{display:flex;flex-direction:column;gap:6px;max-height:180px;overflow:auto}
 #view-world .world-stay-search-item{border:0;text-align:left;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.08);color:#eef0ff}
 #view-world .world-stays-entry-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
-#view-world .world-stays-entry{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px;border-radius:10px;background:rgba(255,255,255,.05)}
+#view-world .world-stays-entry{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:8px;border-radius:10px;background:rgba(255,255,255,.05)}
+#view-world .world-stay-field{display:flex;flex-direction:column;gap:4px}
+#view-world .world-stay-field span{font-size:12px;opacity:.9}
+#view-world .world-stays-entry-dates{opacity:.85}
 #view-world .world-stays-entry-actions{display:flex;gap:6px}
 #view-world .world-stays-entry-actions button{border:0;padding:5px 8px;border-radius:8px;background:rgba(255,255,255,.14);color:#eef0ff}
+#view-world .world-local-stats-box{background:rgba(255,255,255,.06);border-radius:12px;padding:8px}
+#view-world .world-local-stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#view-world .world-stat-row{display:flex;justify-content:space-between;gap:8px;padding:2px 0}
+#view-world .world-locals-list{min-width:0}

@@ -21,6 +21,12 @@ const flagFromCountryCode = (cc = "") => {
   const s = String(cc || "").trim().toUpperCase();
   return /^[A-Z]{2}$/.test(s) ? String.fromCodePoint(...[...s].map((c) => 127397 + c.charCodeAt(0))) : "🌍";
 };
+const fmtDate = (date = "") => {
+  if (!date) return "";
+  const [y, m, d] = String(date).split("-");
+  if (!y || !m || !d) return "";
+  return `${d}/${m}/${y}`;
+};
 
 function calcInclusiveDays(startDate, endDate, manualDays) {
   if (startDate && endDate) {
@@ -117,9 +123,10 @@ function render() {
     const isCollapsed = !collapsedCountries.has(country.key);
     const lifePct = alive ? pct(country.days, alive) : null;
     const cities = country.cities.map((city) => {
-      const rows = (city.stays || []).sort((a, b) => Number(b.startDate || 0) - Number(a.startDate || 0)).map((stay) => `
+      const rows = (city.stays || []).sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || ""))).map((stay) => `
         <li class="world-stays-entry">
-          <span>${esc(stay.city || "Sin ciudad")} · ${Number(stay.daysTotal || 0)} día${Number(stay.daysTotal || 0) === 1 ? "" : "s"}</span>
+          <span class="world-stays-entry-main">${esc(stay.city || "Sin ciudad")} · ${Number(stay.daysTotal || 0)} día${Number(stay.daysTotal || 0) === 1 ? "" : "s"}</span>
+          <small class="world-stays-entry-dates">${stay.startDate && stay.endDate ? `${fmtDate(stay.startDate)} → ${fmtDate(stay.endDate)}` : "Sin fechas exactas"}</small>
           <div class="world-stays-entry-actions">
             <button type="button" data-world-stay-edit="${esc(stay.id)}">Editar</button>
             <button type="button" data-world-stay-delete="${esc(stay.id)}">Eliminar</button>
@@ -221,20 +228,20 @@ function openModal(stay = null) {
   modal.className = "world-stay-modal is-open";
   modal.innerHTML = `<div class="world-stay-modal__backdrop" data-world-stay-close></div>
     <section class="world-sheet world-stay-modal__sheet">
-      <div class="world-sheet-header"><h3>Añadir estancia</h3><button type="button" class="world-stay-close-x" data-world-stay-close aria-label="Cerrar">✕</button></div>
+      <div class="world-sheet-header"><h3>${stay ? "Editar estancia" : "Añadir estancia"}</h3><button type="button" class="world-stay-close-x" data-world-stay-close aria-label="Cerrar">✕</button></div>
       <div class="world-edit-grid">
-        <input data-world-stay-source placeholder="Buscador lugar">
+        <label class="world-stay-field"><span>1. Buscar lugar</span><input data-world-stay-source placeholder="Buscar ciudad, país o dirección"></label>
         <div class="world-stay-search-results" data-world-stay-search-results hidden></div>
-        <input data-world-stay-city placeholder="Ciudad">
-        <input data-world-stay-region placeholder="Región/provincia">
-        <input data-world-stay-country placeholder="País">
-        <input data-world-stay-country-code placeholder="Código país (ej: PE)">
-        <input data-world-stay-flag placeholder="Bandera">
-        <input type="date" data-world-stay-start>
-        <input type="date" data-world-stay-end>
-        <input inputmode="numeric" data-world-stay-total-days placeholder="Días totales">
+        <label class="world-stay-field"><span>2. Ciudad / Región</span><input data-world-stay-city placeholder="Ciudad"></label>
+        <label class="world-stay-field"><span>&nbsp;</span><input data-world-stay-region placeholder="Región/provincia"></label>
+        <label class="world-stay-field"><span>3. País / Bandera</span><input data-world-stay-country placeholder="País"></label>
+        <label class="world-stay-field"><span>&nbsp;</span><input data-world-stay-flag placeholder="Bandera"></label>
+        <input data-world-stay-country-code hidden>
+        <label class="world-stay-field"><span>4. Fecha inicio</span><input type="date" data-world-stay-start></label>
+        <label class="world-stay-field"><span>Fecha fin</span><input type="date" data-world-stay-end></label>
+        <label class="world-stay-field"><span>5. Días totales</span><input inputmode="numeric" data-world-stay-total-days placeholder="Días totales"></label>
       </div>
-      <button type="button" class="world-save" data-world-stay-save>Guardar</button>
+      <button type="button" class="world-save" data-world-stay-save>6. Guardar</button>
     </section>`;
   if (!modal.innerHTML.trim()) {
     console.error("[world:stays:modal-empty]");
@@ -326,7 +333,7 @@ export function initWorldStays({ root }) {
         if (selected) {
           const a = selected.address || {};
           fillStayForm({
-            source: selected.display_name || "manual",
+            source: selected.display_name || "",
             city: a.city || a.town || a.village || a.municipality || "",
             region: a.state || a.region || a.county || "",
             country: a.country || "",

@@ -247,14 +247,21 @@ function logNetworkDebug(phase, extra = {}, level = "info") {
 
 function logBootStep(step, extra = {}) {
   console.debug("[boot:step]", step, extra);
+  window.bootDebug?.step?.(step, extra);
 }
 
 function logBootError(error, extra = {}) {
   console.error("[boot:error]", error, extra);
+  window.bootDebug?.error?.("Error de arranque", error, extra);
 }
 
 function logBootMissingModule(viewId, extra = {}) {
   console.warn("[boot:missing-module]", viewId, extra);
+  window.bootDebug?.warn?.(`Módulo faltante: ${viewId}`, extra);
+}
+
+function bootOk(step, extra = {}) {
+  window.bootDebug?.ok?.(step, extra);
 }
 
 function getFirstUsefulStackLine(stackValue = "") {
@@ -1421,7 +1428,14 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
       try {
         if (!moduleState.module) {
           logViewInit(viewId, "module:import:start", { highPriority });
-          moduleState.module = await config.moduleLoader();
+          window.bootDebug?.step?.("Importando módulo", { viewId, path: config.htmlUrl || config.cssUrl || "" });
+          try {
+            moduleState.module = await config.moduleLoader();
+            window.bootDebug?.ok?.("Módulo importado", { viewId });
+          } catch (error) {
+            window.bootDebug?.error?.("Error importando módulo", error, { viewId, path: config.htmlUrl || config.cssUrl || "" });
+            throw error;
+          }
           logViewInit(viewId, "module:import:ready", {
             exports: Object.keys(moduleState.module || {}),
           });
@@ -1430,7 +1444,9 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
         if (!moduleState.initialized && typeof moduleState.module.init === "function") {
           const initStartedAt = performance.now();
           logViewInit(viewId, "module:init:start");
+          window.bootDebug?.step?.("Inicializando módulo", { viewId });
           await moduleState.module.init({ root, viewId });
+          window.bootDebug?.ok?.("Módulo inicializado", { viewId });
           moduleState.initialized = true;
           recordViewMetrics(viewId, {
             moduleInitMs: Math.round(performance.now() - initStartedAt),
@@ -3423,10 +3439,12 @@ function bindAuthGate() {
 
   setBootPhase("Inicializando…", 12);
   logBootStep("bind-auth-gate");
+  window.bootDebug?.step?.("Auth init");
   startBootReleaseTimeout();
 
   onUserChange(async (user) => {
     logBootStep("auth-state-changed", { authenticated: !!user });
+    window.bootDebug?.step?.("Usuario resuelto", { authenticated: !!user });
     try {
     if (!user) {
       void notifySyncUserChanged();
@@ -3443,19 +3461,24 @@ function bindAuthGate() {
       if (isNavSelectionMode()) exitNavSelectionMode();
       setBootPhase("Conectando…", 32);
       ensureLoginUI();
+      bootOk("Vista login lista");
       finishBootSplash();
       return;
     }
 
     setBootPhase("Conectando…", 38);
+    bootOk("Usuario detectado");
 
     void notifySyncUserChanged();
     document.getElementById("loginBox")?.remove();
     const authUid = getUserDataRootKey(user);
+    window.bootDebug?.ok?.("userKey calculado", { authUid });
 
     void ensureUserSchema(authUid).catch((error) => {
       console.warn("[schema] seed failed", error);
+      window.bootDebug?.error?.("Error schema/meta", error, { authUid });
     });
+    window.bootDebug?.step?.("schema/meta");
 
     void primeNavLayoutForUser(authUid)
       .catch((error) => {
@@ -3466,11 +3489,15 @@ function bindAuthGate() {
       });
 
     setBootPhase("Cargando datos…", 62);
+    window.bootDebug?.step?.("carga settings");
 
     const viewId = getInitialView();
+    window.bootDebug?.ok?.("vista inicial elegida", { viewId });
     try {
+      window.bootDebug?.step?.("carga de navegación");
       await setView(viewId, { pushHash: true, highPriority: true });
       setBootPhase("Preparando interfaz…", 78);
+      window.bootDebug?.ok?.("render final", { viewId });
       logBootStep("initial-view-ready", { viewId });
     } catch (error) {
       logBootError(error, { stage: "set-initial-view", viewId });
@@ -3481,6 +3508,7 @@ function bindAuthGate() {
         });
       }
     } finally {
+      window.bootDebug?.ok?.("ocultar splash");
       requestAnimationFrame(() => finishBootSplash());
     }
 
@@ -3519,12 +3547,15 @@ function bindAuthGate() {
 }
 
 warmInitialViewShell();
+window.bootDebug?.ok?.("HTML listo");
 Promise.resolve().then(() => initSyncManager({
   db,
   getUserId: () => auth.currentUser?.uid || "",
-})).catch((error) => logBootError(error, { stage: "init-sync-manager" }));
+})).then(() => window.bootDebug?.ok?.("Firebase inicializado"))
+  .catch((error) => logBootError(error, { stage: "init-sync-manager" }));
 
-Promise.resolve().then(() => initThemeService()).catch((error) => logBootError(error, { stage: "init-theme" }));
+Promise.resolve().then(() => initThemeService()).then(() => window.bootDebug?.ok?.("carga settings"))
+  .catch((error) => logBootError(error, { stage: "init-theme" }));
 hideLegacyThemeControl();
 bindSyncIndicatorToggles();
 exposeShellApis();
@@ -3547,6 +3578,13 @@ window.addEventListener("bookshell:reminder-notifications", (event) => {
   renderGlobalSyncIndicator(getShellState().lastSyncSnapshot || null);
 });
 scheduleIdleTask(() => registerAppServiceWorker(), { delayMs: 600, timeout: 3000 });
+window.addEventListener("bookshell:boot-watchdog-timeout", () => {
+  const fallbackViewId = SAFE_VIEW_FALLBACKS.find((candidate) => isValidView(candidate)) || DEFAULT_VIEW_ID;
+  window.bootDebug?.warn?.("Intentando vista segura por watchdog", { fallbackViewId });
+  void setView(fallbackViewId, { pushHash: true, highPriority: true }).catch((error) => {
+    window.bootDebug?.error?.("Fallo cargando vista segura", error, { fallbackViewId });
+  });
+});
 window.__bookshellEnsureHabitsApi = ensureHabitsApiReady;
 schedulePostBootTask(() => preloadViewModule("view-notes"), 1200);
 logBootStep("boot-wired");

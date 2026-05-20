@@ -239,6 +239,14 @@ async function ensureAutoStayToday() {
 
 export function renderWorldStays() { render(); }
 
+function initWorldStaysAsync() {
+  Promise.resolve()
+    .then(() => ensureAutoStayToday())
+    .catch((error) => {
+      console.error("[world:stays:init:error]", error);
+    });
+}
+
 export function initWorldStays({ root }) {
   ctx = { root };
   const uid = getCurrentUserDataRootKey() || auth.currentUser?.uid;
@@ -246,7 +254,7 @@ export function initWorldStays({ root }) {
     const path = `v2/users/${uid}/world/stays`;
     unsub = trackedOnValue(ref(db, path), (snap) => { stays = Object.values(snap.val() || {}); render(); }, { key:"world-stays", path, module:"world", mode:"onValue", reason:"world-stays", viewId:"view-world" }, onValue);
   }
-  ensureAutoStayToday();
+  window.setTimeout(() => initWorldStaysAsync(), 0);
 
   if (!globalStayModalHandlerBound) {
     globalStayModalHandlerBound = true;

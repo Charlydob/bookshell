@@ -3587,7 +3587,8 @@ function bindAuthGate() {
     console.log("[perf] app-initial-load-ms", Math.round(performance.now() - APP_BOOT_TS));
     } catch (error) {
       logBootError(error, { stage: "auth-change" });
-      finishBootSplash();
+    } finally {
+      requestAnimationFrame(() => finishBootSplash());
     }
   });
 

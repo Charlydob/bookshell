@@ -36,6 +36,7 @@ let financeRenderQueued = false;
 let financePendingPreserveUi = true;
 let financeEditDraftLogTimer = 0;
 let financeRemoteApplyTimer = 0;
+let financeSubscriptionsStarted = false;
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
 const FINANCE_OFFLINE_SNAPSHOT_MODULE = 'finance';
@@ -13695,12 +13696,20 @@ function subscribeFinanceRootBranches(rootPath, targetKey, labelSuffix = 'primar
   };
 }
 
-function subscribe() {
+function cleanupFinanceSubscriptions() {
   if (state.unsubscribe) state.unsubscribe();
-  if (unsubscribeLegacyFinance) {
-    unsubscribeLegacyFinance();
-    unsubscribeLegacyFinance = null;
+  state.unsubscribe = null;
+  if (unsubscribeLegacyFinance) unsubscribeLegacyFinance();
+  unsubscribeLegacyFinance = null;
+  financeSubscriptionsStarted = false;
+}
+
+function subscribe() {
+  if (financeSubscriptionsStarted) {
+    console.debug("[finance:load:skip]", "subscriptions-already-started");
+    return;
   }
+  cleanupFinanceSubscriptions();
   if (financeRemoteApplyTimer) {
     clearTimeout(financeRemoteApplyTimer);
     financeRemoteApplyTimer = 0;
@@ -13708,6 +13717,7 @@ function subscribe() {
 
   const primaryTarget = state.financePath === resolveFinancePath() ? 'newRoot' : 'legacyRoot';
   state.unsubscribe = subscribeFinanceRootBranches(state.financePath, primaryTarget, 'primary');
+  financeSubscriptionsStarted = true;
 
   if (financeNeedsLegacyAccountsMerge) {
     const legacyPath = resolveFinancePathCandidates()[1];
@@ -16656,14 +16666,7 @@ export async function onShow() {
 }
 
 export function destroy() {
-  if (state.unsubscribe) {
-    state.unsubscribe();
-    state.unsubscribe = null;
-  }
-  if (unsubscribeLegacyFinance) {
-    unsubscribeLegacyFinance();
-    unsubscribeLegacyFinance = null;
-  }
+  cleanupFinanceSubscriptions();
   if (state.aggregateRebuildTimer) {
     clearTimeout(state.aggregateRebuildTimer);
     state.aggregateRebuildTimer = null;

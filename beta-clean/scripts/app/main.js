@@ -27,8 +27,8 @@ import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, ge
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
 const NAV_LAYOUT_VERSION = 4;
-const DEFAULT_VIEW_ID = "view-habits";
-const SAFE_VIEW_FALLBACKS = Object.freeze(["view-habits", "view-notes", "view-finance", "view-world"]);
+const DEFAULT_VIEW_ID = "view-notes";
+const SAFE_VIEW_FALLBACKS = Object.freeze(["view-notes", "view-finance", "view-world"]);
 const BOOT_RELEASE_TIMEOUT_MS = 5000;
 const HABITS_VIEW_ID = "view-habits";
 const SHELL_STATE_KEY = "__bookshellCleanShellState";
@@ -3627,10 +3627,19 @@ window.addEventListener("bookshell:reminder-notifications", (event) => {
 });
 scheduleIdleTask(() => registerAppServiceWorker(), { delayMs: 600, timeout: 3000 });
 window.addEventListener("bookshell:boot-watchdog-timeout", () => {
-  const fallbackViewId = SAFE_VIEW_FALLBACKS.find((candidate) => isValidView(candidate)) || DEFAULT_VIEW_ID;
-  window.bootDebug?.warn?.("Intentando vista segura por watchdog", { fallbackViewId });
+  const currentViewId = getCurrentViewId() || getInitialView();
+  const fallbackViewId = SAFE_VIEW_FALLBACKS.find((candidate) => isValidView(candidate)) || null;
+  if (currentViewId === "view-world") {
+    window.bootDebug?.warn?.("Watchdog detectado en Mundo; se mantiene la vista actual", { currentViewId, fallbackViewId });
+    window.dispatchEvent(new CustomEvent("bookshell:world-watchdog-fallback", {
+      detail: { currentViewId, fallbackViewId },
+    }));
+    return;
+  }
+  if (!fallbackViewId) return;
+  window.bootDebug?.warn?.("Intentando vista segura por watchdog", { fallbackViewId, currentViewId });
   void setView(fallbackViewId, { pushHash: true, highPriority: true }).catch((error) => {
-    window.bootDebug?.error?.("Fallo cargando vista segura", error, { fallbackViewId });
+    window.bootDebug?.error?.("Fallo cargando vista segura", error, { fallbackViewId, currentViewId });
   });
 });
 window.__bookshellEnsureHabitsApi = ensureHabitsApiReady;

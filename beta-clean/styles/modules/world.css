@@ -10,9 +10,6 @@
 #view-world .world-tab.active{background:linear-gradient(120deg,#756eff,#4ab8ff)}
 #view-world .world-window{display:none;flex-direction:column;gap:10px}
 #view-world .world-window.active{display:flex}
-#view-world .world-stays-header{display:flex;justify-content:flex-end}
-#view-world .world-stays-list{display:flex;flex-direction:column;gap:8px}
-#view-world .world-empty{opacity:.8;padding:12px;border-radius:12px;background:rgba(255,255,255,.05)}
 #view-world #world-map{height:47vh;min-height:320px;border-radius:20px;overflow:hidden}
 #view-world .world-bottom-sheet{background:rgba(255,255,255,.06);border-radius:18px;padding:10px;backdrop-filter:blur(12px)}
 #view-world .world-bottom-head{display:flex;justify-content:space-between;align-items:center}

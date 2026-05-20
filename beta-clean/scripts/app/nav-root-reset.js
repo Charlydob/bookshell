@@ -1,7 +1,6 @@
 const ROOT_FALLBACK_SELECTORS = [
   ".modal-backdrop:not(.hidden)",
   ".video-sheet-backdrop:not(.hidden)",
-  ".media-modal-shell:not(.hidden)",
   ".world-map-sheet:not(.hidden)",
   '[aria-modal="true"]:not(.hidden)'
 ];

@@ -67,7 +67,6 @@ const RECOMMENDED_NAV_ORDER = Object.freeze([
   HABITS_VIEW_ID,
   "view-books",
   "view-notes",
-  "group-media",
   "group-more",
 ]);
 const RECOMMENDED_NAV_GROUPS = Object.freeze({
@@ -431,9 +430,7 @@ const SYNC_METRIC_MODULE_ORDER = Object.freeze([
   { key: "gym", label: "Gym" },
   { key: "world", label: "Mundo" },
   { key: "books", label: "Libros" },
-  { key: "games", label: "Juegos" },
   { key: "notes", label: "Notas/Recordatorios" },
-  { key: "media", label: "Media" },
   { key: "shell", label: "Shell" },
 ]);
 

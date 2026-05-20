@@ -533,24 +533,128 @@ async function searchStayPlace(q){ const u = new URL("https://nominatim.openstre
 function pickStayPlace(i){ const row = state.stayResults[i]; if (!row) return; const normalizedCountry = normalizeCountryFromAddress(row.address); state.selectedStayLocation = { city:row.city || row.municipality || "", region:row.region || "", country:normalizedCountry.country || "", countryCode:normalizedCountry.countryCode || "", flagEmoji:flag(normalizedCountry.countryCode || ""), placeLabel:row.label || row.name || "" }; $id("world-stay-city").value = state.selectedStayLocation.city; $id("world-stay-region").value = state.selectedStayLocation.region; $id("world-stay-country").value = state.selectedStayLocation.country; $id("world-stay-flag").value = state.selectedStayLocation.flagEmoji; }
 async function maybeTrackAutoLocation(){ const pos = await getCurrentPositionSafe(); if (!pos) return; const reverse = await reverseGeocode(pos.lat, pos.lon); const normalizedCountry = normalizeCountryFromAddress(reverse.address); const date = toISODate(); const city = reverse.city || reverse.municipality || ""; const autoLocationKey = stayAutoKey(date, normalizedCountry.countryCode, city); if (state.stays.some((x) => x.autoLocationKey === autoLocationKey)) return; const data = { id:id(), source:"auto-location", date, city, country:normalizedCountry.country || "", countryCode:normalizedCountry.countryCode || "", flagEmoji:flag(normalizedCountry.countryCode || ""), daysTotal:1, autoLocationKey, createdAt:Date.now(), updatedAt:Date.now() }; console.debug("[world:stays:auto-location]", data); state.stays.push(data); await persistWorld(); renderStays(); }
 
-function bindUI(){
+function bindUI() {
   if (state.uiBound) return;
   state.uiBound = true;
+
   const root = document.querySelector("[data-view-root='world']");
-  root.onclick = async (e)=>{ const t=e.target.closest("[data-world-action], [data-world-tab], [data-world-close-modal], [data-world-add-choice], button, label"); if(!t || !root.contains(t)) return;
-    console.debug("[world:click]", { worldTarget:t?.outerHTML?.slice(0, 200), activeTab:getWorldActiveSubtab(), action:t?.dataset?.worldAction, tab:t?.dataset?.worldTab, choice:t?.dataset?.worldAddChoice });
-    if (t.dataset.worldTab) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation?.(); return setWorldActiveSubtab(t.dataset.worldTab); }
-    if (t.dataset.worldAction === "add" || t.id === "world-open-add-stay") { return handleWorldTopAddClick(e); }
-    if(t.id==="world-open-add-place") { openAddLocalModal(); }
-    if(t.id==="world-place-use-current-location") { await useCurrentLocationForNewPlace(); }
-    if(t.id==="world-add-mode-geo") setAddMode("geo"); if(t.id==="world-add-mode-place") { if (state.editing) setAddMode("place"); else openAddLocalModal(); invalidateMiniMapSafe(); }
-    if(t.dataset.geoPick) pickGeo(Number(t.dataset.geoPick)); if(t.dataset.placePick) pickPlace(Number(t.dataset.placePick));
-    if(t.dataset.worldCenter){ const m=state.markers.get(t.dataset.worldCenter); if(m){ state.map.panTo(m.getLatLng()); m.openPopup(); } }
-    if(t.dataset.worldDelete){ const [kind,idv]=t.dataset.worldDelete.split(":"); await deleteItem(kind,idv); }
-    if(t.dataset.worldEdit){ const [kind,idv]=t.dataset.worldEdit.split(":"); openEdit(kind,idv); }
-    if(t.dataset.worldRate){ const [kind,idv]=t.dataset.worldRate.split(":"); const rows = kind === "geography" ? state.geography : state.places; const rec = rows.find((x)=>x.id===idv); if (!rec) return; rec.rating = Math.min(10, (rec.rating || 0) + 1); await persistWorld(); renderAll(); }
-    if (t.id === "world-geo-enable-search" || t.id === "world-place-enable-search") { state.showEditLocationSearch = true; setEditModeUI(); }
-  });
+  if (!root) return;
+
+  root.onclick = async (e) => {
+    const t = e.target.closest(
+      "[data-world-action], [data-world-tab], [data-world-close-modal], [data-world-add-choice], button, label"
+    );
+    if (!t || !root.contains(t)) return;
+
+    console.debug("[world:click]", {
+      worldTarget: t?.outerHTML?.slice(0, 200),
+      activeTab: getWorldActiveSubtab(),
+      action: t?.dataset?.worldAction,
+      tab: t?.dataset?.worldTab,
+      choice: t?.dataset?.worldAddChoice,
+      id: t.id
+    });
+
+    if (t.dataset.worldTab) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      setWorldActiveSubtab(t.dataset.worldTab);
+      return;
+    }
+
+    if (t.dataset.worldAction === "add") {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      handleWorldTopAddClick(e);
+      return;
+    }
+
+    if (t.id === "world-open-add-stay") {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      closeAllWorldModals?.();
+      openAddStayModal?.();
+      return;
+    }
+
+    if (t.id === "world-open-add-place") {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      closeAllWorldModals?.();
+      openAddLocalModal();
+      return;
+    }
+
+    if (t.id === "world-place-use-current-location") {
+      await useCurrentLocationForNewPlace();
+      return;
+    }
+
+    if (t.id === "world-add-mode-geo") {
+      setAddMode("geo");
+      return;
+    }
+
+    if (t.id === "world-add-mode-place") {
+      if (state.editing) setAddMode("place");
+      else openAddLocalModal();
+      invalidateMiniMapSafe();
+      return;
+    }
+
+    if (t.dataset.geoPick) {
+      pickGeo(Number(t.dataset.geoPick));
+      return;
+    }
+
+    if (t.dataset.placePick) {
+      pickPlace(Number(t.dataset.placePick));
+      return;
+    }
+
+    if (t.dataset.worldCenter) {
+      const m = state.markers.get(t.dataset.worldCenter);
+      if (m) {
+        state.map.panTo(m.getLatLng());
+        m.openPopup();
+      }
+      return;
+    }
+
+    if (t.dataset.worldDelete) {
+      const [kind, idv] = t.dataset.worldDelete.split(":");
+      await deleteItem(kind, idv);
+      return;
+    }
+
+    if (t.dataset.worldEdit) {
+      const [kind, idv] = t.dataset.worldEdit.split(":");
+      openEdit(kind, idv);
+      return;
+    }
+
+    if (t.dataset.worldRate) {
+      const [kind, idv] = t.dataset.worldRate.split(":");
+      const rows = kind === "geography" ? state.geography : state.places;
+      const rec = rows.find((x) => x.id === idv);
+      if (!rec) return;
+
+      rec.rating = Math.min(10, (rec.rating || 0) + 1);
+      await persistWorld();
+      renderAll();
+      return;
+    }
+
+    if (t.id === "world-geo-enable-search" || t.id === "world-place-enable-search") {
+      state.showEditLocationSearch = true;
+      setEditModeUI();
+    }
+  };
+}
   $id("world-geo-q").addEventListener("input", (e)=> e.target.value.trim().length>1 ? searchGeo(e.target.value.trim()) : ($id("world-geo-results").innerHTML = ""));
   $id("world-place-q").addEventListener("input", (e)=> e.target.value.trim().length>1 ? searchPlace(e.target.value.trim()) : ($id("world-place-results").innerHTML = ""));
   $id("world-place-radius").addEventListener("change", ()=> $id("world-place-q").dispatchEvent(new Event("input")));

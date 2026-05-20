@@ -3106,6 +3106,7 @@ function bindNav() {
   if (state.navBound) return;
 
   document.addEventListener("click", (event) => {
+    if (event.target?.closest?.("[data-view-root='world']")) return;
     const suppressLongPressClick = performance.now() < Number(state.navSuppressClickUntil || 0);
     if (suppressLongPressClick && event.target?.closest?.(".bottom-nav [data-nav-token]")) {
       event.preventDefault();

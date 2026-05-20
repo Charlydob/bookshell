@@ -11,10 +11,29 @@ const stars10 = (v = 0) => "★".repeat(Math.round(v)).padEnd(10, "☆");
 const hav = (a, b, c, d) => { const R = 6371000; const to = (x) => x * Math.PI / 180; const d1 = to(c - a), d2 = to(d - b); const q = Math.sin(d1 / 2) ** 2 + Math.cos(to(a)) * Math.cos(to(c)) * Math.sin(d2 / 2) ** 2; return 2 * R * Math.atan2(Math.sqrt(q), Math.sqrt(1 - q)); };
 const countryNameToIso = new Intl.DisplayNames(["en"], { type:"region" });
 const WORLD_LOCATION_PERMISSION_KEY = "worldLocationPermissionAccepted";
+const LOCAL_CATEGORY_EMOJI_MAP = [
+  { emoji:"🍕", keywords:["pizzeria","pizzería","pizza"] },
+  { emoji:"☕", keywords:["cafeteria","cafetería","cafe","café","coffee"] },
+  { emoji:"🍽️", keywords:["restaurante","restaurant","comida"] },
+  { emoji:"🏨", keywords:["hotel","hostel"] },
+  { emoji:"🌳", keywords:["parque","park","jardin","jardín"] },
+  { emoji:"🍸", keywords:["bar","pub","coctel","cóctel"] },
+  { emoji:"🛍️", keywords:["tienda","shop","store"] }
+];
 
 const state = { initialized:false, unsub:null, rootRef:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), worldLayers:null, worldClusterGroup:null, geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add" };
 
-const normalize = (r = {}, kind = "geography") => ({ id:r.id || id(), kind, name:String(r.name || r.placeName || "").trim(), label:String(r.label || r.displayName || r.name || "").trim(), displayName:String(r.displayName || r.label || r.name || "").trim(), country:String(r.country || "").trim(), countryCode:String(r.countryCode || r.country_code || "").trim().toUpperCase(), city:String(r.city || "").trim(), region:String(r.region || r.subdivision || "").trim(), postalCode:String(r.postalCode || "").trim(), address:String(r.address || "").trim(), category:String(r.category || r.type || "").trim(), emoji:String(r.emoji || (kind === "places" ? "🏪" : "📍")).trim(), note:String(r.note || "").trim(), productName:String(r.productName || "").trim(), price:Number.isFinite(Number(r.price)) ? Number(r.price) : null, currency:String(r.currency || "EUR").trim().toUpperCase(), rating:Number.isFinite(Number(r.rating)) ? Number(r.rating) : null, lat:Number(r.lat), lon:Number(r.lon ?? r.lng), lng:Number(r.lng ?? r.lon), googleMapsDirectionsUrl:String(r.googleMapsDirectionsUrl || r.googleMapsUrl || "").trim(), createdAt:Number(r.createdAt || Date.now()), updatedAt:Date.now() });
+function getLocalCategoryEmoji(categoryOrType = "") {
+  const normalized = String(categoryOrType || "").trim().toLowerCase();
+  if (!normalized) return "📍";
+  const match = LOCAL_CATEGORY_EMOJI_MAP.find((entry) => entry.keywords.some((keyword) => normalized.includes(keyword)));
+  return match?.emoji || "📍";
+}
+function getWorldMarkerEmoji(item = {}) {
+  if (item.kind === "places") return getLocalCategoryEmoji(item.category || item.type || "");
+  return String(item.emoji || "").trim() || "📍";
+}
+const normalize = (r = {}, kind = "geography") => ({ id:r.id || id(), kind, name:String(r.name || r.placeName || "").trim(), label:String(r.label || r.displayName || r.name || "").trim(), displayName:String(r.displayName || r.label || r.name || "").trim(), country:String(r.country || "").trim(), countryCode:String(r.countryCode || r.country_code || "").trim().toUpperCase(), city:String(r.city || "").trim(), region:String(r.region || r.subdivision || "").trim(), postalCode:String(r.postalCode || "").trim(), address:String(r.address || "").trim(), category:String(r.category || r.type || "").trim(), emoji:String(r.emoji || (kind === "places" ? getLocalCategoryEmoji(r.category || r.type || "") : "📍")).trim(), note:String(r.note || "").trim(), productName:String(r.productName || "").trim(), price:Number.isFinite(Number(r.price)) ? Number(r.price) : null, currency:String(r.currency || "EUR").trim().toUpperCase(), rating:Number.isFinite(Number(r.rating)) ? Number(r.rating) : null, lat:Number(r.lat), lon:Number(r.lon ?? r.lng), lng:Number(r.lng ?? r.lon), googleMapsDirectionsUrl:String(r.googleMapsDirectionsUrl || r.googleMapsUrl || "").trim(), createdAt:Number(r.createdAt || Date.now()), updatedAt:Date.now() });
 const toTitleCase = (s = "") => String(s || "").trim().toLowerCase().replace(/\b\p{L}/gu, (m) => m.toUpperCase());
 const normalizeChainName = (place = {}) => {
   const raw = String(place.category || place.name || "Local").trim();
@@ -143,7 +162,6 @@ function renderWorldMarkers(){
   const L = window.L;
   destroyWorldMapLayers();
 
-  const dotIcon = L.divIcon({ className:"notes-map-dot-icon", html:'<span class="notes-map-dot" aria-hidden="true"></span>', iconSize:[12,12], iconAnchor:[6,6] });
   const allRows = [...state.geography, ...state.places].filter(Boolean);
   const totalItems = allRows.length;
   let withCoords = 0;
@@ -176,7 +194,10 @@ function renderWorldMarkers(){
       return;
     }
     withCoords += 1;
-    const marker = L.marker([lat, lng], { icon:dotIcon });
+    const markerEmoji = getWorldMarkerEmoji(item);
+    const markerIcon = L.divIcon({ className:"notes-map-emoji-icon", html:`<span class="notes-map-emoji" aria-hidden="true">${markerEmoji}</span>`, iconSize:[24,24], iconAnchor:[12,12] });
+    console.debug("[world-map:marker]", { id:item.id, name:item.name, category:item.category || item.type || "", emoji:markerEmoji });
+    const marker = L.marker([lat, lng], { icon:markerIcon });
     marker.bindPopup(buildPopup(item));
     state.worldClusterGroup.addLayer(marker);
     state.markers.set(item.id, marker);

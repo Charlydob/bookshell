@@ -7,6 +7,7 @@ let stays = [];
 let unsub = null;
 let autoStayTried = false;
 const collapsedCountries = new Set();
+let globalStayModalHandlerBound = false;
 
 const DAY_MS = 86400000;
 const toId = () => `stay_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -137,26 +138,7 @@ function render() {
 
     ${renderDistribution(stats.byCountry, stats.totalDays)}
 
-    <div class="world-stays-countries">${countries || "<div class=\"world-stays-empty\">Sin estancias todavía.</div>"}</div>
-
-    <div class="world-modal" data-world-stay-modal hidden>
-      <div class="world-backdrop" data-world-stay-close></div>
-      <div class="world-sheet">
-        <div class="world-sheet-header"><h3>Nueva estancia</h3><button type="button" data-world-stay-close>Cerrar</button></div>
-        <div class="world-edit-grid">
-          <input data-world-stay-source placeholder="Origen (auto/manual)">
-          <input data-world-stay-city placeholder="Ciudad">
-          <input data-world-stay-region placeholder="Región/provincia">
-          <input data-world-stay-country placeholder="País">
-          <input data-world-stay-country-code placeholder="Código país (ej: PE)">
-          <input data-world-stay-flag placeholder="Bandera emoji (opcional)">
-          <input type="date" data-world-stay-start>
-          <input type="date" data-world-stay-end>
-          <input inputmode="numeric" data-world-stay-total-days placeholder="Días manuales">
-        </div>
-        <button type="button" class="world-save" data-world-stay-save>Guardar estancia</button>
-      </div>
-    </div>`;
+    <div class="world-stays-countries">${countries || "<div class=\"world-stays-empty\">Sin estancias todavía.</div>"}</div>`;
   bindStaysUI(ctx.root);
 }
 
@@ -179,10 +161,37 @@ function bindStaysUI(root) {
 
 function openModal() {
   console.debug("[world:stays:modal-open]");
-  const modal = $("[data-world-stay-modal]");
-  if (modal) modal.hidden = false;
+  if (document.querySelector("[data-world-stay-modal]")) return;
+  const modal = document.createElement("div");
+  modal.setAttribute("data-world-stay-modal", "");
+  modal.className = "world-stay-modal is-open";
+  modal.innerHTML = `<div class="world-stay-modal__backdrop"></div>
+    <div class="world-sheet world-stay-modal__sheet">
+      <div class="world-sheet-header"><h3>Nueva estancia</h3><button type="button" data-world-stay-close>Cerrar</button></div>
+      <div class="world-edit-grid">
+        <input data-world-stay-source placeholder="Origen (auto/manual)">
+        <input data-world-stay-city placeholder="Ciudad">
+        <input data-world-stay-region placeholder="Región/provincia">
+        <input data-world-stay-country placeholder="País">
+        <input data-world-stay-country-code placeholder="Código país (ej: PE)">
+        <input data-world-stay-flag placeholder="Bandera emoji (opcional)">
+        <input type="date" data-world-stay-start>
+        <input type="date" data-world-stay-end>
+        <input inputmode="numeric" data-world-stay-total-days placeholder="Días manuales">
+      </div>
+      <button type="button" class="world-save" data-world-stay-save>Guardar estancia</button>
+    </div>`;
+  document.body.appendChild(modal);
+  console.debug("[world:stays:modal-dom]", {
+    exists: !!document.querySelector("[data-world-stay-modal]"),
+    className: modal?.className,
+    display: getComputedStyle(modal).display,
+    visibility: getComputedStyle(modal).visibility,
+    opacity: getComputedStyle(modal).opacity,
+    zIndex: getComputedStyle(modal).zIndex
+  });
 }
-function closeModal() { const modal = $("[data-world-stay-modal]"); if (modal) modal.hidden = true; }
+function closeModal() { const modal = document.querySelector("[data-world-stay-modal]"); if (modal) modal.remove(); }
 function openWorldStayModal() { openModal(); }
 function showCompactWarning(message = "") { const node = $("[data-world-stays-warning]"); if (node) node.textContent = message; }
 function normalizeCityId(value = "") { return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "unknown-city"; }
@@ -235,32 +244,43 @@ export function initWorldStays({ root }) {
   }
   ensureAutoStayToday();
 
+  if (!globalStayModalHandlerBound) {
+    globalStayModalHandlerBound = true;
+    document.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button,[data-world-stay-close]");
+      if (!btn) return;
+      if (btn.dataset.worldStayClose === undefined && btn.dataset.worldStaySave === undefined) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (btn.dataset.worldStayClose !== undefined) closeModal();
+      if (btn.dataset.worldStaySave !== undefined) {
+        const city = String(document.querySelector("[data-world-stay-city]")?.value || "").trim();
+        const country = String(document.querySelector("[data-world-stay-country]")?.value || "").trim();
+        const countryCode = String(document.querySelector("[data-world-stay-country-code]")?.value || "").trim().toUpperCase();
+        const startDate = String(document.querySelector("[data-world-stay-start]")?.value || "").trim();
+        const endDate = String(document.querySelector("[data-world-stay-end]")?.value || "").trim();
+        const manualDays = String(document.querySelector("[data-world-stay-total-days]")?.value || "").trim();
+        const computed = calcInclusiveDays(startDate, endDate, manualDays);
+        const finalDays = computed || (String(document.querySelector("[data-world-stay-source]")?.value || "").trim().toLowerCase() === "auto" ? 1 : null);
+        if (!country || !finalDays) return;
+        const dup = stays.some((s) => String(s.startDate || "") === startDate && String(s.city || "").toLowerCase() === city.toLowerCase() && String(s.country || "").toLowerCase() === country.toLowerCase());
+        if (dup) return;
+        const now = Date.now();
+        stays.push({ id:toId(), source:String(document.querySelector("[data-world-stay-source]")?.value || "manual").trim() || "manual", city, region:String(document.querySelector("[data-world-stay-region]")?.value || "").trim(), country, countryCode, flagEmoji:String(document.querySelector("[data-world-stay-flag]")?.value || "").trim() || flagFromCountryCode(countryCode), startDate, endDate, daysTotal:finalDays, createdAt:now, updatedAt:now });
+        await persistStays();
+        closeModal();
+        render();
+      }
+    });
+  }
+
   root.addEventListener("click", async (e) => {
     const btn = e.target.closest("button,[data-world-stay-close]");
     if (!btn) return;
 
-    if (btn.dataset.worldStayClose !== undefined) closeModal();
     if (btn.dataset.worldSetBirthdate !== undefined) {
       const val = window.prompt("Fecha de nacimiento (YYYY-MM-DD)", getBirthDate());
       if (val) { persistBirthDate(val.trim()); render(); }
-    }
-    if (btn.dataset.worldStaySave !== undefined) {
-      const city = String($("[data-world-stay-city]")?.value || "").trim();
-      const country = String($("[data-world-stay-country]")?.value || "").trim();
-      const countryCode = String($("[data-world-stay-country-code]")?.value || "").trim().toUpperCase();
-      const startDate = String($("[data-world-stay-start]")?.value || "").trim();
-      const endDate = String($("[data-world-stay-end]")?.value || "").trim();
-      const manualDays = String($("[data-world-stay-total-days]")?.value || "").trim();
-      const computed = calcInclusiveDays(startDate, endDate, manualDays);
-      const finalDays = computed || (String($("[data-world-stay-source]")?.value || "").trim().toLowerCase() === "auto" ? 1 : null);
-      if (!country || !finalDays) return;
-      const dup = stays.some((s) => String(s.startDate || "") === startDate && String(s.city || "").toLowerCase() === city.toLowerCase() && String(s.country || "").toLowerCase() === country.toLowerCase());
-      if (dup) return;
-      const now = Date.now();
-      stays.push({ id:toId(), source:String($("[data-world-stay-source]")?.value || "manual").trim() || "manual", city, region:String($("[data-world-stay-region]")?.value || "").trim(), country, countryCode, flagEmoji:String($("[data-world-stay-flag]")?.value || "").trim() || flagFromCountryCode(countryCode), startDate, endDate, daysTotal:finalDays, createdAt:now, updatedAt:now });
-      await persistStays();
-      closeModal();
-      render();
     }
   });
 

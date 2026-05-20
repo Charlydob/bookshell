@@ -30,8 +30,10 @@ function getLocalCategoryEmoji(categoryOrType = "") {
   return match?.emoji || "📍";
 }
 function getWorldMarkerEmoji(item = {}) {
-  if (item.kind === "places") return getLocalCategoryEmoji(item.category || item.type || "");
-  return String(item.emoji || "").trim() || "📍";
+  const persistedEmoji = String(item?.emoji || "").trim();
+  if (persistedEmoji) return persistedEmoji;
+  const fallbackTypeEmoji = getLocalCategoryEmoji(item.category || item.type || "");
+  return String(fallbackTypeEmoji || "").trim() || "📍";
 }
 const normalize = (r = {}, kind = "geography") => ({ id:r.id || id(), kind, name:String(r.name || r.placeName || "").trim(), label:String(r.label || r.displayName || r.name || "").trim(), displayName:String(r.displayName || r.label || r.name || "").trim(), country:String(r.country || "").trim(), countryCode:String(r.countryCode || r.country_code || "").trim().toUpperCase(), city:String(r.city || "").trim(), region:String(r.region || r.subdivision || "").trim(), postalCode:String(r.postalCode || "").trim(), address:String(r.address || "").trim(), category:String(r.category || r.type || "").trim(), emoji:String(r.emoji || (kind === "places" ? getLocalCategoryEmoji(r.category || r.type || "") : "📍")).trim(), note:String(r.note || "").trim(), productName:String(r.productName || "").trim(), price:Number.isFinite(Number(r.price)) ? Number(r.price) : null, currency:String(r.currency || "EUR").trim().toUpperCase(), rating:Number.isFinite(Number(r.rating)) ? Number(r.rating) : null, lat:Number(r.lat), lon:Number(r.lon ?? r.lng), lng:Number(r.lng ?? r.lon), googleMapsDirectionsUrl:String(r.googleMapsDirectionsUrl || r.googleMapsUrl || "").trim(), createdAt:Number(r.createdAt || Date.now()), updatedAt:Date.now() });
 const toTitleCase = (s = "") => String(s || "").trim().toLowerCase().replace(/\b\p{L}/gu, (m) => m.toUpperCase());
@@ -196,7 +198,12 @@ function renderWorldMarkers(){
     withCoords += 1;
     const markerEmoji = getWorldMarkerEmoji(item);
     const markerIcon = L.divIcon({ className:"notes-map-emoji-icon", html:`<span class="notes-map-emoji" aria-hidden="true">${markerEmoji}</span>`, iconSize:[24,24], iconAnchor:[12,12] });
-    console.debug("[world-map:marker]", { id:item.id, name:item.name, category:item.category || item.type || "", emoji:markerEmoji });
+    console.debug("[world-map:marker-emoji]", {
+      id: item.id,
+      name: item.name,
+      emoji: item.emoji,
+      type: item.type || item.category || ""
+    });
     const marker = L.marker([lat, lng], { icon:markerIcon });
     marker.bindPopup(buildPopup(item));
     state.worldClusterGroup.addLayer(marker);

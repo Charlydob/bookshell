@@ -63,5 +63,5 @@
 #view-world .notes-map-cluster{width:34px;height:34px;display:grid;place-items:center;border-radius:999px;background:linear-gradient(135deg,rgba(110,231,255,.92),rgba(125,255,179,.92));color:#041018;font-weight:900;box-shadow:0 0 24px rgba(110,231,255,.3);font-size:13px;line-height:1}
 #view-world .notes-map-cluster.is-large{width:38px;height:38px;font-size:14px;background:linear-gradient(135deg,rgba(255,155,106,.96),rgba(255,220,120,.96))}
 #view-world .notes-map-cluster-count{transform:translateY(.5px)}
-#view-world .notes-map-emoji{display:grid;place-items:center;width:24px;height:24px;font-size:18px;line-height:1;background:rgba(10,14,24,.62);border:1px solid rgba(255,255,255,.2);border-radius:999px;box-shadow:0 0 10px rgba(0,0,0,.35)}
+#view-world .notes-map-emoji{display:block;font-size:20px;line-height:1;background:transparent;border:none;box-shadow:none}
 #view-world .leaflet-popup-content-wrapper,#view-world .leaflet-popup-tip{background:linear-gradient(160deg,rgba(14,22,38,.96),rgba(8,14,28,.98))!important;color:rgba(255,255,255,.92)!important;border:1px solid rgba(255,255,255,.1)}

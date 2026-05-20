@@ -26,30 +26,23 @@ function cloneValue(value) {
 }
 
 function normalizeWriteType(value) {
-  return value === "update" ? "update" : "set";
+  return ["set", "update", "remove", "push"].includes(value) ? value : "set";
 }
 
-function buildDefaultDedupeKey(writeType, firebasePath) {
-  return `${writeType}:${firebasePath}`;
+function buildClientMutationId() {
+  return `cmid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildDefaultDedupeKey(writeType, firebasePath, payload = null) {
+  return `${writeType}:${firebasePath}:${JSON.stringify(payload ?? null)}`;
 }
 
 async function performDirectWrite(writeType, firebasePath, payload) {
   const safePath = sanitizePath(firebasePath);
-  if (!safePath) {
-    throw new Error("[offline-rtdb] missing firebase path");
-  }
-
-  if (writeType === "update") {
-    await update(ref(db, safePath), payload || {});
-    return;
-  }
-
-  if (payload == null) {
-    await remove(ref(db, safePath));
-    return;
-  }
-
-  await set(ref(db, safePath), payload);
+  if (!safePath) throw new Error("[offline-rtdb] missing firebase path");
+  if (writeType === "update") return update(ref(db, safePath), payload || {});
+  if (writeType === "remove" || payload == null) return remove(ref(db, safePath));
+  return set(ref(db, safePath), payload);
 }
 
 export function createOfflinePushId(firebasePath) {
@@ -58,51 +51,41 @@ export function createOfflinePushId(firebasePath) {
   return push(ref(db, safePath)).key || "";
 }
 
-export async function writeRtdbWithOfflineQueue({
-  uid = auth.currentUser?.uid || "",
-  module = "",
-  entityType = "",
-  actionType = "",
-  firebasePath = "",
-  payload = null,
-  writeType = "set",
-  dedupeKey = "",
-  metadata = null,
-} = {}) {
-  const safeUid = String(uid || "").trim();
-  const safePath = sanitizePath(firebasePath);
-  const safeWriteType = normalizeWriteType(writeType);
+export async function writeRtdbWithOfflineQueue(input = {}) {
+  const safeUid = String(input.uid || auth.currentUser?.uid || "").trim();
+  const safeWriteType = normalizeWriteType(input.writeType);
+  const basePath = sanitizePath(input.firebasePath);
+  const safePath = safeWriteType === "push" ? sanitizePath(`${basePath}/${input.pushId || createOfflinePushId(basePath)}`) : basePath;
+  const payload = cloneValue(input.payload ?? null);
+  const clientMutationId = String(input.clientMutationId || buildClientMutationId()).trim();
+  if (!safeUid || !safePath) return { ok: false, queued: false, error: new Error("[offline-rtdb] missing uid or path") };
 
-  if (!safeUid || !safePath) {
-    return { ok: false, queued: false, error: new Error("[offline-rtdb] missing uid or path") };
-  }
+  const dedupeKey = String(input.dedupeKey || buildDefaultDedupeKey(safeWriteType, safePath, payload)).trim();
+  const metadata = { ...(input.metadata && typeof input.metadata === "object" ? cloneValue(input.metadata) : {}), clientMutationId };
 
+  console.info("[firebase:write:start]", { writeType: safeWriteType, path: safePath, clientMutationId });
   if (canWriteDirectly()) {
     try {
       await performDirectWrite(safeWriteType, safePath, payload);
-      return { ok: true, queued: false, mode: "direct" };
+      console.info("[firebase:write:done]", { writeType: safeWriteType, path: safePath, clientMutationId });
+      return { ok: true, queued: false, mode: "direct", clientMutationId, path: safePath };
     } catch (error) {
-      console.warn("[offline-rtdb] direct write failed, enqueuing", safePath, error);
+      console.warn("[firebase:write:queued]", { path: safePath, error: String(error?.message || error || "") });
     }
   }
 
-  const { operation } = await enqueueOfflineOperation({
+  const { operation, replaced } = await enqueueOfflineOperation({
     uid: safeUid,
-    module,
-    entityType,
-    actionType,
+    module: input.module || "",
+    entityType: input.entityType || "",
+    actionType: input.actionType || "",
     firebasePath: safePath,
-    payload: cloneValue(payload),
-    writeType: safeWriteType,
-    dedupeKey: String(dedupeKey || buildDefaultDedupeKey(safeWriteType, safePath)).trim(),
-    metadata: metadata && typeof metadata === "object" ? cloneValue(metadata) : null,
+    payload,
+    writeType: safeWriteType === "remove" ? "set" : safeWriteType,
+    dedupeKey,
+    metadata,
   });
-
+  console.info("[offline:queue:add]", { opId: operation?.opId, replaced, path: safePath, clientMutationId });
   await notifyOfflineQueueChanged();
-  return {
-    ok: true,
-    queued: true,
-    mode: "queued",
-    operation,
-  };
+  return { ok: true, queued: true, mode: "queued", operation, clientMutationId, path: safePath };
 }

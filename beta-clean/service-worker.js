@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-05-15-notes-v1";
+const APP_VERSION = "2026-05-20-offline-v2";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -154,7 +154,7 @@ async function staleWhileRevalidate(request) {
   }
 
   const networkResponse = await networkPromise;
-  return networkResponse || Response.error();
+  return networkResponse || (await caches.match(APP_INDEX_URL)) || Response.error();
 }
 
 async function networkFirst(request) {
@@ -164,7 +164,11 @@ async function networkFirst(request) {
     return response;
   } catch (_) {
     const cached = await matchAnyCache(request);
-    if (cached) return cached;
+    if (cached) {
+      console.warn("[sw:fallback] cache-hit", new URL(request.url).pathname);
+      return cached;
+    }
+    console.warn("[sw:fallback] app-index", new URL(request.url).pathname);
     return caches.match(APP_INDEX_URL);
   }
 }
@@ -179,12 +183,14 @@ function isLocalCodeRequest(request, url) {
 }
 
 self.addEventListener("install", (event) => {
+  console.info("[sw:install]", APP_VERSION);
   event.waitUntil(
     precacheLocalAssets().then(() => self.skipWaiting()),
   );
 });
 
 self.addEventListener("activate", (event) => {
+  console.info("[sw:activate]", APP_VERSION);
   event.waitUntil(
     caches.keys().then(async (keys) => {
       await Promise.all(
@@ -205,14 +211,17 @@ self.addEventListener("fetch", (event) => {
   if (!isCacheableAsset(request, url)) return;
 
   if (request.mode === "navigate") {
+    console.debug("[sw:fetch] nav", url.pathname);
     event.respondWith(networkFirst(request));
     return;
   }
 
   if (isLocalCodeRequest(request, url)) {
-    event.respondWith(networkFirst(request));
+    console.debug("[sw:fetch] local", url.pathname);
+    event.respondWith(staleWhileRevalidate(request));
     return;
   }
 
+  console.debug("[sw:fetch] runtime", url.pathname);
   event.respondWith(staleWhileRevalidate(request));
 });

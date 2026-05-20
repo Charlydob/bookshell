@@ -138,13 +138,7 @@ export function navLayout(userKey = "") {
   return joinPath(userMeta(userKey), "ui", "navLayout");
 }
 
-export function achievementsRoot(userKey = "") {
-  return joinPath(userMeta(userKey), "achievements");
-}
 
-export function generalCenterRoot(userKey = "") {
-  return joinPath(userMeta(userKey), "general");
-}
 
 // Books module branches.
 export function booksRoot(userKey = "") {
@@ -333,29 +327,11 @@ export function reminderPreferences(userKey = "") {
   return joinPath(notes(userKey), "reminderPreferences");
 }
 
-export function videos(userKey = "") {
-  return joinPath(userRoot(userKey), "videos");
-}
 
-export function videosHub(userKey = "") {
-  return joinPath(userRoot(userKey), "videosHub");
-}
 
-export function videosHubVideos(userKey = "") {
-  return joinPath(videosHub(userKey), "videos");
-}
 
-export function improvements(userKey = "") {
-  return joinPath(userRoot(userKey), "improvements");
-}
 
-export function media(userKey = "") {
-  return joinPath(userRoot(userKey), "movies", "media");
-}
 
-export function gamesRoot(userKey = "") {
-  return joinPath(userRoot(userKey), "games");
-}
 
 export function publicRoot() {
   return joinPath(APP_DATA_VERSION, PUBLIC_SEGMENT);
@@ -401,8 +377,6 @@ export const firebasePaths = Object.freeze({
   userMetaDataRootKey,
   userMetaLastLoginAt,
   navLayout,
-  achievementsRoot,
-  generalCenterRoot,
   booksRoot,
   booksLibrary,
   booksReadingLog,
@@ -448,12 +422,6 @@ export const firebasePaths = Object.freeze({
   reminders,
   reminderCategories,
   reminderPreferences,
-  videos,
-  videosHub,
-  videosHubVideos,
-  improvements,
-  media,
-  gamesRoot,
   publicRoot,
   publicCatalog,
   publicCatalogFoodItems,

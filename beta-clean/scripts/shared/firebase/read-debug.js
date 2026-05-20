@@ -25,25 +25,18 @@ const MODULE_LABELS = Object.freeze({
   games: "Juegos",
   notes: "Notas",
   reminders: "Recordatorios",
-  improvements: "Mejoras",
   media: "Media",
-  "videos-hub": "Videos",
   general: "General",
-  achievements: "Logros",
   unknown: "Otros",
 })
 const VIEW_MODULE_MAP = Object.freeze({
   shell: "shell",
   "view-books": "books",
   "view-notes": "notes",
-  "view-videos-hub": "videos-hub",
   "view-recipes": "recipes",
   "view-habits": "habits",
-  "view-games": "games",
-  "view-media": "media",
   "view-world": "world",
   "view-finance": "finance",
-  "view-improvements": "improvements",
   "view-gym": "gym",
 })
 const PATH_MODULE_RULES = Object.freeze([
@@ -55,11 +48,6 @@ const PATH_MODULE_RULES = Object.freeze([
   { test: /\/books(?:\/|$)|\/readingLog(?:\/|$)/i, module: "books" },
   { test: /\/notes(?:\/|$)|\/reminders(?:\/|$)/i, module: "notes" },
   { test: /\/games(?:\/|$)/i, module: "games" },
-  { test: /\/videosHub(?:\/|$)|\/videos(?:\/|$)/i, module: "videos-hub" },
-  { test: /\/media(?:\/|$)|\/movies(?:\/|$)|\/series(?:\/|$)/i, module: "media" },
-  { test: /\/improvements(?:\/|$)/i, module: "improvements" },
-  { test: /\/meta\/achievements(?:\/|$)/i, module: "achievements" },
-  { test: /\/meta\/general(?:\/|$)|\/missions(?:\/|$)/i, module: "general" },
 ])
 
 function nowTs() {

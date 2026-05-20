@@ -97,6 +97,35 @@ const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
 ]);
 
 registerPublicCatalogMigrationDebugApi();
+const __originalConsole = { ...console };
+if (!window.appConsole) {
+  const entries = [];
+  let currentView = "";
+  window.appConsole = {
+    log(level, message, details = null) {
+      entries.push({ level, message: String(message || "").slice(0, 600), details, time: new Date().toISOString(), viewId: currentView });
+      if (entries.length > 100) entries.shift();
+    },
+    getEntries() { return entries.slice(); },
+    clear() { entries.length = 0; },
+    copyErrors() {
+      const text = entries.filter((e) => e.level === "error" || e.level === "warn").map((e) => `${e.level.toUpperCase()} ${new Date(e.time).toLocaleTimeString()} · ${e.viewId || "?"}\n${e.message}`).join("\n\n");
+      navigator.clipboard?.writeText?.(text);
+      return text;
+    },
+    setCurrentView(viewId) { currentView = String(viewId || ""); },
+    exportJson() { return JSON.stringify(entries, null, 2); },
+  };
+  ["log", "debug", "info", "warn", "error"].forEach((level) => {
+    console[level] = (...args) => {
+      __originalConsole[level]?.(...args);
+      const summary = args.map((arg) => typeof arg === "string" ? arg : (() => { try { return JSON.stringify(arg); } catch (_) { return String(arg); } })()).join(" ");
+      window.appConsole.log(level, summary, { args: args.slice(0, 3) });
+    };
+  });
+  window.addEventListener("error", (event) => window.appConsole.log("error", event?.error?.message || event.message || "Error global", { file: event.filename, line: event.lineno, col: event.colno, stack: event?.error?.stack || "" }));
+  window.addEventListener("unhandledrejection", (event) => window.appConsole.log("error", event?.reason?.message || String(event?.reason || "Promesa rechazada"), { stack: event?.reason?.stack || "" }));
+}
 
 function getGlobalQuickFabIconMarkup(actionKey) {
   if (actionKey === "books") {
@@ -607,7 +636,17 @@ async function renderSettingsModal() {
         <button type="button" class="app-settings-dangerBtn" data-settings-hard-reset>Hard reset</button>
       </div>
     </section>
+    <section class="app-settings-section">
+      <div class="app-settings-section__eyebrow">Consola</div>
+      <div class="app-settings-section__actions">
+        <button type="button" class="app-settings-actionBtn" data-console-copy-errors>Copiar errores</button>
+        <button type="button" class="app-settings-actionBtn" data-console-clear>Limpiar consola</button>
+      </div>
+      <pre id="app-console-list" class="app-console-list"></pre>
+    </section>
   `;
+  const list = document.getElementById("app-console-list");
+  if (list) list.textContent = (window.appConsole?.getEntries?.() || []).map((entry) => `${entry.level.toUpperCase()} ${new Date(entry.time).toLocaleTimeString()} · ${entry.viewId || "?"}\n${entry.message}`).join("\n\n");
 }
 
 function ensureSettingsModal() {
@@ -647,6 +686,15 @@ function ensureSettingsModal() {
     }
     if (event.target?.closest?.("[data-settings-hard-reset]")) {
       hardResetApp();
+      return;
+    }
+    if (event.target?.closest?.("[data-console-copy-errors]")) {
+      window.appConsole?.copyErrors?.();
+      return;
+    }
+    if (event.target?.closest?.("[data-console-clear]")) {
+      window.appConsole?.clear?.();
+      void renderSettingsModal();
     }
   });
   document.addEventListener("keydown", (event) => {
@@ -2693,6 +2741,7 @@ function startNavLongPress(event) {
 function syncCurrentViewState(viewId) {
   const nextViewId = String(viewId || "").trim();
   window.__bookshellCurrentViewId = nextViewId;
+  window.appConsole?.setCurrentView?.(nextViewId);
   document.documentElement.dataset.currentViewId = nextViewId;
 }
 

@@ -1,5 +1,5 @@
 import { auth, db, firebasePaths, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
-import { ref, get, onValue, update, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { ref, get, onValue, update, remove, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { createLeafletMap, DEFAULT_MAP_CENTER_SPAIN, destroyLeafletMap, ensureLeaflet, invalidateLeafletMap } from "../../shared/vendors/leaflet.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 import { getCountryEnglishName } from "./countries.js";
@@ -28,7 +28,7 @@ const LOCAL_CATEGORY_EMOJI_MAP = [
   { emoji:"🛍️", keywords:["tienda","shop","store"] }
 ];
 
-const state = { initialized:false, unsub:null, rootRef:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), worldLayers:null, worldClusterGroup:null, geography:[], places:[], stays:[], stayResults:[], selectedStayLocation:null, userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add", activeListenersByKey:new Map(), birthDate:"", staysSummaryCache:null };
+const state = { initialized:false, unsub:null, rootRef:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), worldLayers:null, worldClusterGroup:null, geography:[], places:[], stays:[], stayResults:[], selectedStayLocation:null, userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add", activeListenersByKey:new Map(), birthDate:"", staysSummaryCache:null, uiBound:false };
 
 function getLocalCategoryEmoji(categoryOrType = "") {
   const normalized = String(categoryOrType || "").trim().toLowerCase();
@@ -63,6 +63,38 @@ function closeAddModal(){ $id("world-add-toggle").checked = false; }
 function resetWorldAddModalState(){ state.selectedGeo = null; state.selectedPlace = null; state.selectedGeoIndex = -1; state.selectedPlaceIndex = -1; state.geoResults = []; state.placeResults = []; state.geoRating = 0; state.placeRating = 0; state.editing = null; ["world-geo-q","world-geo-note","world-place-q","world-place-note","world-form-name","world-form-emoji","world-form-category","world-form-country","world-form-region","world-form-city","world-place-form-name","world-place-form-emoji","world-place-form-category","world-place-form-country","world-place-form-region","world-place-form-city","world-place-form-product","world-place-form-price","world-place-edit-name","world-place-edit-emoji","world-place-edit-category","world-place-edit-country","world-place-edit-region","world-place-edit-city","world-place-edit-note","world-place-edit-product","world-place-edit-price"].forEach((k)=>{ const el=$id(k); if (el) el.value=""; }); $id("world-place-radius").value = "1000"; $id("world-geo-results").innerHTML = ""; $id("world-place-results").innerHTML = ""; renderRatings(); renderPlaceResults(); }
 function clearGeoPanelState(){ state.selectedGeo = null; state.selectedGeoIndex = -1; state.geoResults = []; state.geoRating = 0; ["world-geo-q","world-geo-note","world-form-name","world-form-emoji","world-form-category","world-form-country","world-form-region","world-form-city"].forEach((k)=>{ const el = $id(k); if (el) el.value = ""; }); const geoResults = $id("world-geo-results"); if (geoResults) geoResults.innerHTML = ""; }
 function clearLocalPanelState(){ state.selectedPlace = null; state.selectedPlaceIndex = -1; state.placeResults = []; state.placeRating = 0; ["world-place-q","world-place-note"].forEach((k)=>{ const el = $id(k); if (el) el.value = ""; }); $id("world-place-radius").value = "1000"; const placeResults = $id("world-place-results"); if (placeResults) placeResults.innerHTML = ""; renderPlaceResults(); }
+function closeWorldModals() {
+  const addToggle = $id("world-add-toggle");
+  const stayToggle = $id("world-stay-add-toggle");
+  if (addToggle) addToggle.checked = false;
+  if (stayToggle) stayToggle.checked = false;
+}
+function handleWorldAddClick(event) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  closeWorldModals();
+  const activeSubtab = state.activeWindow === "stays" ? "stays" : (state.activeWindow === "locals" ? "locals" : "map");
+  let openedModal = "none";
+  if (activeSubtab === "stays") {
+    const stayToggle = $id("world-stay-add-toggle");
+    if (stayToggle) {
+      stayToggle.checked = true;
+      openedModal = "world-stay-add-toggle";
+    }
+  } else {
+    const addToggle = $id("world-add-toggle");
+    if (addToggle) {
+      addToggle.checked = true;
+      setAddMode("geo");
+      resetWorldAddModalState();
+      state.showEditLocationSearch = true;
+      state.placeModalMode = "add";
+      setEditModeUI();
+      openedModal = "world-add-toggle";
+    }
+  }
+  console.debug("[world:add]", { activeSubtab, openedModal });
+}
 
 function normalizeCountryFromAddress(address = {}) {
   const rawCode = String(address?.country_code || "").trim().toUpperCase();
@@ -458,8 +490,10 @@ function pickStayPlace(i){ const row = state.stayResults[i]; if (!row) return; c
 async function maybeTrackAutoLocation(){ const pos = await getCurrentPositionSafe(); if (!pos) return; const reverse = await reverseGeocode(pos.lat, pos.lon); const normalizedCountry = normalizeCountryFromAddress(reverse.address); const date = toISODate(); const city = reverse.city || reverse.municipality || ""; const autoLocationKey = stayAutoKey(date, normalizedCountry.countryCode, city); if (state.stays.some((x) => x.autoLocationKey === autoLocationKey)) return; const data = { id:id(), source:"auto-location", date, city, country:normalizedCountry.country || "", countryCode:normalizedCountry.countryCode || "", flagEmoji:flag(normalizedCountry.countryCode || ""), daysTotal:1, autoLocationKey, createdAt:Date.now(), updatedAt:Date.now() }; console.debug("[world:stays:auto-location]", data); state.stays.push(data); await persistWorld(); renderStays(); }
 
 function bindUI(){
+  if (state.uiBound) return;
+  state.uiBound = true;
   const root=$id("view-world");
-  root.addEventListener("click", async (e)=>{ const t=e.target.closest("button,label"); if(!t) return; if(t.matches(".world-tab")) return setWindow(t.dataset.window); if(t.id==="world-open-add") { const activeTab = state.activeWindow; let modalOpened = "world-add-toggle"; if (activeTab === "stays") { $id("world-stay-add-toggle").checked = true; modalOpened = "world-stay-add-toggle"; } else { $id("world-add-toggle").checked=true; setAddMode("geo"); resetWorldAddModalState(); state.showEditLocationSearch = true; state.placeModalMode = "add"; setEditModeUI(); } console.debug("[world:add-button]", { activeTab, modalOpened }); }
+  root.addEventListener("click", async (e)=>{ const t=e.target.closest("button,label"); if(!t) return; if(t.matches(".world-tab")) return setWindow(t.dataset.window); if(t.id==="world-open-add") return handleWorldAddClick(e);
     if(t.id==="world-open-add-stay") { $id("world-stay-add-toggle").checked = true; }
     if(t.id==="world-open-add-place") { openAddLocalModal(); }
     if(t.id==="world-place-use-current-location") { await useCurrentLocationForNewPlace(); }

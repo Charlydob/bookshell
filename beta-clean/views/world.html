@@ -10,6 +10,7 @@
       <div class="world-tabs">
         <button type="button" class="world-tab active" data-window="map">Mapa</button>
         <button type="button" class="world-tab" data-window="locals">Locales</button>
+        <button type="button" class="world-tab" data-window="stays" data-world-tab="stays">Estancias</button>
       </div>
       <button type="button" class="world-add-btn" id="world-open-add">+ Añadir</button>
     </div>
@@ -32,6 +33,10 @@
       </select>
     </div>
     <div class="world-locals-list" id="world-locals-list"></div>
+  </section>
+
+  <section class="world-window" data-window-panel="stays">
+    <div class="world-locals-list" data-world-stays-summary></div>
   </section>
 </div>
 
@@ -76,5 +81,24 @@
         <button type="button" class="world-save" id="world-place-edit-save">Guardar cambios</button>
       </div>
     </div>
+  </div>
+</div>
+
+
+<div class="world-modal" data-world-stay-modal hidden>
+  <div class="world-backdrop"></div>
+  <div class="world-sheet">
+    <div class="world-sheet-header"><h3>Estancia</h3><button type="button" data-world-stay-close>Cerrar</button></div>
+    <div class="world-edit-grid">
+      <input data-world-stay-place placeholder="Buscar lugar">
+      <input data-world-stay-city placeholder="Ciudad">
+      <input data-world-stay-region placeholder="Región/provincia">
+      <input data-world-stay-country placeholder="País">
+      <input data-world-stay-flag placeholder="Bandera (código país ej: PE)">
+      <input type="date" data-world-stay-start placeholder="Fecha inicio">
+      <input type="date" data-world-stay-end placeholder="Fecha fin">
+      <input inputmode="numeric" data-world-stay-total-days placeholder="Días totales">
+    </div>
+    <button type="button" class="world-save" data-world-stay-save>Guardar estancia</button>
   </div>
 </div>

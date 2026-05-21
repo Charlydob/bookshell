@@ -137,3 +137,22 @@
 @media (min-width:680px){#view-world .world-edit-grid{grid-template-columns:1fr 1fr}#view-world .world-stay-manual-days{grid-column:1/-1}}
 #view-world .world-stay-manual-days small{font-size:11px;opacity:.8}
 #view-world .world-stay-search-item{border-radius:12px}
+
+#view-world .world-map-stats details,#view-world .world-locals-stats details{margin-top:8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:8px}
+#view-world .world-compact-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px}
+#view-world .world-stat-chip{padding:7px 9px;border-radius:10px;background:rgba(255,255,255,.07);font-size:12px}
+#view-world .world-bars{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+#view-world .world-bar-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+#view-world .world-bar-track{height:9px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}
+#view-world .world-bar-fill{height:100%;background:linear-gradient(90deg,#63d7ff,#7effb1)}
+#view-world .world-bar-meta{font-size:11px;opacity:.9;white-space:nowrap}
+#view-world .world-edit-grid-geo{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+#view-world .world-inline-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+#view-world .world-inline-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+#view-world .world-stays-entry{display:flex;flex-direction:column;gap:2px;padding:6px 0!important;border-radius:0!important;background:transparent!important}
+#view-world .world-stays-entry-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+#view-world .world-stays-entry-actions{display:flex;gap:4px}
+#view-world .world-stays-entry-actions button{border:0;padding:2px 4px!important;border-radius:8px;background:transparent!important;color:#eef0ff;font-size:14px}
+#view-world .world-stay-close-x{border:0;background:transparent!important;border-radius:0;width:auto!important;height:auto!important;font-size:18px;padding:2px 4px}
+#view-world .world-stay-modal__sheet{max-width:calc(100vw - 24px)!important;max-height:84vh!important;overflow:auto!important}
+#view-world .world-stay-field span{display:none}

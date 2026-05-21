@@ -22,6 +22,7 @@
       <div class="world-bottom-head">
         <h3>Geografía visitada</h3>
       </div>
+      <div id="world-map-stats" class="world-map-stats"></div>
       <div class="world-country-list" id="world-country-list"></div>
     </div>
   </section>
@@ -55,7 +56,7 @@
         <input id="world-geo-q" placeholder="Buscar país, ciudad o pueblo">
         <div id="world-geo-results" class="world-search-list"></div>
       </div>
-      <div class="world-edit-grid"><input id="world-form-name" placeholder="Nombre"><input id="world-form-emoji" placeholder="Emoji (ej: 📍)"><input id="world-form-category" placeholder="Categoría"><input id="world-form-country" placeholder="País"><input id="world-form-region" placeholder="Región/Comunidad"><input id="world-form-city" placeholder="Ciudad/Lugar"></div>
+      <div class="world-edit-grid world-edit-grid-geo"><input id="world-form-country" placeholder="País"><input id="world-form-region" placeholder="Región/Comunidad"><input id="world-form-city" placeholder="Ciudad/Lugar"></div>
       <div id="world-geo-rating-stars" class="world-rating" data-action="rate-geo" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
       <input id="world-geo-note" placeholder="Nota opcional">
       <button type="button" class="world-optional-location-btn" id="world-geo-enable-search" hidden>Cambiar ubicación</button>
@@ -65,7 +66,7 @@
       <div id="world-place-add-panel">
         <div class="world-search-block" id="world-place-search-block">
           <div id="world-place-map-wrap"><div id="world-mini-map"></div></div>
-          <div class="world-place-search-row"><input id="world-place-q" placeholder="Burger King, farmacia o dirección"><select id="world-place-radius"><option value="none">Sin rango</option><option value="500">500m</option><option value="1000" selected>1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
+          <div class="world-place-search-row"><input id="world-place-q" placeholder="Burger King, farmacia o dirección"><select id="world-place-radius"><option value="none" selected>Sin rango</option><option value="500">500m</option><option value="1000">1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
           <button type="button" class="world-optional-location-btn" id="world-place-use-current-location">Usar ubicación actual</button>
           <div id="world-place-results" class="world-search-list"></div>
         </div>

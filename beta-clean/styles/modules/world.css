@@ -156,3 +156,15 @@
 #view-world .world-stay-close-x{border:0;background:transparent!important;border-radius:0;width:auto!important;height:auto!important;font-size:18px;padding:2px 4px}
 #view-world .world-stay-modal__sheet{max-width:calc(100vw - 24px)!important;max-height:84vh!important;overflow:auto!important}
 #view-world .world-stay-field span{display:none}
+
+
+#view-world #world-place-edit-grid{display:flex;flex-direction:column;gap:8px}
+#view-world #world-place-edit-grid .world-inline-3,#view-world #world-place-edit-grid .world-inline-2{min-width:0}
+#view-world .world-stay-modal__sheet{background:rgba(20,24,38,.94);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.14)}
+#view-world .world-stay-modal__sheet input{width:100%;min-width:0}
+#view-world .world-stay-modal__sheet .world-inline-2{gap:8px}
+#view-world .world-stay-modal__sheet [data-world-stay-save]{width:100%}
+#view-world .world-stays-city-item{padding-left:0;list-style:none}
+@media (max-width:679px){
+  #view-world .world-inline-2,#view-world .world-inline-3{grid-template-columns:1fr}
+}

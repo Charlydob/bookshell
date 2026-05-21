@@ -10,6 +10,12 @@
 #view-world .world-tab.active{background:linear-gradient(120deg,#756eff,#4ab8ff)}
 #view-world .world-window{display:none;flex-direction:column;gap:10px}
 #view-world .world-window.active{display:flex}
+#view-world .world-map-category-filter{display:flex;flex-direction:column;gap:6px}
+#view-world .world-map-filter-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#view-world .world-map-filter-select{flex:1;min-width:180px;border-radius:12px;border:1px solid rgba(255,255,255,.16);background:rgba(17,20,32,.7);color:#eef0ff;padding:8px}
+#view-world .world-map-filter-chips{display:flex;flex-wrap:wrap;gap:6px}
+#view-world .world-map-filter-chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 10px;background:rgba(255,255,255,.1);font-size:12px}
+#view-world .world-map-filter-chip button{border:0;background:transparent;color:#eef0ff;padding:0 2px;font-size:14px;line-height:1}
 #view-world #world-map{height:47vh;min-height:320px;border-radius:20px;overflow:hidden}
 #view-world .world-bottom-sheet{background:rgba(255,255,255,.06);border-radius:18px;padding:10px;backdrop-filter:blur(12px)}
 #view-world .world-bottom-head{display:flex;justify-content:space-between;align-items:center}

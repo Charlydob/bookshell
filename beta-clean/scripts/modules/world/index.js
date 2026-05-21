@@ -22,7 +22,7 @@ const LOCAL_CATEGORY_EMOJI_MAP = [
   { emoji:"🛍️", keywords:["tienda","shop","store"] }
 ];
 
-const state = { initialized:false, unsubGeography:null, unsubPlaces:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), worldLayers:null, worldClusterGroup:null, geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", activeSubtab:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add" };
+const state = { initialized:false, unsubGeography:null, unsubPlaces:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), worldLayers:null, worldClusterGroup:null, geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", activeSubtab:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add", selectedGeoCandidate:null };
 
 function getLocalCategoryEmoji(categoryOrType = "") {
   const normalized = String(categoryOrType || "").trim().toLowerCase();
@@ -51,8 +51,8 @@ const flag = (cc = "") => { const s = String(cc || "").trim().toUpperCase(); ret
 
 function showToast(text = "Guardado") { const el = $id("world-feedback"); if (!el) return; el.textContent = text; el.classList.add("show"); clearTimeout(state.toastTimer); state.toastTimer = setTimeout(() => el.classList.remove("show"), 1700); }
 function closeAddModal(){ $id("world-add-toggle").checked = false; }
-function resetWorldAddModalState(){ state.selectedGeo = null; state.selectedPlace = null; state.selectedGeoIndex = -1; state.selectedPlaceIndex = -1; state.geoResults = []; state.placeResults = []; state.geoRating = 0; state.placeRating = 0; state.editing = null; ["world-geo-q","world-geo-note","world-place-q","world-place-note","world-form-country","world-form-region","world-form-city","world-place-form-name","world-place-form-emoji","world-place-form-category","world-place-form-country","world-place-form-region","world-place-form-city","world-place-form-product","world-place-form-price","world-place-edit-name","world-place-edit-emoji","world-place-edit-category","world-place-edit-country","world-place-edit-region","world-place-edit-city","world-place-edit-note","world-place-edit-product","world-place-edit-price"].forEach((k)=>{ const el=$id(k); if (el) el.value=""; }); $id("world-place-radius").value = "none"; $id("world-geo-results").innerHTML = ""; $id("world-place-results").innerHTML = ""; renderRatings(); renderPlaceResults(); }
-function clearGeoPanelState(){ state.selectedGeo = null; state.selectedGeoIndex = -1; state.geoResults = []; state.geoRating = 0; ["world-geo-q","world-geo-note","world-form-country","world-form-region","world-form-city"].forEach((k)=>{ const el = $id(k); if (el) el.value = ""; }); const geoResults = $id("world-geo-results"); if (geoResults) geoResults.innerHTML = ""; }
+function resetWorldAddModalState(){ state.selectedGeo = null; state.selectedGeoCandidate = null; state.selectedPlace = null; state.selectedGeoIndex = -1; state.selectedPlaceIndex = -1; state.geoResults = []; state.placeResults = []; state.geoRating = 0; state.placeRating = 0; state.editing = null; ["world-geo-q","world-geo-note","world-place-q","world-place-note","world-form-country","world-form-region","world-form-city","world-place-form-name","world-place-form-emoji","world-place-form-category","world-place-form-country","world-place-form-region","world-place-form-city","world-place-form-product","world-place-form-price","world-place-edit-name","world-place-edit-emoji","world-place-edit-category","world-place-edit-country","world-place-edit-region","world-place-edit-city","world-place-edit-note","world-place-edit-product","world-place-edit-price"].forEach((k)=>{ const el=$id(k); if (el) el.value=""; }); $id("world-place-radius").value = "none"; $id("world-geo-results").innerHTML = ""; $id("world-place-results").innerHTML = ""; renderRatings(); renderPlaceResults(); }
+function clearGeoPanelState(){ state.selectedGeo = null; state.selectedGeoCandidate = null; state.selectedGeoIndex = -1; state.geoResults = []; state.geoRating = 0; ["world-geo-q","world-geo-note","world-form-country","world-form-region","world-form-city"].forEach((k)=>{ const el = $id(k); if (el) el.value = ""; }); const geoResults = $id("world-geo-results"); if (geoResults) geoResults.innerHTML = ""; }
 function clearLocalPanelState(){ state.selectedPlace = null; state.selectedPlaceIndex = -1; state.placeResults = []; state.placeRating = 0; ["world-place-q","world-place-note"].forEach((k)=>{ const el = $id(k); if (el) el.value = ""; }); $id("world-place-radius").value = "none"; const placeResults = $id("world-place-results"); if (placeResults) placeResults.innerHTML = ""; renderPlaceResults(); }
 
 function normalizeCountryFromAddress(address = {}) {
@@ -225,6 +225,7 @@ function renderWorldMarkers(){
     state.worldClusterGroup.addLayer(marker);
     state.markers.set(item.id, marker);
     state.mapMarkersIndex.set(item.id, marker);
+    console.log("[world:marker:add]", { id:item.id, kind:item.kind, lat, lng, emoji:markerEmoji });
     addedMarkers += 1;
   });
 
@@ -276,6 +277,18 @@ function worldGoogleMapsBtn(r = {}, label = "🧭 Cómo llegar", className = "wo
   if (url) console.log("[world:directions:rendered]", r.id || "", hasCoords, url);
   return url ? `<a class="${className}" href="${url}" target="_blank" rel="noopener">${label}</a>` : "";
 }
+
+function getMostFrequentGroupEmoji(rows = []){
+  const counts = new Map();
+  rows.forEach((row) => {
+    const emoji = String(row?.emoji || "").trim();
+    if (!emoji) return;
+    counts.set(emoji, (counts.get(emoji) || 0) + 1);
+  });
+  if (!counts.size) return "📍";
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0][0] || "📍";
+}
+
 function getLocalGroupValue(row = {}){
   const candidates = [row.type, row.category, row.chain, row.placeType, row.name];
   const raw = candidates.find((value) => String(value || "").trim()) || "Sin categoría";
@@ -297,7 +310,7 @@ function renderLocals(){ const rows=state.places; const mode = $id("world-locals
   const html = Array.from(groups.values()).sort((a, b) => b.rows.length - a.rows.length).map((group) => {
     const ratedRows = group.rows.filter((r) => Number.isFinite(Number(r.rating)));
     const avg = ratedRows.length ? ratedRows.reduce((sum, r) => sum + Number(r.rating || 0), 0) / ratedRows.length : 0;
-    return `<details><summary><strong>${getLocalCategoryEmoji(group.label)} ${group.label}</strong> · ${group.rows.length} visitas · media ${avg.toFixed(1)}/10</summary>${group.rows.map((r)=>`<div class="world-rich-item"><div class="world-local-card"><div class="world-local-line world-local-line-main"><span>${r.emoji || getLocalCategoryEmoji(group.label) || "🏪"}</span><span class="world-local-name">${toTitleCase(r.name || r.address || "Local")}</span><span class="world-local-dot">·</span><span>${r.city || r.region || "Sin ciudad"}</span></div><div class="world-local-line"><span>${stars10(r.rating || 0)} ${(r.rating ?? 0).toFixed(1)}/10</span></div></div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("")}</details>`;
+    return `<details><summary><strong>${getMostFrequentGroupEmoji(group.rows)} ${group.label}</strong> · ${group.rows.length} visitas · media ${avg.toFixed(1)}/10</summary>${group.rows.map((r)=>`<div class="world-rich-item"><div class="world-local-card"><div class="world-local-line world-local-line-main"><span>${r.emoji || getLocalCategoryEmoji(group.label) || "🏪"}</span><span class="world-local-name">${toTitleCase(r.name || r.address || "Local")}</span><span class="world-local-dot">·</span><span>${r.city || r.region || "Sin ciudad"}</span></div><div class="world-local-line"><span>${stars10(r.rating || 0)} ${(r.rating ?? 0).toFixed(1)}/10</span></div></div><div class="world-item-actions"><button data-world-center="${r.id}">📍</button><button data-world-edit="places:${r.id}">✏️</button><button data-world-rate="places:${r.id}">⭐</button><button data-world-delete="places:${r.id}">🗑</button></div></div>`).join("")}</details>`;
   }).join("");
   $id("world-locals-list").innerHTML = html || "<div>Sin locales.</div>"; }
 function renderStats(){ $id("world-countries").textContent = String(new Set([...state.geography, ...state.places].map((x)=>x.countryCode).filter(Boolean)).size); $id("world-geo-count").textContent = String(state.geography.length); $id("world-rated-locals").textContent = String(state.places.length); }
@@ -448,7 +461,37 @@ async function reverseGeocode(lat, lon){
   return normalized;
 }
 
-function pickGeo(i){ const row = state.geoResults[i]; if(!row) return; const normalizedCountry = normalizeCountryFromAddress(row.address); if (!normalizedCountry.countryCode) return showToast("País inválido, selecciona otro resultado"); state.selectedGeoIndex = i; state.selectedGeo = normalize({ id:`geo_${Date.now()}_${Math.random().toString(36).slice(2,8)}`, name:row.name, label:row.label, city:row.city || row.municipality, region:row.region, category:row.address?.type || "", country:normalizedCountry.country, countryCode:normalizedCountry.countryCode, postalCode:row.postalCode, lat:row.lat, lon:row.lon, note:$id("world-geo-note").value, rating:state.geoRating }, "geography"); console.log("[world:geo:select]", state.selectedGeo); $id("world-form-name").value = state.selectedGeo.name || ""; $id("world-form-country").value = state.selectedGeo.country || ""; $id("world-form-region").value = state.selectedGeo.region || ""; $id("world-form-city").value = state.selectedGeo.city || ""; console.log("[world:geo:autofill]", { country:state.selectedGeo.country, region:state.selectedGeo.region, city:state.selectedGeo.city, category:state.selectedGeo.category }); if (state.map && Number.isFinite(state.selectedGeo.lat) && Number.isFinite(state.selectedGeo.lon)) state.map.setView([state.selectedGeo.lat, state.selectedGeo.lon], 9); renderGeoResults(); }
+function pickGeo(i){
+  const row = state.geoResults[i];
+  if (!row) return;
+  const normalizedCountry = normalizeCountryFromAddress(row.address);
+  if (!normalizedCountry.countryCode) return showToast("País inválido, selecciona otro resultado");
+  state.selectedGeoIndex = i;
+  state.selectedGeoCandidate = row;
+  state.selectedGeo = normalize({
+    id:`geo_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+    name:row.name,
+    label:row.label,
+    city:row.city || row.municipality,
+    region:row.region,
+    category:row.address?.type || "",
+    country:normalizedCountry.country,
+    countryCode:normalizedCountry.countryCode,
+    postalCode:row.postalCode,
+    lat:Number(row.lat),
+    lon:Number(row.lon),
+    lng:Number(row.lon),
+    note:$id("world-geo-note").value,
+    rating:state.geoRating
+  }, "geography");
+  console.log("[world:geo:pick]", { index:i, label:row.label, lat:state.selectedGeo.lat, lon:state.selectedGeo.lon, country:state.selectedGeo.country, region:state.selectedGeo.region, city:state.selectedGeo.city });
+  $id("world-form-name").value = state.selectedGeo.name || "";
+  $id("world-form-country").value = state.selectedGeo.country || "";
+  $id("world-form-region").value = state.selectedGeo.region || "";
+  $id("world-form-city").value = state.selectedGeo.city || "";
+  if (state.map && Number.isFinite(state.selectedGeo.lat) && Number.isFinite(state.selectedGeo.lon)) state.map.setView([state.selectedGeo.lat, state.selectedGeo.lon], 9);
+  renderGeoResults();
+}
 function pickPlace(i, opts = {}){
   const row = state.placeResults[i]; if(!row) return;
   const mode = opts.mode || (isAddressQuery($id("world-place-q").value) ? "address" : "poi");
@@ -516,7 +559,7 @@ function bindUI(){
   $id("world-add-toggle").addEventListener("change", (e)=>{ if (e.target.checked && state.addMode === "place") invalidateMiniMapSafe(); });
   $id("world-locals-group").addEventListener("change", ()=> renderLocals());
   root.addEventListener("change", (e)=>{ if(e.target?.id==="world-map-stats-filter"){ state.mapStatsCountry = e.target.value; renderGeoList(); }});
-  $id("world-geo-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedGeo) return; state.selectedGeo.note = $id("world-geo-note").value.trim(); state.selectedGeo.rating = state.geoRating; console.debug("[world:save:geo:start]", state.selectedGeo); state.geography.push(state.selectedGeo); await persistWorld(); console.debug("[world:save:geo:stored]", state.selectedGeo); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
+  $id("world-geo-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedGeo) return; const candidate = state.selectedGeoCandidate || {}; state.selectedGeo.note = $id("world-geo-note").value.trim(); state.selectedGeo.rating = state.geoRating; state.selectedGeo.country = $id("world-form-country").value.trim() || state.selectedGeo.country; state.selectedGeo.region = $id("world-form-region").value.trim() || state.selectedGeo.region; state.selectedGeo.city = $id("world-form-city").value.trim() || state.selectedGeo.city; state.selectedGeo.lat = Number(candidate.lat ?? state.selectedGeo.lat); state.selectedGeo.lon = Number(candidate.lon ?? candidate.lng ?? state.selectedGeo.lon); state.selectedGeo.lng = Number(state.selectedGeo.lon); state.selectedGeo.googleMapsDirectionsUrl = createGoogleMapsUrl(state.selectedGeo.lat, state.selectedGeo.lon); state.selectedGeo.googleMapsUrl = state.selectedGeo.googleMapsDirectionsUrl; console.log("[world:geo:save]", { id:state.selectedGeo.id, lat:state.selectedGeo.lat, lon:state.selectedGeo.lon, country:state.selectedGeo.country, region:state.selectedGeo.region, city:state.selectedGeo.city }); state.geography.push(state.selectedGeo); await persistWorld(); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
   $id("world-place-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedPlace) return; state.selectedPlace.rating = state.placeRating; state.selectedPlace.note = $id("world-place-note").value.trim(); state.selectedPlace.name = $id("world-place-form-name").value.trim() || state.selectedPlace.name; state.selectedPlace.emoji = $id("world-place-form-emoji").value.trim() || state.selectedPlace.emoji; state.selectedPlace.category = $id("world-place-form-category").value.trim(); state.selectedPlace.country = $id("world-place-form-country").value.trim() || state.selectedPlace.country; state.selectedPlace.region = $id("world-place-form-region").value.trim() || state.selectedPlace.region; state.selectedPlace.city = $id("world-place-form-city").value.trim() || state.selectedPlace.city; state.selectedPlace.productName = $id("world-place-form-product").value.trim(); state.selectedPlace.price = parsePrice($id("world-place-form-price").value); state.selectedPlace.currency = "EUR"; state.selectedPlace.lng = Number(state.selectedPlace.lon); state.selectedPlace.googleMapsDirectionsUrl = createGoogleMapsUrl(state.selectedPlace.lat, state.selectedPlace.lon); state.selectedPlace.googleMapsUrl = state.selectedPlace.googleMapsDirectionsUrl; if ((!String(state.selectedPlace.name || "").trim() || String(state.selectedPlace.name || "").trim() === "Nuevo local") && String(state.selectedPlace.address || "").trim()) state.selectedPlace.name = state.selectedPlace.address; if (!String(state.selectedPlace.label || "").trim() && String(state.selectedPlace.address || "").trim()) state.selectedPlace.label = state.selectedPlace.address; console.debug("[world:save:local:start]", state.selectedPlace); state.places.push(state.selectedPlace); await persistWorld(); console.debug("[world:save:local:stored]", state.selectedPlace); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
   $id("world-place-edit-save").addEventListener("click", async ()=>{ if (!state.editing || state.editing.kind !== "places") return; await saveEdit(); });
   ["world-rating-stars","world-geo-rating-stars","world-place-edit-rating-stars"].forEach((rid)=>{ const rating = $id(rid); rating.addEventListener("pointerdown",(e)=>{ const move=(ev)=>{ const value=ratingFromPointer(rating, ev.clientX); if (rid === "world-geo-rating-stars") state.geoRating=value; else state.placeRating=value; renderRatings(); }; move(e); window.addEventListener("pointermove", move); const up=()=>{ window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); }; window.addEventListener("pointerup", up); }); });

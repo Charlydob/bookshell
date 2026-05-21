@@ -22,7 +22,7 @@ const LOCAL_CATEGORY_EMOJI_MAP = [
   { emoji:"🛍️", keywords:["tienda","shop","store"] }
 ];
 
-const state = { initialized:false, unsubGeography:null, unsubPlaces:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), worldLayers:null, worldClusterGroup:null, geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", activeSubtab:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add", selectedGeoCandidate:null };
+const state = { initialized:false, unsubGeography:null, unsubPlaces:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), worldLayers:null, worldClusterGroup:null, geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", activeSubtab:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add", selectedGeoCandidate:null, selectedWorldMapCategoryFilters:new Set() };
 
 function getLocalCategoryEmoji(categoryOrType = "") {
   const normalized = String(categoryOrType || "").trim().toLowerCase();
@@ -161,13 +161,63 @@ function getItemLatLng(item = {}){
   const lngRaw = item.lng ?? item.lon ?? item.longitude ?? item.coords?.lng ?? item.location?.lng ?? item.geo?.lng;
   return { lat:Number(latRaw), lng:Number(lngRaw) };
 }
+function normalizeCategoryName(value = ""){ return String(value || "").trim().toLowerCase(); }
+function getItemCategoryKey(item = {}){
+  return String(item.categoryId || item.chainId || item.groupId || "").trim() || normalizeCategoryName(item.categoryName || item.category || item.type || item.name || "");
+}
+function getWorldLocalCategories(){
+  const categories = new Map();
+  state.places.forEach((item) => {
+    const key = getItemCategoryKey(item);
+    if (!key) return;
+    if (!categories.has(key)) categories.set(key, { id:key, name:toTitleCase(item.categoryName || item.category || item.type || item.name || "Sin categoría"), emoji:String(item.emoji || getLocalCategoryEmoji(item.category || item.type || "") || "📍").trim() || "📍" });
+  });
+  const rows = Array.from(categories.values()).sort((a,b)=>a.name.localeCompare(b.name, "es"));
+  console.log("[world:map-filter] categories", rows);
+  return rows;
+}
+function getFilteredWorldMapItems(items = []){
+  if (!state.selectedWorldMapCategoryFilters.size) return items;
+  const selected = state.selectedWorldMapCategoryFilters;
+  const filtered = items.filter((item) => {
+    const key = getItemCategoryKey(item);
+    return key ? selected.has(key) : false;
+  });
+  console.log("[world:map-filter] selected", Array.from(selected));
+  console.log("[world:map-filter] visibleItems", filtered.map((x) => x.id));
+  return filtered;
+}
+function toggleWorldMapCategoryFilter(categoryId = ""){
+  const key = String(categoryId || "").trim();
+  if (!key) return;
+  if (state.selectedWorldMapCategoryFilters.has(key)) state.selectedWorldMapCategoryFilters.delete(key);
+  else state.selectedWorldMapCategoryFilters.add(key);
+  renderWorldMapCategoryFilter();
+  renderWorldMarkers();
+}
+function clearWorldMapCategoryFilter(categoryId = ""){
+  state.selectedWorldMapCategoryFilters.delete(String(categoryId || "").trim());
+  renderWorldMapCategoryFilter();
+  renderWorldMarkers();
+}
+function renderWorldMapCategoryFilter(){
+  const mount = $id("world-map-category-filter");
+  if (!mount) return;
+  const categories = getWorldLocalCategories();
+  const selected = state.selectedWorldMapCategoryFilters;
+  const validKeys = new Set(categories.map((c) => c.id));
+  Array.from(selected).forEach((idv) => { if (!validKeys.has(idv)) selected.delete(idv); });
+  const options = categories.map((c)=>`<option value="${c.id}">${c.emoji} ${c.name}</option>`).join("");
+  const selectedChips = categories.filter((c)=>selected.has(c.id)).map((c)=>`<span class="world-map-filter-chip">${c.emoji} ${c.name}<button type="button" data-world-map-filter-clear="${c.id}" aria-label="Quitar filtro">×</button></span>`).join("");
+  mount.innerHTML = `<div class="world-map-filter-row"><select id="world-map-category-filter-select" class="world-map-filter-select"><option value="">Filtrar locales</option>${options}</select></div>${selectedChips ? `<div class="world-map-filter-chips">${selectedChips}</div>` : ""}`;
+}
 
 function renderWorldMarkers(){
   if(!window.L || !state.map) return;
   const L = window.L;
   destroyWorldMapLayers();
 
-  const allRows = [...state.geography, ...state.places].filter(Boolean);
+  const allRows = getFilteredWorldMapItems([...state.geography, ...state.places].filter(Boolean));
   const totalItems = allRows.length;
   let withCoords = 0;
   let skipped = 0;
@@ -324,7 +374,7 @@ function renderLocals(){ const rows=state.places; const mode = $id("world-locals
   }).join("");
   $id("world-locals-list").innerHTML = html || "<div>Sin locales.</div>"; }
 function renderStats(){ $id("world-countries").textContent = String(new Set([...state.geography, ...state.places].map((x)=>x.countryCode).filter(Boolean)).size); $id("world-geo-count").textContent = String(state.geography.length); $id("world-rated-locals").textContent = String(state.places.length); }
-function renderAll(){ renderStats(); renderMap(); renderGeoList(); renderLocals(); renderWorldStays(); }
+function renderAll(){ renderStats(); renderWorldMapCategoryFilter(); renderMap(); renderGeoList(); renderLocals(); renderWorldStays(); }
 
 async function persistWorld(){ const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; await set(ref(db, firebasePaths.worldGeography(uid)), Object.fromEntries(state.geography.map((r)=>[r.id,r]))); await set(ref(db, firebasePaths.worldPlaces(uid)), Object.fromEntries(state.places.map((r)=>[r.id,r]))); }
 
@@ -562,13 +612,14 @@ function bindUI(){
     if(t.dataset.worldEdit){ const [kind,idv]=t.dataset.worldEdit.split(":"); openEdit(kind,idv); }
     if(t.dataset.worldRate){ const [kind,idv]=t.dataset.worldRate.split(":"); const rows = kind === "geography" ? state.geography : state.places; const rec = rows.find((x)=>x.id===idv); if (!rec) return; rec.rating = Math.min(10, (rec.rating || 0) + 1); await persistWorld(); renderAll(); }
     if (t.id === "world-geo-enable-search" || t.id === "world-place-enable-search") { state.showEditLocationSearch = true; setEditModeUI(); }
+    if (t.dataset.worldMapFilterClear) clearWorldMapCategoryFilter(t.dataset.worldMapFilterClear);
   });
   $id("world-geo-q").addEventListener("input", (e)=> e.target.value.trim().length>1 ? searchGeo(e.target.value.trim()) : ($id("world-geo-results").innerHTML = ""));
   $id("world-place-q").addEventListener("input", (e)=> e.target.value.trim().length>1 ? searchPlace(e.target.value.trim()) : ($id("world-place-results").innerHTML = ""));
   $id("world-place-radius").addEventListener("change", ()=> $id("world-place-q").dispatchEvent(new Event("input")));
   $id("world-add-toggle").addEventListener("change", (e)=>{ if (e.target.checked && state.addMode === "place") invalidateMiniMapSafe(); });
   $id("world-locals-group").addEventListener("change", ()=> renderLocals());
-  root.addEventListener("change", (e)=>{ if(e.target?.id==="world-map-stats-filter"){ state.mapStatsCountry = e.target.value; renderGeoList(); }});
+  root.addEventListener("change", (e)=>{ if(e.target?.id==="world-map-stats-filter"){ state.mapStatsCountry = e.target.value; renderGeoList(); } if (e.target?.id === "world-map-category-filter-select" && e.target.value) { toggleWorldMapCategoryFilter(e.target.value); e.target.value = ""; }});
   $id("world-geo-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedGeo) return; const candidate = state.selectedGeoCandidate || {}; state.selectedGeo.note = $id("world-geo-note").value.trim(); state.selectedGeo.rating = state.geoRating; state.selectedGeo.country = $id("world-form-country").value.trim() || state.selectedGeo.country; state.selectedGeo.region = $id("world-form-region").value.trim() || state.selectedGeo.region; state.selectedGeo.city = $id("world-form-city").value.trim() || state.selectedGeo.city; state.selectedGeo.lat = Number(candidate.lat ?? state.selectedGeo.lat); state.selectedGeo.lon = Number(candidate.lon ?? candidate.lng ?? state.selectedGeo.lon); state.selectedGeo.lng = Number(state.selectedGeo.lon); state.selectedGeo.googleMapsDirectionsUrl = createGoogleMapsUrl(state.selectedGeo.lat, state.selectedGeo.lon); state.selectedGeo.googleMapsUrl = state.selectedGeo.googleMapsDirectionsUrl; console.log("[world:geo:save]", { id:state.selectedGeo.id, lat:state.selectedGeo.lat, lon:state.selectedGeo.lon, country:state.selectedGeo.country, region:state.selectedGeo.region, city:state.selectedGeo.city }); state.geography.push(state.selectedGeo); await persistWorld(); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
   $id("world-place-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedPlace) return; state.selectedPlace.rating = state.placeRating; state.selectedPlace.note = $id("world-place-note").value.trim(); state.selectedPlace.name = $id("world-place-form-name").value.trim() || state.selectedPlace.name; state.selectedPlace.emoji = $id("world-place-form-emoji").value.trim() || state.selectedPlace.emoji; state.selectedPlace.category = $id("world-place-form-category").value.trim(); state.selectedPlace.country = $id("world-place-form-country").value.trim() || state.selectedPlace.country; state.selectedPlace.region = $id("world-place-form-region").value.trim() || state.selectedPlace.region; state.selectedPlace.city = $id("world-place-form-city").value.trim() || state.selectedPlace.city; state.selectedPlace.productName = $id("world-place-form-product").value.trim(); state.selectedPlace.price = parsePrice($id("world-place-form-price").value); state.selectedPlace.currency = "EUR"; state.selectedPlace.lng = Number(state.selectedPlace.lon); state.selectedPlace.googleMapsDirectionsUrl = createGoogleMapsUrl(state.selectedPlace.lat, state.selectedPlace.lon); state.selectedPlace.googleMapsUrl = state.selectedPlace.googleMapsDirectionsUrl; if ((!String(state.selectedPlace.name || "").trim() || String(state.selectedPlace.name || "").trim() === "Nuevo local") && String(state.selectedPlace.address || "").trim()) state.selectedPlace.name = state.selectedPlace.address; if (!String(state.selectedPlace.label || "").trim() && String(state.selectedPlace.address || "").trim()) state.selectedPlace.label = state.selectedPlace.address; console.debug("[world:save:local:start]", state.selectedPlace); state.places.push(state.selectedPlace); await persistWorld(); console.debug("[world:save:local:stored]", state.selectedPlace); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
   $id("world-place-edit-save").addEventListener("click", async ()=>{ if (!state.editing || state.editing.kind !== "places") return; await saveEdit(); });

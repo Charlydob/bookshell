@@ -125,3 +125,14 @@
 #view-world .world-local-stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 #view-world .world-stat-row{display:flex;justify-content:space-between;gap:8px;padding:2px 0}
 #view-world .world-locals-list{min-width:0}
+
+#view-world .world-stay-modal__sheet{max-width:calc(100vw - 24px);max-height:84vh;overflow-y:auto;overflow-x:hidden;padding:14px;display:flex;flex-direction:column;gap:12px}
+#view-world .world-sheet-header h3{margin:0;font-size:18px}
+#view-world .world-stay-close-x{width:30px;height:30px;border-radius:999px}
+#view-world .world-stay-block{display:flex;flex-direction:column;gap:8px}
+#view-world .world-stay-field span{font-size:12px;opacity:.88}
+#view-world .world-stay-field input{height:42px}
+#view-world .world-edit-grid{display:grid;grid-template-columns:1fr;gap:10px}
+@media (min-width:680px){#view-world .world-edit-grid{grid-template-columns:1fr 1fr}#view-world .world-stay-manual-days{grid-column:1/-1}}
+#view-world .world-stay-manual-days small{font-size:11px;opacity:.8}
+#view-world .world-stay-search-item{border-radius:12px}

@@ -1044,7 +1044,11 @@ function ensureReminderNotificationsButton(indicator) {
     event.preventDefault();
     event.stopPropagation();
     if (!window.__bookshellNotes?.openReminderNotificationsPanel && window.__bookshellOpenViewRoot) {
-      await window.__bookshellOpenViewRoot("view-notes", { pushHash: false });
+      await window.__bookshellOpenViewRoot("view-notes", {
+        pushHash: false,
+        userInitiated: true,
+        reason: "sync-indicator-open-notifications",
+      });
     }
     window.__bookshellNotes?.openReminderNotificationsPanel?.();
   });
@@ -2810,6 +2814,13 @@ async function maybeResetTabToRoot(viewId) {
 }
 
 async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
+  console.log("[view:setView:called]", {
+    viewId,
+    reason: "direct-setView",
+    pushHash,
+    highPriority,
+    stack: new Error().stack,
+  });
   if (!isValidView(viewId)) return;
 
   const state = getShellState();
@@ -2874,6 +2885,33 @@ async function setView(viewId, { pushHash = true, highPriority = false } = {}) {
       }
     }
   }
+}
+
+async function requestViewChange(viewId, reason, {
+  userInitiated = false,
+  pushHash = true,
+  highPriority = false,
+} = {}) {
+  const state = getShellState();
+  console.log("[view:request]", {
+    viewId,
+    reason: String(reason || "unknown"),
+    userInitiated,
+    bootCompleted: Boolean(state?.bootCompleted),
+    currentViewId: getCurrentViewId(),
+  });
+  if (!isValidView(viewId)) return false;
+  const currentViewId = getCurrentViewId();
+  if (!userInitiated && state?.bootCompleted && viewId !== currentViewId) {
+    console.warn("[view:block:auto-navigation]", {
+      viewId,
+      reason: String(reason || "unknown"),
+      currentViewId,
+    });
+    return false;
+  }
+  await setView(viewId, { pushHash, highPriority });
+  return true;
 }
 
 function getGlobalQuickFabState() {
@@ -3004,7 +3042,7 @@ async function clickWhenReady(getter) {
 }
 
 async function openViewAndRunQuickAction(viewId, runner) {
-  await setView(viewId, { highPriority: true });
+  await requestViewChange(viewId, "global-quick-fab", { userInitiated: true, highPriority: true });
   await waitForFrames(2);
   return runner();
 }
@@ -3151,7 +3189,7 @@ function bindNav() {
       if (!isValidView(nextViewId)) return;
       void (async () => {
         await maybeResetTabToRoot(nextViewId);
-        await setView(nextViewId);
+        await requestViewChange(nextViewId, "nav-group-portal", { userInitiated: true });
       })();
       return;
     }
@@ -3197,7 +3235,7 @@ function bindNav() {
     event.preventDefault();
     void (async () => {
       await maybeResetTabToRoot(nextViewId);
-      await setView(nextViewId);
+      await requestViewChange(nextViewId, "bottom-nav-click", { userInitiated: true });
     })();
   }, true);
 
@@ -3242,7 +3280,7 @@ function bindNav() {
   });
 
   window.addEventListener("hashchange", () => {
-    void setView(getInitialView(), { pushHash: false });
+    void requestViewChange(getInitialView(), "hashchange", { pushHash: false });
   });
 
   window.addEventListener("resize", () => {
@@ -3436,9 +3474,14 @@ function bootShell() {
 }
 
 function exposeShellApis() {
-  window.__bookshellNavigateToView = (viewId, options = {}) => setView(viewId, options);
+  window.__bookshellNavigateToView = (viewId, options = {}) => requestViewChange(viewId, options.reason || "external-api", {
+    userInitiated: options.userInitiated === true,
+    pushHash: options.pushHash !== false,
+    highPriority: options.highPriority === true,
+  });
   window.__bookshellOpenViewRoot = async (viewId, options = {}) => {
-    await setView(viewId, {
+    await requestViewChange(viewId, options.reason || "open-view-root", {
+      userInitiated: options.userInitiated === true,
       pushHash: options.pushHash !== false,
       highPriority: options.highPriority !== false,
     });
@@ -3540,10 +3583,17 @@ function bindAuthGate() {
     window.bootDebug?.step?.("carga settings");
 
     const viewId = getInitialView();
+    console.log("[boot:view:restore]", {
+      hash: window.location.hash,
+      storedView: window.localStorage.getItem(LAST_VIEW_KEY),
+      selectedView: viewId,
+    });
     window.bootDebug?.ok?.("vista inicial elegida", { viewId });
     try {
       window.bootDebug?.step?.("carga de navegación");
-      await setView(viewId, { pushHash: true, highPriority: true });
+      console.log("[boot:view:selected]", { viewId, reason: "initial-auth-boot" });
+      await requestViewChange(viewId, "auth-initial-view", { pushHash: true, highPriority: true });
+      state.bootCompleted = true;
       setBootPhase("Preparando interfaz…", 78);
       window.bootDebug?.ok?.("render final", { viewId });
       logBootStep("initial-view-ready", { viewId });
@@ -3551,7 +3601,7 @@ function bindAuthGate() {
       logBootError(error, { stage: "set-initial-view", viewId });
       const fallbackViewId = SAFE_VIEW_FALLBACKS.find((candidate) => isValidView(candidate));
       if (fallbackViewId && fallbackViewId !== viewId) {
-        await setView(fallbackViewId, { pushHash: true, highPriority: true }).catch((fallbackError) => {
+        await requestViewChange(fallbackViewId, "auth-initial-fallback", { pushHash: true, highPriority: true }).catch((fallbackError) => {
           logBootError(fallbackError, { stage: "set-fallback-view", fallbackViewId });
         });
       }
@@ -3639,10 +3689,15 @@ window.addEventListener("bookshell:boot-watchdog-timeout", () => {
   }
   if (!fallbackViewId) return;
   window.bootDebug?.warn?.("Intentando vista segura por watchdog", { fallbackViewId, currentViewId });
-  void setView(fallbackViewId, { pushHash: true, highPriority: true }).catch((error) => {
+  void requestViewChange(fallbackViewId, "boot-watchdog-fallback", { pushHash: true, highPriority: true }).catch((error) => {
     window.bootDebug?.error?.("Fallo cargando vista segura", error, { fallbackViewId, currentViewId });
   });
 });
 window.__bookshellEnsureHabitsApi = ensureHabitsApiReady;
-schedulePostBootTask(() => preloadViewModule("view-notes"), 1200);
+schedulePostBootTask(() => {
+  console.log("[notes:preload:start]", { source: "post-boot" });
+  return preloadViewModule("view-notes").finally(() => {
+    console.log("[notes:preload:end]", { source: "post-boot" });
+  });
+}, 1200);
 logBootStep("boot-wired");

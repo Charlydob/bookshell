@@ -7246,7 +7246,11 @@ function showNextReminderToast() {
 async function navigateToReminder(reminderId = "") {
   const safeId = String(reminderId || "").trim();
   if (window.__bookshellOpenViewRoot) {
-    await window.__bookshellOpenViewRoot("view-notes", { pushHash: true });
+    await window.__bookshellOpenViewRoot("view-notes", {
+      pushHash: true,
+      userInitiated: true,
+      reason: "notes:reminder-focus",
+    });
   }
   state.rootSection = "reminders";
   state.reminderCalendarFocusedReminderId = safeId;

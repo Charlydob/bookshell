@@ -101,6 +101,19 @@ function persistBirthDate(date) { localStorage.setItem("worldBirthDate", date); 
 function daysAlive(birthDate) { if (!birthDate) return null; const born = new Date(`${birthDate}T00:00:00Z`); const value = Math.floor((new Date() - born) / DAY_MS) + 1; return Number.isFinite(value) && value > 0 ? value : null; }
 function pct(numerator, denominator) { if (!denominator) return 0; const value = (numerator / denominator) * 100; return Number.isFinite(value) ? value : 0; }
 
+function renderDistribution(byCountry = [], totalDays = 0) {
+  const segs = byCountry.map((country, idx) => {
+    const colorClass = `world-dist-color-${(idx % 8) + 1}`;
+    const ratio = totalDays ? pct(country.days, totalDays) : 0;
+    return `<span class="world-dist-seg ${colorClass}" style="width:${Math.max(2, ratio).toFixed(2)}%" title="${esc(country.country)} · ${country.days} días"><span aria-hidden="true">${flagFromCountryCode(country.countryCode)}</span></span>`;
+  }).join("");
+  const legend = byCountry.map((country, idx) => {
+    const colorClass = `world-dist-color-${(idx % 8) + 1}`;
+    return `<li class="world-dist-legend-item"><span class="world-dot ${colorClass}"></span><span class="world-dist-label">${flagFromCountryCode(country.countryCode)} ${esc(country.country)}</span><span class="world-dist-pct">${pct(country.days, totalDays).toFixed(0)}%</span></li>`;
+  }).join("");
+  return `<div class="world-dist-wrap"><div class="world-dist-bar" role="img" aria-label="Distribución de estancias por país">${segs || '<span class="world-dist-seg world-dist-color-1" style="width:100%">—</span>'}</div><ul class="world-dist-legend">${legend}</ul></div>`;
+}
+
 async function mergeStayRecord(payload) {
   const uid = getCurrentUserDataRootKey() || auth.currentUser?.uid;
   if (!uid || !payload?.id) return;
@@ -114,27 +127,17 @@ function render() {
   const born = getBirthDate();
   const alive = daysAlive(born);
   const dominant = stats.dominant;
-  const distBar = stats.byCountry.map((country, idx) => {
-    const ratio = stats.totalDays ? (country.days / stats.totalDays) : 0;
-    const width = Math.max(1, ratio * 100);
-    const colorClass = `world-dist-color-${(idx % 8) + 1}`;
-    return `<span class="world-dist-seg ${colorClass}" style="width:${width.toFixed(2)}%" title="${esc(country.country)} · ${country.days} días"><span aria-hidden="true">${flagFromCountryCode(country.countryCode)}</span></span>`;
-  }).join("");
-  const legend = stats.byCountry.map((country, idx) => {
-    const colorClass = `world-dist-color-${(idx % 8) + 1}`;
-    const ratio = stats.totalDays ? pct(country.days, stats.totalDays) : 0;
-    return `<li class="world-dist-legend-item"><span class="world-dot ${colorClass}"></span><span class="world-dist-label">${flagFromCountryCode(country.countryCode)} ${esc(country.country)}</span><span class="world-dist-pct">${ratio.toFixed(0)}%</span></li>`;
-  }).join("");
+  const birthLine = born || "No definida";
   const countries = stats.byCountry.map((country) => {
     const isCollapsed = !collapsedCountries.has(country.key);
     const lifePct = alive ? pct(country.days, alive) : 0;
     const cities = country.cities.map((city) => {
-      const rows = city.stays.map((stay) => `<li class="world-stays-entry"><small class="world-stays-entry-dates">${stay.startDate && stay.endDate ? `${fmtDate(stay.startDate)} → ${fmtDate(stay.endDate)}` : "Sin fechas exactas"}</small><div class="world-stays-entry-actions"><button type="button" data-world-stay-edit="${esc(stay.id)}">Editar</button><button type="button" data-world-stay-delete="${esc(stay.id)}">Eliminar</button></div></li>`).join("");
+      const rows = city.stays.map((stay) => `<li class="world-stays-entry"><span class="world-stays-entry-main">${esc(stay.city || "Sin ciudad")} · ${Number(stay.daysTotal || 0)} día${Number(stay.daysTotal || 0) === 1 ? "" : "s"}</span><small class="world-stays-entry-dates">${stay.startDate && stay.endDate ? `${fmtDate(stay.startDate)} → ${fmtDate(stay.endDate)}` : "Sin fechas exactas"}</small><div class="world-stays-entry-actions"><button type="button" data-world-stay-edit="${esc(stay.id)}">Editar</button><button type="button" data-world-stay-delete="${esc(stay.id)}">Eliminar</button></div></li>`).join("");
       return `<li class="world-stays-city-item"><span class="world-stays-city-main">${esc(city.city)} · ${city.days} día${city.days === 1 ? "" : "s"}</span><ul class="world-stays-entry-list">${rows}</ul></li>`;
     }).join("");
-    return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)} · ${country.days} días · ${lifePct.toFixed(2)}% vida</span></summary><ul class="world-stays-city-list">${cities}</ul></details>`;
+    return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)} · ${country.days} día${country.days === 1 ? "" : "s"} · ${lifePct.toFixed(2)}% vida ▾</span></summary><ul class="world-stays-city-list">${cities || "<li class=\"world-stays-city-item\">Sin ciudad registrada.</li>"}</ul></details>`;
   }).join("");
-  mount.innerHTML = `<div class="world-stays-head"><h3>Estancias</h3><button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button></div><div class="world-stays-warning" data-world-stays-warning aria-live="polite"></div><div class="world-kpis world-kpis-compact"><div class="world-pill"><span>Días registrados</span><strong>${stats.totalDays}</strong></div><div class="world-pill"><span>Países</span><strong>${stats.countriesCount}</strong></div><div class="world-pill"><span>Ciudades</span><strong>${stats.citiesCount}</strong></div><div class="world-pill"><span>País dominante 👑</span><strong>${dominant ? `${flagFromCountryCode(dominant.countryCode)} ${esc(dominant.country)}` : "—"}</strong></div></div><div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(born || "No definida")}</span><button type="button" data-world-set-birthdate>Editar</button></div><div class="world-dist-wrap"><div class="world-dist-bar">${distBar || '<span class="world-dist-seg world-dist-color-1" style="width:100%">—</span>'}</div><ul class="world-dist-legend">${legend}</ul></div><div class="world-stays-countries">${countries || "<div class=\"world-stays-empty\">Sin estancias todavía.</div>"}</div>`;
+  mount.innerHTML = `<div class="world-stays-head"><h3>Estancias</h3><button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button></div><div class="world-stays-warning" data-world-stays-warning aria-live="polite"></div><div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div><div class="world-kpis world-kpis-compact"><div class="world-pill"><span>📅 ${stats.totalDays} día${stats.totalDays === 1 ? "" : "s"}</span></div><div class="world-pill"><span>🌍 ${stats.countriesCount} país${stats.countriesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>🏙️ ${stats.citiesCount} ciudad${stats.citiesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>👑 ${dominant ? `${flagFromCountryCode(dominant.countryCode)} ${esc(dominant.country)}` : "-"}</span></div></div>${renderDistribution(stats.byCountry, stats.totalDays)}<div class="world-stays-countries">${countries || "<div class=\"world-stays-empty\">Sin estancias todavía.</div>"}</div>`;
   const btn = mount.querySelector("[data-world-stay-action='open-modal']");
   if (btn) btn.onclick = () => openWorldStayModal();
 }

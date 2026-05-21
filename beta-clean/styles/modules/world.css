@@ -116,6 +116,7 @@
 #view-world .world-stay-search-item{border:0;text-align:left;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.08);color:#eef0ff}
 #view-world .world-stays-entry-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
 #view-world .world-stays-entry{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:8px;border-radius:10px;background:rgba(255,255,255,.05)}
+#view-world .world-stays-entry-main{font-weight:600;line-height:1.25}
 #view-world .world-stay-field{display:flex;flex-direction:column;gap:4px}
 #view-world .world-stay-field span{font-size:12px;opacity:.9}
 #view-world .world-stays-entry-dates{opacity:.85}

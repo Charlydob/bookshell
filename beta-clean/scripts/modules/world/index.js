@@ -201,16 +201,7 @@ function renderWorldMarkers(){
     }
     withCoords += 1; return true;
   });
-  if (!canCluster && Number(state.map.getZoom?.() || 0) < 8) {
-    const clusters = buildWorldClusters(validRows.map((item) => ({ ...item, ...getItemLatLng(item), lon:getItemLatLng(item).lng })));
-    clusters.forEach((cluster) => {
-      if ((cluster.rows || []).length <= 1) return;
-      const marker = L.marker([cluster.lat, cluster.lon], { icon:createWorldClusterIcon(cluster.rows.length) });
-      marker.on("click", () => zoomToWorldCluster(cluster));
-      state.worldClusterGroup.addLayer(marker);
-      addedMarkers += 1;
-    });
-  } else validRows.forEach((item) => {
+  const renderSingleMarker = (item) => {
     const { lat, lng } = getItemLatLng(item);
     const markerEmoji = getWorldMarkerEmoji(item);
     const markerIcon = L.divIcon({ className:"notes-map-emoji-icon", html:`<span class="notes-map-emoji" aria-hidden="true">${markerEmoji}</span>`, iconSize:[24,24], iconAnchor:[12,12] });
@@ -227,7 +218,26 @@ function renderWorldMarkers(){
     state.mapMarkersIndex.set(item.id, marker);
     console.log("[world:marker:add]", { id:item.id, kind:item.kind, lat, lng, emoji:markerEmoji });
     addedMarkers += 1;
-  });
+  };
+
+  if (!canCluster && Number(state.map.getZoom?.() || 0) < 8) {
+    const rowsWithCoords = validRows.map((item) => {
+      const { lat, lng } = getItemLatLng(item);
+      return { ...item, lat, lon:lng, lng };
+    });
+    const clusters = buildWorldClusters(rowsWithCoords);
+    clusters.forEach((cluster) => {
+      if ((cluster.rows || []).length >= 2) {
+        const marker = L.marker([cluster.lat, cluster.lon], { icon:createWorldClusterIcon(cluster.rows.length) });
+        marker.on("click", () => zoomToWorldCluster(cluster));
+        state.worldClusterGroup.addLayer(marker);
+        addedMarkers += 1;
+        return;
+      }
+      const single = cluster.rows?.[0];
+      if (single) renderSingleMarker(single);
+    });
+  } else validRows.forEach((item) => renderSingleMarker(item));
 
   state.worldClusterGroup.addTo(state.map);
   const markerCount = state.worldClusterGroup?.getLayers?.().length ?? addedMarkers;

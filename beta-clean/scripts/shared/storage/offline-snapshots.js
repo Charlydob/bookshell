@@ -40,6 +40,13 @@ export async function readModuleSnapshot({ moduleName, uid }) {
   return record?.data ? record : null;
 }
 
+export async function getLocalSnapshot(key) {
+  const safeKey = String(key || "").trim();
+  if (!safeKey) return null;
+  const [moduleName, uid] = safeKey.split(":");
+  return readModuleSnapshot({ moduleName, uid });
+}
+
 export async function writeModuleSnapshot({ moduleName, uid, data, updatedAt = Date.now(), metadata = null }) {
   const key = buildSnapshotKey(moduleName, uid);
   if (!key) return null;
@@ -61,4 +68,11 @@ export async function writeModuleSnapshot({ moduleName, uid, data, updatedAt = D
     reason: "snapshot-write",
   });
   return result;
+}
+
+export async function saveLocalSnapshot(key, data, metadata = null) {
+  const safeKey = String(key || "").trim();
+  if (!safeKey) return null;
+  const [moduleName, uid] = safeKey.split(":");
+  return writeModuleSnapshot({ moduleName, uid, data, metadata });
 }

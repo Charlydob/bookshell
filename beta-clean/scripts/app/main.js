@@ -1210,7 +1210,13 @@ async function registerAppServiceWorker() {
     const swUrl = new URL("../../service-worker.js", import.meta.url);
     const scope = new URL("../../", import.meta.url).pathname;
     console.info("[offline:init] service-worker", { swUrl: swUrl.href, scope });
-    return await navigator.serviceWorker.register(swUrl, { scope });
+    const registration = await navigator.serviceWorker.register(swUrl, { scope });
+    console.info("[offline:boot]", { phase: "sw-registered", scope, hasController: !!navigator.serviceWorker.controller });
+    registration.addEventListener("updatefound", () => {
+      console.info("[offline:boot]", { phase: "sw-update-found" });
+      window.dispatchEvent(new CustomEvent("bookshell:sw-update-available"));
+    });
+    return registration;
   } catch (error) {
     console.warn("[shell] no se pudo registrar el service worker", error);
     return null;

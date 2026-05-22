@@ -173,7 +173,7 @@ async function runSyncCycle(reason = "manual") {
   }
 
   const operations = await listRetryableOfflineOperations(uid);
-  console.info("[offline:queue:flush:start]", { reason, count: operations.length, uid });
+  console.info("[offline:queue:flush]", { phase: "start", reason, count: operations.length, uid });
   if (!operations.length) {
     await refreshQueueSummary();
     emitSyncState();
@@ -198,7 +198,7 @@ async function runSyncCycle(reason = "manual") {
       hadSuccess = true;
     } catch (error) {
       state.lastError = describeSyncError(error);
-      console.warn("[offline:queue:error]", { opId: operation.opId, path: operation.firebasePath, error: state.lastError });
+      console.warn("[offline:sync:error]", { opId: operation.opId, path: operation.firebasePath, error: state.lastError });
       await markOfflineOperationFailed(operation.opId, state.lastError);
       if (isConnectivityError(error)) {
         break;
@@ -207,7 +207,7 @@ async function runSyncCycle(reason = "manual") {
   }
 
   await finishSyncCycle(startedAt, hadSuccess);
-  console.info("[offline:queue:flush:done]", { reason, hadSuccess });
+  console.info("[offline:sync:done]", { reason, hadSuccess });
 
   const remaining = await listRetryableOfflineOperations(uid);
   if (remaining.length && isWriteConnectionReady()) {

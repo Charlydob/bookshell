@@ -268,7 +268,12 @@ export async function enqueueOfflineOperation(input = {}) {
 
   await putOperationInDb(nextOperation);
   replaceCachedOperation(nextOperation);
+  console.info("[offline:queue:add]", { opId: nextOperation.opId, path: nextOperation.firebasePath, status: nextOperation.status });
   return { operation: nextOperation, replaced: false };
+}
+
+export async function enqueueOfflineWrite(operation) {
+  return enqueueOfflineOperation(operation);
 }
 
 export async function deleteOfflineOperation(opId) {
@@ -305,25 +310,33 @@ export async function markOfflineOperationSyncing(opId) {
 }
 
 export async function markOfflineOperationSynced(opId) {
-  return updateOfflineOperation(opId, {
+  const next = await updateOfflineOperation(opId, {
     status: OFFLINE_OPERATION_STATUS.SYNCED,
     updatedAt: getNowTs(),
     lastError: "",
     nextRetryAt: 0,
   });
+  if (next) {
+    console.info("[offline:sync:done]", { opId: next.opId, path: next.firebasePath });
+  }
+  return next;
 }
 
 export async function markOfflineOperationFailed(opId, errorMessage = "") {
   const current = await getOfflineOperation(opId);
   if (!current) return null;
   const nextAttempts = Math.max(0, Math.floor(Number(current.attempts) || 0)) + 1;
-  return updateOfflineOperation(opId, {
+  const next = await updateOfflineOperation(opId, {
     status: OFFLINE_OPERATION_STATUS.FAILED,
     attempts: nextAttempts,
     updatedAt: getNowTs(),
     lastError: String(errorMessage || "").trim(),
     nextRetryAt: getNowTs() + computeRetryDelay(nextAttempts),
   });
+  if (next) {
+    console.warn("[offline:sync:error]", { opId: next.opId, path: next.firebasePath, error: next.lastError });
+  }
+  return next;
 }
 
 export async function reviveInterruptedOfflineOperations() {
@@ -406,6 +419,17 @@ export async function getOfflineQueueSummary(uid = "") {
     failed: 0,
   });
 }
+
+export async function flushOfflineQueue(uid = "") {
+  return listRetryableOfflineOperations(uid);
+}
+
+export async function getOfflineQueue(uid = "") {
+  return listOfflineOperations({ uid, includeSynced: false });
+}
+
+export const markOfflineWriteDone = markOfflineOperationSynced;
+export const markOfflineWriteFailed = markOfflineOperationFailed;
 
 export function applyQueuedWritesToPath(basePath, value, { uid = "" } = {}) {
   const safeUid = String(uid || "").trim();

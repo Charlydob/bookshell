@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-05-20-offline-v3";
+const APP_VERSION = "2026-05-22-offline-v4";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -122,7 +122,9 @@ async function matchAnyCache(request) {
     runtimeCache.match(request),
     staticCache.match(request),
   ]);
-  return runtimeMatch || staticMatch || null;
+  const match = runtimeMatch || staticMatch || null;
+  console.info(match ? "[offline:cache:hit]" : "[offline:cache:miss]", new URL(request.url).pathname);
+  return match;
 }
 
 async function precacheLocalAssets() {
@@ -175,14 +177,14 @@ function isLocalCodeRequest(request, url) {
 }
 
 self.addEventListener("install", (event) => {
-  console.info("[sw:install]", APP_VERSION);
+  console.info("[offline:boot]", { phase: "sw-install", version: APP_VERSION });
   event.waitUntil(
     precacheLocalAssets().then(() => self.skipWaiting()),
   );
 });
 
 self.addEventListener("activate", (event) => {
-  console.info("[sw:activate]", APP_VERSION);
+  console.info("[offline:boot]", { phase: "sw-activate", version: APP_VERSION });
   event.waitUntil(
     caches.keys().then(async (keys) => {
       await Promise.all(

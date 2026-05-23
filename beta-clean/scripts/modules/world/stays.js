@@ -132,7 +132,12 @@ function render() {
     const isCollapsed = !collapsedCountries.has(country.key);
     const lifePct = alive ? pct(country.days, alive) : 0;
     const cities = country.cities.map((city) => {
-      const rows = city.stays.map((stay) => `<li class="world-stays-entry"><div class="world-stays-entry-top"><span class="world-stays-entry-main">${esc(stay.city || "Sin ciudad")} · ${Number(stay.daysTotal || 0)} día${Number(stay.daysTotal || 0) === 1 ? "" : "s"}</span><div class="world-stays-entry-actions"><button type="button" data-world-stay-edit="${esc(stay.id)}" aria-label="Editar">✏️</button><button type="button" data-world-stay-delete="${esc(stay.id)}" aria-label="Eliminar">🗑️</button></div></div><small class="world-stays-entry-dates">${stay.startDate && stay.endDate ? `${fmtDate(stay.startDate)} → ${fmtDate(stay.endDate)}` : "Sin fechas exactas"}</small></li>`).join("");
+      const rows = city.stays.map((stay) => {
+        const stayDays = Number(stay.daysTotal || 0);
+        const lifeSegment = alive ? ` · ${pct(stayDays, alive).toFixed(2)}% vida` : "";
+        console.debug("[world:stay-life-percent]", { stayId:stay.id, days:stayDays, alive, lifePct:alive ? pct(stayDays, alive) : null });
+        return `<li class="world-stays-entry"><div class="world-stays-entry-top"><span class="world-stays-entry-main">${esc(stay.city || "Sin ciudad")} · ${stayDays} día${stayDays === 1 ? "" : "s"}${lifeSegment}</span><div class="world-stays-entry-actions"><button type="button" data-world-stay-edit="${esc(stay.id)}" aria-label="Editar">✏️</button><button type="button" data-world-stay-delete="${esc(stay.id)}" aria-label="Eliminar">🗑️</button></div></div><small class="world-stays-entry-dates">${stay.startDate && stay.endDate ? `${fmtDate(stay.startDate)} → ${fmtDate(stay.endDate)}` : "Sin fechas exactas"}</small></li>`;
+      }).join("");
       return `<li class="world-stays-city-item"><ul class="world-stays-entry-list">${rows}</ul></li>`;
     }).join("");
     return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)} · ${country.days} día${country.days === 1 ? "" : "s"} · ${lifePct.toFixed(2)}% vida ▾</span></summary><ul class="world-stays-city-list">${cities || "<li class=\"world-stays-city-item\">Sin ciudad registrada.</li>"}</ul></details>`;

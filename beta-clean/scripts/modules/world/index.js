@@ -37,7 +37,32 @@ function getWorldMarkerEmoji(item = {}) {
   return String(fallbackTypeEmoji || "").trim() || "📍";
 }
 const normalize = (r = {}, kind = "geography") => ({ id:r.id || id(), kind, name:String(r.name || r.placeName || "").trim(), label:String(r.label || r.displayName || r.name || "").trim(), displayName:String(r.displayName || r.label || r.name || "").trim(), country:String(r.country || "").trim(), countryCode:String(r.countryCode || r.country_code || "").trim().toUpperCase(), city:String(r.city || "").trim(), region:String(r.region || r.subdivision || "").trim(), postalCode:String(r.postalCode || "").trim(), address:String(r.address || "").trim(), category:String(r.category || r.type || "").trim(), emoji:String(r.emoji || (kind === "places" ? getLocalCategoryEmoji(r.category || r.type || "") : "📍")).trim(), note:String(r.note || "").trim(), productName:String(r.productName || "").trim(), price:Number.isFinite(Number(r.price)) ? Number(r.price) : null, currency:String(r.currency || "EUR").trim().toUpperCase(), rating:Number.isFinite(Number(r.rating)) ? Number(r.rating) : null, lat:Number(r.lat), lon:Number(r.lon ?? r.lng), lng:Number(r.lng ?? r.lon), googleMapsDirectionsUrl:String(r.googleMapsDirectionsUrl || r.googleMapsUrl || "").trim(), createdAt:Number(r.createdAt || Date.now()), updatedAt:Date.now() });
-const toTitleCase = (s = "") => String(s || "").trim().toLowerCase().replace(/\b\p{L}/gu, (m) => m.toUpperCase());
+const toTitleCase = (s = "") => {
+  const lower = String(s || "").trim().toLocaleLowerCase("es");
+  return lower.replace(/(^|[\s\-_/()"'«»“”.,;:!?¿¡])(\p{L})/gu, (_, sep, letter) => `${sep}${letter.toLocaleUpperCase("es")}`);
+};
+const canonicalWorldValue = (value = "") => String(value || "").trim().toLocaleLowerCase("es").normalize("NFC");
+function getReusableLocalValues() {
+  const categories = new Map();
+  const emojis = new Map();
+  state.places.forEach((place) => {
+    const cat = String(place.category || place.type || "").trim();
+    const emoji = String(place.emoji || "").trim();
+    const catKey = canonicalWorldValue(cat);
+    const emojiKey = canonicalWorldValue(emoji);
+    if (catKey && !categories.has(catKey)) categories.set(catKey, cat);
+    if (emojiKey && !emojis.has(emojiKey)) emojis.set(emojiKey, emoji);
+  });
+  return { categories:Array.from(categories.values()).sort((a, b) => a.localeCompare(b, "es")), emojis:Array.from(emojis.values()) };
+}
+function renderReusableLocalSelectors() {
+  const categorySelect = $id("world-place-form-category-select");
+  const emojiSelect = $id("world-place-form-emoji-select");
+  if (!categorySelect || !emojiSelect) return;
+  const { categories, emojis } = getReusableLocalValues();
+  categorySelect.innerHTML = `<option value="">Reutilizar categoría</option>${categories.map((cat) => `<option value="${cat}">${cat}</option>`).join("")}`;
+  emojiSelect.innerHTML = `<option value="">Reutilizar emoji</option>${emojis.map((emoji) => `<option value="${emoji}">${emoji}</option>`).join("")}`;
+}
 const normalizeChainName = (place = {}) => {
   const raw = String(place.category || place.name || "Local").trim();
   return toTitleCase(raw) || "Local";
@@ -374,7 +399,7 @@ function renderLocals(){ const rows=state.places; const mode = $id("world-locals
   }).join("");
   $id("world-locals-list").innerHTML = html || "<div>Sin locales.</div>"; }
 function renderStats(){ $id("world-countries").textContent = String(new Set([...state.geography, ...state.places].map((x)=>x.countryCode).filter(Boolean)).size); $id("world-geo-count").textContent = String(state.geography.length); $id("world-rated-locals").textContent = String(state.places.length); }
-function renderAll(){ renderStats(); renderWorldMapCategoryFilter(); renderMap(); renderGeoList(); renderLocals(); renderWorldStays(); }
+function renderAll(){ renderStats(); renderWorldMapCategoryFilter(); renderMap(); renderGeoList(); renderLocals(); renderReusableLocalSelectors(); renderWorldStays(); }
 
 async function persistWorld(){ const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; await set(ref(db, firebasePaths.worldGeography(uid)), Object.fromEntries(state.geography.map((r)=>[r.id,r]))); await set(ref(db, firebasePaths.worldPlaces(uid)), Object.fromEntries(state.places.map((r)=>[r.id,r]))); }
 
@@ -599,12 +624,29 @@ async function useCurrentLocationForNewPlace(){
     showToast("No se pudo obtener ubicación actual (permiso denegado o GPS no disponible)");
   }
 }
+async function useCurrentLocationForGeoPlace(){
+  console.log("[world:add-place:location] start");
+  try {
+    const pos = await getCurrentPositionSafe({ forceRequest:true });
+    if (!pos || !Number.isFinite(pos.lat) || !Number.isFinite(pos.lon)) throw new Error("position-unavailable");
+    const reverse = await reverseGeocode(pos.lat, pos.lon);
+    const fallbackAddress = reverse.address || { country:reverse.country, country_code:reverse.countryCode, state:reverse.region, city:reverse.city || reverse.municipality };
+    state.geoResults = [{ ...reverse, address:fallbackAddress, lat:pos.lat, lon:pos.lon, label:reverse.label || reverse.name || "Ubicación actual", name:reverse.name || reverse.city || "Ubicación actual" }];
+    pickGeo(0);
+    renderGeoResults();
+    console.log("[world:add-place:location] success", { lat:pos.lat, lon:pos.lon });
+  } catch (error) {
+    console.log("[world:add-place:location] error", error);
+    showToast("No se pudo obtener ubicación actual");
+  }
+}
 
 function bindUI(){
   const root=$id("view-world");
   root.addEventListener("click", async (e)=>{ const t=e.target.closest("button,label"); if(!t) return; if(t.matches(".world-tab")) return setWindow(t.dataset.window); if(t.id==="world-open-add") { $id("world-add-toggle").checked=true; setAddMode("geo"); resetWorldAddModalState(); state.showEditLocationSearch = true; state.placeModalMode = "add"; setEditModeUI(); }
     if(t.id==="world-open-add-place") { openAddLocalModal(); }
     if(t.id==="world-place-use-current-location") { await useCurrentLocationForNewPlace(); }
+    if(t.id==="world-geo-use-current-location") { await useCurrentLocationForGeoPlace(); }
     if(t.id==="world-add-mode-geo") setAddMode("geo"); if(t.id==="world-add-mode-place") { if (state.editing) setAddMode("place"); else openAddLocalModal(); invalidateMiniMapSafe(); }
     if(t.dataset.geoPick) pickGeo(Number(t.dataset.geoPick)); if(t.dataset.placePick) pickPlace(Number(t.dataset.placePick));
     if(t.dataset.worldCenter){ const m=state.markers.get(t.dataset.worldCenter); if(m){ state.map.panTo(m.getLatLng()); m.openPopup(); } }
@@ -619,9 +661,9 @@ function bindUI(){
   $id("world-place-radius").addEventListener("change", ()=> $id("world-place-q").dispatchEvent(new Event("input")));
   $id("world-add-toggle").addEventListener("change", (e)=>{ if (e.target.checked && state.addMode === "place") invalidateMiniMapSafe(); });
   $id("world-locals-group").addEventListener("change", ()=> renderLocals());
-  root.addEventListener("change", (e)=>{ if(e.target?.id==="world-map-stats-filter"){ state.mapStatsCountry = e.target.value; renderGeoList(); } if (e.target?.id === "world-map-category-filter-select" && e.target.value) { toggleWorldMapCategoryFilter(e.target.value); e.target.value = ""; }});
+  root.addEventListener("change", (e)=>{ if(e.target?.id==="world-map-stats-filter"){ state.mapStatsCountry = e.target.value; renderGeoList(); } if (e.target?.id === "world-map-category-filter-select" && e.target.value) { toggleWorldMapCategoryFilter(e.target.value); e.target.value = ""; } if (e.target?.id === "world-place-form-category-select" && e.target.value) { $id("world-place-form-category").value = e.target.value; console.log("[world:add-local:reuse-category]", e.target.value); } if (e.target?.id === "world-place-form-emoji-select" && e.target.value) { $id("world-place-form-emoji").value = e.target.value; }});
   $id("world-geo-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedGeo) return; const candidate = state.selectedGeoCandidate || {}; state.selectedGeo.note = $id("world-geo-note").value.trim(); state.selectedGeo.rating = state.geoRating; state.selectedGeo.country = $id("world-form-country").value.trim() || state.selectedGeo.country; state.selectedGeo.region = $id("world-form-region").value.trim() || state.selectedGeo.region; state.selectedGeo.city = $id("world-form-city").value.trim() || state.selectedGeo.city; state.selectedGeo.lat = Number(candidate.lat ?? state.selectedGeo.lat); state.selectedGeo.lon = Number(candidate.lon ?? candidate.lng ?? state.selectedGeo.lon); state.selectedGeo.lng = Number(state.selectedGeo.lon); state.selectedGeo.googleMapsDirectionsUrl = createGoogleMapsUrl(state.selectedGeo.lat, state.selectedGeo.lon); state.selectedGeo.googleMapsUrl = state.selectedGeo.googleMapsDirectionsUrl; console.log("[world:geo:save]", { id:state.selectedGeo.id, lat:state.selectedGeo.lat, lon:state.selectedGeo.lon, country:state.selectedGeo.country, region:state.selectedGeo.region, city:state.selectedGeo.city }); state.geography.push(state.selectedGeo); await persistWorld(); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
-  $id("world-place-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedPlace) return; state.selectedPlace.rating = state.placeRating; state.selectedPlace.note = $id("world-place-note").value.trim(); state.selectedPlace.name = $id("world-place-form-name").value.trim() || state.selectedPlace.name; state.selectedPlace.emoji = $id("world-place-form-emoji").value.trim() || state.selectedPlace.emoji; state.selectedPlace.category = $id("world-place-form-category").value.trim(); state.selectedPlace.country = $id("world-place-form-country").value.trim() || state.selectedPlace.country; state.selectedPlace.region = $id("world-place-form-region").value.trim() || state.selectedPlace.region; state.selectedPlace.city = $id("world-place-form-city").value.trim() || state.selectedPlace.city; state.selectedPlace.productName = $id("world-place-form-product").value.trim(); state.selectedPlace.price = parsePrice($id("world-place-form-price").value); state.selectedPlace.currency = "EUR"; state.selectedPlace.lng = Number(state.selectedPlace.lon); state.selectedPlace.googleMapsDirectionsUrl = createGoogleMapsUrl(state.selectedPlace.lat, state.selectedPlace.lon); state.selectedPlace.googleMapsUrl = state.selectedPlace.googleMapsDirectionsUrl; if ((!String(state.selectedPlace.name || "").trim() || String(state.selectedPlace.name || "").trim() === "Nuevo local") && String(state.selectedPlace.address || "").trim()) state.selectedPlace.name = state.selectedPlace.address; if (!String(state.selectedPlace.label || "").trim() && String(state.selectedPlace.address || "").trim()) state.selectedPlace.label = state.selectedPlace.address; console.debug("[world:save:local:start]", state.selectedPlace); state.places.push(state.selectedPlace); await persistWorld(); console.debug("[world:save:local:stored]", state.selectedPlace); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
+  $id("world-place-save").addEventListener("click", async ()=>{ if (state.editing) return saveEdit(); if(!state.selectedPlace) return; const categoryTyped = $id("world-place-form-category").value.trim(); const emojiTyped = $id("world-place-form-emoji").value.trim(); const { categories, emojis } = getReusableLocalValues(); const categoryCanonical = canonicalWorldValue(categoryTyped); const emojiCanonical = canonicalWorldValue(emojiTyped); const categorySaved = categories.find((entry) => canonicalWorldValue(entry) === categoryCanonical) || categoryTyped; const emojiSaved = emojis.find((entry) => canonicalWorldValue(entry) === emojiCanonical) || emojiTyped; state.selectedPlace.rating = state.placeRating; state.selectedPlace.note = $id("world-place-note").value.trim(); state.selectedPlace.name = $id("world-place-form-name").value.trim() || state.selectedPlace.name; state.selectedPlace.emoji = emojiSaved || state.selectedPlace.emoji; state.selectedPlace.category = categorySaved; state.selectedPlace.country = $id("world-place-form-country").value.trim() || state.selectedPlace.country; state.selectedPlace.region = $id("world-place-form-region").value.trim() || state.selectedPlace.region; state.selectedPlace.city = $id("world-place-form-city").value.trim() || state.selectedPlace.city; state.selectedPlace.productName = $id("world-place-form-product").value.trim(); state.selectedPlace.price = parsePrice($id("world-place-form-price").value); state.selectedPlace.currency = "EUR"; state.selectedPlace.lng = Number(state.selectedPlace.lon); state.selectedPlace.googleMapsDirectionsUrl = createGoogleMapsUrl(state.selectedPlace.lat, state.selectedPlace.lon); state.selectedPlace.googleMapsUrl = state.selectedPlace.googleMapsDirectionsUrl; if ((!String(state.selectedPlace.name || "").trim() || String(state.selectedPlace.name || "").trim() === "Nuevo local") && String(state.selectedPlace.address || "").trim()) state.selectedPlace.name = state.selectedPlace.address; if (!String(state.selectedPlace.label || "").trim() && String(state.selectedPlace.address || "").trim()) state.selectedPlace.label = state.selectedPlace.address; console.debug("[world:save:local:start]", state.selectedPlace); state.places.push(state.selectedPlace); await persistWorld(); console.debug("[world:save:local:stored]", state.selectedPlace); renderAll(); closeAddModal(); resetWorldAddModalState(); showToast("Guardado"); });
   $id("world-place-edit-save").addEventListener("click", async ()=>{ if (!state.editing || state.editing.kind !== "places") return; await saveEdit(); });
   ["world-rating-stars","world-geo-rating-stars","world-place-edit-rating-stars"].forEach((rid)=>{ const rating = $id(rid); rating.addEventListener("pointerdown",(e)=>{ const move=(ev)=>{ const value=ratingFromPointer(rating, ev.clientX); if (rid === "world-geo-rating-stars") state.geoRating=value; else state.placeRating=value; renderRatings(); }; move(e); window.addEventListener("pointermove", move); const up=()=>{ window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); }; window.addEventListener("pointerup", up); }); });
 }

@@ -34,6 +34,8 @@
 #view-world .world-add-geo-panel[hidden],#view-world .world-add-local-panel[hidden]{display:none!important}
 #view-world #world-mini-map{height:160px;border-radius:14px;overflow:hidden}
 #view-world .world-place-search-row{display:grid;grid-template-columns:1fr auto;gap:6px}
+#view-world .world-geo-search-row{grid-template-columns:minmax(0,1fr) auto}
+#view-world .world-geo-search-row .world-optional-location-btn{white-space:nowrap}
 #view-world .world-search-list{display:flex;flex-direction:column;gap:6px;max-height:170px;overflow:auto}
 #view-world .world-search-list button{border:0;border-radius:12px;padding:9px;background:rgba(255,255,255,.07);color:#eef0ff;text-align:left}
 #view-world .world-rating-track{position:relative;border-radius:999px;background:rgba(255,255,255,.08);padding:10px;overflow:hidden}
@@ -156,9 +158,10 @@
 #view-world .world-inline-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
 #view-world .world-inline-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
 #view-world .world-stays-entry{display:flex;flex-direction:column;gap:2px;padding:6px 0!important;border-radius:0!important;background:transparent!important}
-#view-world .world-stays-entry-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
-#view-world .world-stays-entry-actions{display:flex;gap:4px}
-#view-world .world-stays-entry-actions button{border:0;padding:2px 4px!important;border-radius:8px;background:transparent!important;color:#eef0ff;font-size:14px}
+#view-world .world-stays-entry-top{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px}
+#view-world .world-stays-entry-main{min-width:0;overflow-wrap:anywhere}
+#view-world .world-stays-entry-actions{display:flex;gap:6px;justify-self:end;flex:0 0 auto}
+#view-world .world-stays-entry-actions button{border:0;padding:3px 6px!important;border-radius:8px;background:transparent!important;color:#eef0ff;font-size:14px;min-width:28px}
 #view-world .world-stay-close-x{border:0;background:transparent!important;border-radius:0;width:auto!important;height:auto!important;font-size:18px;padding:2px 4px}
 #view-world .world-stay-modal__sheet{max-width:calc(100vw - 24px)!important;max-height:84vh!important;overflow:auto!important}
 #view-world .world-stay-field span{display:none}
@@ -167,8 +170,9 @@
 #view-world #world-place-edit-grid{display:grid;grid-template-columns:1fr;gap:8px}
 #view-world #world-place-edit-grid .world-inline-3,#view-world #world-place-edit-grid .world-inline-2{min-width:0}
 #view-world #world-place-add-panel .world-inline-3,#view-world #world-place-edit-grid .world-inline-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+#view-world #world-place-add-panel .world-dual-field{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px;min-width:0}
 #view-world #world-place-add-panel .world-inline-2,#view-world #world-place-edit-grid .world-inline-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
-#view-world #world-place-add-panel input,#view-world #world-place-edit-grid input{min-width:0;width:100%}
+#view-world #world-place-add-panel input,#view-world #world-place-add-panel select,#view-world #world-place-edit-grid input{min-width:0;width:100%}
 #view-world .world-stay-modal__sheet{background:rgba(20,24,38,.94);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.14)}
 #view-world .world-stay-modal__sheet input{width:100%;min-width:0}
 #view-world .world-stay-modal__sheet .world-inline-2{gap:8px}
@@ -178,5 +182,7 @@
   #view-world #world-place-add-panel .world-inline-3,#view-world #world-place-edit-grid .world-inline-3{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:460px){
+  #view-world .world-geo-search-row .world-optional-location-btn{padding:7px 8px;font-size:12px}
   #view-world #world-place-add-panel .world-inline-3,#view-world #world-place-edit-grid .world-inline-3,#view-world #world-place-add-panel .world-inline-2,#view-world #world-place-edit-grid .world-inline-2{grid-template-columns:1fr}
+  #view-world #world-place-add-panel .world-dual-field{grid-template-columns:1fr}
 }

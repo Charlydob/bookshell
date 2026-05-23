@@ -54,7 +54,7 @@
     </div>
     <div id="world-geo-mode" class="world-mode world-add-geo-panel">
       <div class="world-search-block" id="world-geo-search-block">
-        <input id="world-geo-q" placeholder="Buscar país, ciudad o pueblo">
+        <div class="world-place-search-row world-geo-search-row"><input id="world-geo-q" placeholder="Buscar país, ciudad o pueblo"><button type="button" class="world-optional-location-btn" id="world-geo-use-current-location">Usar ubicación actual</button></div>
         <div id="world-geo-results" class="world-search-list"></div>
       </div>
       <div class="world-edit-grid world-edit-grid-geo"><input id="world-form-country" placeholder="País"><input id="world-form-region" placeholder="Región/Comunidad"><input id="world-form-city" placeholder="Ciudad/Lugar"></div>
@@ -71,7 +71,7 @@
           <button type="button" class="world-optional-location-btn" id="world-place-use-current-location">Usar ubicación actual</button>
           <div id="world-place-results" class="world-search-list"></div>
         </div>
-        <div class="world-edit-grid" id="world-place-edit-grid"><div class="world-inline-3"><input id="world-place-form-name" placeholder="Nombre"><input id="world-place-form-emoji" placeholder="Emoji (ej: 🏪)"><input id="world-place-form-category" placeholder="Tipo/categoría"></div><div class="world-inline-3"><input id="world-place-form-country" placeholder="País"><input id="world-place-form-region" placeholder="Región"><input id="world-place-form-city" placeholder="Ciudad/Lugar"></div><div class="world-inline-2"><input id="world-place-form-product" placeholder="Producto (opcional)"><input id="world-place-form-price" placeholder="Precio (ej: 8.95)" inputmode="decimal"></div></div>
+        <div class="world-edit-grid" id="world-place-edit-grid"><div class="world-inline-3"><input id="world-place-form-name" placeholder="Nombre"><div class="world-dual-field"><input id="world-place-form-emoji" placeholder="Emoji (ej: 🏪)"><select id="world-place-form-emoji-select"><option value="">Reutilizar emoji</option></select></div><div class="world-dual-field"><input id="world-place-form-category" placeholder="Tipo/categoría"><select id="world-place-form-category-select"><option value="">Reutilizar categoría</option></select></div></div><div class="world-inline-3"><input id="world-place-form-country" placeholder="País"><input id="world-place-form-region" placeholder="Región"><input id="world-place-form-city" placeholder="Ciudad/Lugar"></div><div class="world-inline-2"><input id="world-place-form-product" placeholder="Producto (opcional)"><input id="world-place-form-price" placeholder="Precio (ej: 8.95)" inputmode="decimal"></div></div>
         <div id="world-rating-stars" class="world-rating" data-action="rate" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"></div>
         <input id="world-place-note" placeholder="Nota opcional">
         <button type="button" class="world-save" id="world-place-save">Guardar local</button>

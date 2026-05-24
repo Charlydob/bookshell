@@ -177,6 +177,9 @@
 #view-world .world-stay-modal__sheet input{width:100%;min-width:0}
 #view-world .world-stay-modal__sheet .world-inline-2{gap:8px}
 #view-world .world-stay-modal__sheet [data-world-stay-save]{width:100%}
+#view-world .world-coords-block{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+#view-world .world-coords-block label{font-size:.85rem;opacity:.9}
+#view-world .world-input-error{color:#ffb3b3;font-size:.8rem;line-height:1.2}
 #view-world .world-stays-city-item{padding-left:0;list-style:none}
 @media (max-width:679px){
   #view-world #world-place-add-panel .world-inline-3,#view-world #world-place-edit-grid .world-inline-3{grid-template-columns:repeat(2,minmax(0,1fr))}

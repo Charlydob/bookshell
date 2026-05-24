@@ -55,6 +55,7 @@
     <div id="world-geo-mode" class="world-mode world-add-geo-panel">
       <div class="world-search-block" id="world-geo-search-block">
         <div class="world-place-search-row world-geo-search-row"><input id="world-geo-q" placeholder="Buscar país, ciudad o pueblo"><button type="button" class="world-optional-location-btn" id="world-geo-use-current-location">Usar ubicación actual</button></div>
+        <div class="world-coords-block"><label for="world-geo-coordinates">Coordenadas</label><input id="world-geo-coordinates" placeholder="Ej: (-15.6492308, -71.6015465)" inputmode="text" autocomplete="off"><small id="world-geo-coordinates-error" class="world-input-error" hidden>Coordenadas no válidas</small></div>
         <div id="world-geo-results" class="world-search-list"></div>
       </div>
       <div class="world-edit-grid world-edit-grid-geo"><input id="world-form-country" placeholder="País"><input id="world-form-region" placeholder="Región/Comunidad"><input id="world-form-city" placeholder="Ciudad/Lugar"></div>
@@ -69,6 +70,7 @@
           <div id="world-place-map-wrap"><div id="world-mini-map"></div></div>
           <div class="world-place-search-row"><input id="world-place-q" placeholder="Burger King, farmacia o dirección"><select id="world-place-radius"><option value="none" selected>Sin rango</option><option value="500">500m</option><option value="1000">1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
           <button type="button" class="world-optional-location-btn" id="world-place-use-current-location">Usar ubicación actual</button>
+          <div class="world-coords-block"><label for="world-place-coordinates">Coordenadas</label><input id="world-place-coordinates" placeholder="Ej: (-15.6492308, -71.6015465)" inputmode="text" autocomplete="off"><small id="world-place-coordinates-error" class="world-input-error" hidden>Coordenadas no válidas</small></div>
           <div id="world-place-results" class="world-search-list"></div>
         </div>
         <div class="world-edit-grid" id="world-place-edit-grid"><div class="world-inline-3"><input id="world-place-form-name" placeholder="Nombre"><div class="world-dual-field"><input id="world-place-form-emoji" placeholder="Emoji (ej: 🏪)"><select id="world-place-form-emoji-select"><option value="">Reutilizar emoji</option></select></div><div class="world-dual-field"><input id="world-place-form-category" placeholder="Tipo/categoría"><select id="world-place-form-category-select"><option value="">Reutilizar categoría</option></select></div></div><div class="world-inline-3"><input id="world-place-form-country" placeholder="País"><input id="world-place-form-region" placeholder="Región"><input id="world-place-form-city" placeholder="Ciudad/Lugar"></div><div class="world-inline-2"><input id="world-place-form-product" placeholder="Producto (opcional)"><input id="world-place-form-price" placeholder="Precio (ej: 8.95)" inputmode="decimal"></div></div>

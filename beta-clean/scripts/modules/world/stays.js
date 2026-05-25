@@ -5,7 +5,8 @@ import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 let ctx = { root:null };
 let stays = [];
 let unsub = null;
-let autoStayTried = false;
+let autoStayInFlight = false;
+let lastAutoStayError = null;
 const collapsedCountries = new Set();
 let globalStayModalHandlerBound = false;
 let activeEditStayId = null;
@@ -175,48 +176,84 @@ function openModal(stay = null) {
 }
 const closeModal = () => document.querySelector("[data-world-stay-modal]")?.remove();
 const openWorldStayModal = (stay = null) => openModal(stay);
-const showCompactWarning = (message = "") => { const node = $("[data-world-stays-warning]"); if (node) node.textContent = message; };
-async function reverseGeocode(lat, lon) { const u = new URL("https://nominatim.openstreetmap.org/reverse"); u.searchParams.set("lat", String(lat)); u.searchParams.set("lon", String(lon)); u.searchParams.set("format", "jsonv2"); u.searchParams.set("addressdetails", "1"); const raw = await (await fetch(u)).json(); const a = raw?.address || {}; return { city:String(a.city || a.town || a.village || a.municipality || "").trim(), region:String(a.state || a.region || "").trim(), country:String(a.country || "").trim(), countryCode:String(a.country_code || "").trim().toUpperCase() }; }
+function renderAutoStayWarning(message = "") {
+  const node = $("[data-world-stays-warning]");
+  if (!node) return;
+  if (!message) {
+    node.textContent = "";
+    return;
+  }
+  node.innerHTML = `<span>${esc(message)}</span> <button type="button" data-world-auto-stay-retry>Reintentar ubicación</button>`;
+}
 
-async function ensureAutoStayToday() {
-  if (autoStayTried) return;
-  autoStayTried = true;
+const showCompactWarning = (message = "") => renderAutoStayWarning(message);
+async function reverseGeocode(lat, lon) { const u = new URL("https://nominatim.openstreetmap.org/reverse"); u.searchParams.set("lat", String(lat)); u.searchParams.set("lon", String(lon)); u.searchParams.set("format", "jsonv2"); u.searchParams.set("addressdetails", "1"); const raw = await (await fetch(u)).json(); const a = raw?.address || {}; return { city:String(a.city || a.town || a.village || a.municipality || a.county || a.region || "Ubicación actual").trim(), region:String(a.state || a.region || "").trim(), country:String(a.country || "").trim(), countryCode:String(a.country_code || "").trim().toUpperCase() }; }
+
+async function ensureAutoStayToday({ force = false } = {}) {
+  if (autoStayInFlight) return;
   const uid = getCurrentUserDataRootKey() || auth.currentUser?.uid;
   if (!uid) return;
   const checkPath = `v2/users/${uid}/world/staysMeta/lastAutoLocationCheckDate`;
+  const lastCheck = localStorage.getItem(checkPath);
+  const today = todayIso();
+  if (!force && lastCheck === today) return;
+  autoStayInFlight = true;
+  console.debug("[world:stays:auto:start]", { force, today, lastCheck });
   try {
-    const lastCheck = localStorage.getItem(checkPath);
-    const today = todayIso();
-    if (lastCheck === today) return;
-    localStorage.setItem(checkPath, today);
-    if (!window.isSecureContext || !navigator.geolocation) throw new Error("permiso denegado");
-    const coords = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition((pos) => resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }), () => reject(new Error("permiso denegado")), { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
+    if (!window.isSecureContext || !navigator.geolocation) throw new Error("Geolocalización no disponible");
+    const coords = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition((pos) => resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }), (err) => reject(new Error(err?.message || "permiso denegado")), { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
+    console.debug("[world:stays:auto:coords]", coords);
     const place = await reverseGeocode(coords.lat, coords.lon);
-    if (!place.country || !place.city) throw new Error("ubicación incompleta");
+    console.debug("[world:stays:auto:reverse]", place);
+    if (!place.country) throw new Error("No se pudo detectar el país de la ubicación actual");
     const now = Date.now();
     const todayStay = todayIso();
     const autos = stays.filter((s) => s.source === "auto-location").sort((a, b) => String(b.endDate || "").localeCompare(String(a.endDate || "")));
     const last = autos[0] || null;
     if (!last) {
-      await mergeStayRecord(normalizeStay({ id:toId(), source:"auto-location", autoTracking:true, city:place.city, region:place.region, country:place.country, countryCode:place.countryCode, flagEmoji:flagFromCountryCode(place.countryCode), startDate:todayStay, endDate:todayStay, createdAt:now, updatedAt:now }));
-      return;
+      const payload = normalizeStay({ id:toId(), source:"auto-location", autoTracking:true, city:place.city, region:place.region, country:place.country, countryCode:place.countryCode, flagEmoji:flagFromCountryCode(place.countryCode), startDate:todayStay, endDate:todayStay, createdAt:now, updatedAt:now });
+      await mergeStayRecord(payload);
+      console.debug("[world:stays:auto:save:new]", { stayId:payload.id, city:payload.city, country:payload.country });
+    } else {
+      const same = last.city === place.city && last.countryCode === place.countryCode;
+      if (same) {
+        if (last.endDate !== todayStay) {
+          await mergeStayRecord({ ...last, endDate:todayStay, daysTotal:calcInclusiveDays(last.startDate, todayStay, last.daysTotal), updatedAt:now });
+          console.debug("[world:stays:auto:save:update]", { stayId:last.id, mode:"extend", endDate:todayStay });
+        }
+      } else {
+        const prevEndDate = addDaysIso(todayStay, -1);
+        const closedPrev = { ...last, endDate:prevEndDate, daysTotal:calcInclusiveDays(last.startDate, prevEndDate, last.daysTotal), updatedAt:now };
+        await mergeStayRecord(closedPrev);
+        console.debug("[world:stays:auto:save:update]", { stayId:closedPrev.id, mode:"close", endDate:prevEndDate });
+        const nextPayload = normalizeStay({ id:toId(), source:"auto-location", autoTracking:true, city:place.city, region:place.region, country:place.country, countryCode:place.countryCode, flagEmoji:flagFromCountryCode(place.countryCode), startDate:todayStay, endDate:todayStay, createdAt:now, updatedAt:now });
+        await mergeStayRecord(nextPayload);
+        console.debug("[world:stays:auto:save:new]", { stayId:nextPayload.id, city:nextPayload.city, country:nextPayload.country });
+      }
     }
-    const same = last.city === place.city && last.countryCode === place.countryCode;
-    if (same) {
-      if (last.endDate !== todayStay) await mergeStayRecord({ ...last, endDate:todayStay, daysTotal:calcInclusiveDays(last.startDate, todayStay, last.daysTotal), updatedAt:now });
-      return;
-    }
-    const closedPrev = { ...last, endDate:addDaysIso(todayStay, -1), daysTotal:calcInclusiveDays(last.startDate, addDaysIso(todayStay, -1), last.daysTotal), updatedAt:now };
-    await mergeStayRecord(closedPrev);
-    await mergeStayRecord(normalizeStay({ id:toId(), source:"auto-location", autoTracking:true, city:place.city, region:place.region, country:place.country, countryCode:place.countryCode, flagEmoji:flagFromCountryCode(place.countryCode), startDate:todayStay, endDate:todayStay, createdAt:now, updatedAt:now }));
+    localStorage.setItem(checkPath, today);
+    lastAutoStayError = null;
+    renderAutoStayWarning("");
   } catch (error) {
-    console.warn("[world:stays:auto:skip]", String(error?.message || "error"));
-    showCompactWarning("No se pudo registrar ubicación automática");
+    lastAutoStayError = String(error?.message || "error");
+    console.warn("[world:stays:auto:error]", lastAutoStayError);
+    renderAutoStayWarning(`No se pudo registrar ubicación automática: ${lastAutoStayError}`);
+  } finally {
+    autoStayInFlight = false;
   }
 }
 
 export function renderWorldStays() { render(); }
 function initWorldStaysAsync() { Promise.resolve().then(() => ensureAutoStayToday()).catch((error) => console.error("[world:stays:init:error]", error)); }
+
+function handleWorldRootClick(e) {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  if (btn.dataset.worldStayEdit) { const stay = stays.find((s) => s.id === btn.dataset.worldStayEdit); if (stay) openWorldStayModal(stay); return; }
+  if (btn.dataset.worldStayDelete) { const uid2 = getCurrentUserDataRootKey() || auth.currentUser?.uid; if (!uid2 || !window.confirm("¿Eliminar esta estancia?")) return; remove(ref(db, `v2/users/${uid2}/world/stays/${btn.dataset.worldStayDelete}`)); return; }
+  if (btn.dataset.worldSetBirthdate !== undefined) { const val = window.prompt("Fecha de nacimiento (YYYY-MM-DD)", getBirthDate()); if (val) { persistBirthDate(val.trim()); render(); } return; }
+  if (btn.dataset.worldAutoStayRetry !== undefined) { console.debug("[world:stays:auto:retry]", { lastAutoStayError }); renderAutoStayWarning("Buscando ubicación…"); ensureAutoStayToday({ force:true }); }
+}
 
 export function initWorldStays({ root }) {
   ctx = { root };
@@ -256,9 +293,18 @@ export function initWorldStays({ root }) {
         closeModal();
       }
       if (btn.dataset.worldUseCurrent !== undefined) {
-        const coords = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition((pos) => resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }), () => reject(new Error("permiso denegado")), { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
-        const place = await reverseGeocode(coords.lat, coords.lon);
-        fillStayForm({ city:place.city, region:place.region, country:place.country, countryCode:place.countryCode, flagEmoji:flagFromCountryCode(place.countryCode) });
+        try {
+          showCompactWarning("Buscando ubicación…");
+          const coords = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition((pos) => resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }), (err) => reject(new Error(err?.message || "permiso denegado")), { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
+          const place = await reverseGeocode(coords.lat, coords.lon);
+          if (!place.country) throw new Error("No se pudo detectar el país de la ubicación actual");
+          fillStayForm({ city:place.city, region:place.region, country:place.country, countryCode:place.countryCode, flagEmoji:flagFromCountryCode(place.countryCode) });
+          showCompactWarning("");
+        } catch (error) {
+          const msg = `No se pudo usar la ubicación actual: ${String(error?.message || "error")}`;
+          showCompactWarning(msg);
+          console.warn("[world:stays:auto:error]", msg);
+        }
       }
     });
     document.addEventListener("input", (e) => {
@@ -271,21 +317,17 @@ export function initWorldStays({ root }) {
     });
   }
 
-  root.addEventListener("click", async (e) => {
-    const btn = e.target.closest("button");
-    if (!btn) return;
-    if (btn.dataset.worldStayEdit) { const stay = stays.find((s) => s.id === btn.dataset.worldStayEdit); if (stay) openWorldStayModal(stay); return; }
-    if (btn.dataset.worldStayDelete) { if (!window.confirm("¿Eliminar esta estancia?")) return; const uid2 = getCurrentUserDataRootKey() || auth.currentUser?.uid; if (!uid2) return; await remove(ref(db, `v2/users/${uid2}/world/stays/${btn.dataset.worldStayDelete}`)); return; }
-    if (btn.dataset.worldSetBirthdate !== undefined) { const val = window.prompt("Fecha de nacimiento (YYYY-MM-DD)", getBirthDate()); if (val) { persistBirthDate(val.trim()); render(); } }
-  });
-
-  root.addEventListener("toggle", (e) => {
+  if (!root.dataset.worldStaysHandlersBound) {
+    root.dataset.worldStaysHandlersBound = "1";
+    root.addEventListener("click", handleWorldRootClick);
+    root.addEventListener("toggle", (e) => {
     const details = e.target;
     if (!(details instanceof HTMLDetailsElement) || !details.matches(".world-stays-country")) return;
     const key = details.dataset.countryKey || "";
     if (!key) return;
     if (details.open) collapsedCountries.delete(key); else collapsedCountries.add(key);
-  });
+    });
+  }
 
   render();
 }

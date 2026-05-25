@@ -183,7 +183,7 @@ function renderAutoStayWarning(message = "") {
     node.textContent = "";
     return;
   }
-  node.innerHTML = `<span>${esc(message)}</span> <button type="button" data-world-auto-stay-retry>Reintentar ubicación</button>`;
+  node.innerHTML = `<span>${esc(message)}</span> <button type="button" data-world-auto-stay-retry>Reintentar ubicación</button> <button type="button" data-world-force-auto-stay>Registrar ubicación actual</button>`;
 }
 
 const showCompactWarning = (message = "") => renderAutoStayWarning(message);
@@ -261,6 +261,17 @@ async function ensureAutoStayToday({ force = false } = {}) {
   }
 }
 
+async function registerAutoStayFromCurrentLocation() {
+  if (autoStayInFlight) return;
+  renderAutoStayWarning("Registrando ubicación…");
+  await ensureAutoStayToday({ force:true });
+  if (lastAutoStayError) {
+    renderAutoStayWarning(`No se pudo registrar ubicación actual: ${lastAutoStayError}`);
+    return;
+  }
+  renderAutoStayWarning("✅ Ubicación actual registrada.");
+}
+
 export function renderWorldStays() { render(); }
 function initWorldStaysAsync() { Promise.resolve().then(() => ensureAutoStayToday()).catch((error) => console.error("[world:stays:init:error]", error)); }
 
@@ -271,6 +282,7 @@ function handleWorldRootClick(e) {
   if (btn.dataset.worldStayDelete) { const uid2 = getCurrentUserDataRootKey() || auth.currentUser?.uid; if (!uid2 || !window.confirm("¿Eliminar esta estancia?")) return; remove(ref(db, `v2/users/${uid2}/world/stays/${btn.dataset.worldStayDelete}`)); return; }
   if (btn.dataset.worldSetBirthdate !== undefined) { const val = window.prompt("Fecha de nacimiento (YYYY-MM-DD)", getBirthDate()); if (val) { persistBirthDate(val.trim()); render(); } return; }
   if (btn.dataset.worldAutoStayRetry !== undefined) { console.debug("[world:stays:auto:retry]", { lastAutoStayError }); renderAutoStayWarning("Buscando ubicación…"); ensureAutoStayToday({ force:true }); }
+  if (btn.dataset.worldForceAutoStay !== undefined) { registerAutoStayFromCurrentLocation(); return; }
 }
 
 export function initWorldStays({ root }) {

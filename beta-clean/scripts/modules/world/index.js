@@ -22,7 +22,7 @@ const LOCAL_CATEGORY_EMOJI_MAP = [
   { emoji:"🛍️", keywords:["tienda","shop","store"] }
 ];
 
-const state = { initialized:false, unsubGeography:null, unsubPlaces:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), worldLayers:null, worldClusterGroup:null, geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", activeSubtab:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add", selectedGeoCandidate:null, selectedWorldMapCategoryFilters:new Set() };
+const state = { initialized:false, unsubGeography:null, unsubPlaces:null, map:null, miniMap:null, miniMarkers:[], markers:new Map(), worldLayers:null, worldClusterGroup:null, geography:[], places:[], userCenter:{ lat:DEFAULT_MAP_CENTER_SPAIN[0], lon:DEFAULT_MAP_CENTER_SPAIN[1] }, selectedGeo:null, selectedPlace:null, selectedGeoIndex:-1, selectedPlaceIndex:-1, geoResults:[], placeResults:[], geoRating:0, placeRating:0, activeWindow:"map", activeSubtab:"map", addMode:"geo", editing:null, toastTimer:null, mapMarkersIndex:new Map(), showEditLocationSearch:false, placeModalMode:"add", selectedGeoCandidate:null, selectedWorldMapCategoryFilters:new Set(), userLocationMarker:null, userLocationAccuracyCircle:null };
 
 function getLocalCategoryEmoji(categoryOrType = "") {
   const normalized = String(categoryOrType || "").trim().toLowerCase();
@@ -173,6 +173,30 @@ function destroyWorldMapLayers(){
   }
   state.markers.clear();
   state.mapMarkersIndex.clear();
+}
+function updateUserLocationVisual(coords = null){
+  if (!window.L || !state.map || !coords || !Number.isFinite(coords.lat) || !Number.isFinite(coords.lon)) return;
+  const L = window.L;
+  const latLng = [coords.lat, coords.lon];
+  if (!state.userLocationMarker) {
+    state.userLocationMarker = L.circleMarker(latLng, { radius:8, color:"#FFFFFF", weight:2, fillColor:"#1a73e8", fillOpacity:1 });
+    state.userLocationMarker.addTo(state.map);
+  } else state.userLocationMarker.setLatLng(latLng);
+  console.debug("[world:map:user-location:marker]", { lat:coords.lat, lon:coords.lon });
+  const accuracy = Number(coords.accuracy);
+  if (Number.isFinite(accuracy) && accuracy > 0) {
+    if (!state.userLocationAccuracyCircle) {
+      state.userLocationAccuracyCircle = L.circle(latLng, { radius:accuracy, color:"#1a73e8", weight:1, fillColor:"#1a73e8", fillOpacity:0.12 });
+      state.userLocationAccuracyCircle.addTo(state.map);
+    } else {
+      state.userLocationAccuracyCircle.setLatLng(latLng);
+      state.userLocationAccuracyCircle.setRadius(accuracy);
+    }
+    console.debug("[world:map:user-location:accuracy]", { accuracy });
+  } else if (state.userLocationAccuracyCircle) {
+    state.userLocationAccuracyCircle.remove();
+    state.userLocationAccuracyCircle = null;
+  }
 }
 function createGoogleMapsUrl(lat, lon){
   if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) return "";
@@ -347,6 +371,7 @@ async function centerWorldMapOnCurrentLocation({ force = false } = {}) {
     if (!coords) throw new Error("Ubicación no disponible");
     console.debug("[world:map:center:coords]", coords);
     state.userCenter = { lat:coords.lat, lon:coords.lon };
+    updateUserLocationVisual(coords);
     if (state.map) state.map.setView([coords.lat, coords.lon], 9);
     console.debug("[world:map:center:applied]", { hasMap:Boolean(state.map), center:state.userCenter });
     return true;
@@ -774,11 +799,11 @@ async function getCurrentPositionSafe({ forceRequest = false } = {}){
   if (!forceRequest && !cachedAccepted) return null;
   if (permissionState === "denied") { localStorage.removeItem(WORLD_LOCATION_PERMISSION_KEY); console.log("[world:location] permission:denied"); return null; }
   console.log("[world:location] permission:request");
-  return new Promise((resolve)=>navigator.geolocation.getCurrentPosition((pos)=>{ localStorage.setItem(WORLD_LOCATION_PERMISSION_KEY, "true"); console.log("[world:location] permission:accepted"); resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }); }, ()=>{ localStorage.removeItem(WORLD_LOCATION_PERMISSION_KEY); console.log("[world:location] permission:denied"); resolve(null); }, { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
+  return new Promise((resolve)=>navigator.geolocation.getCurrentPosition((pos)=>{ localStorage.setItem(WORLD_LOCATION_PERMISSION_KEY, "true"); console.log("[world:location] permission:accepted"); resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude), accuracy:Number(pos.coords.accuracy) }); }, ()=>{ localStorage.removeItem(WORLD_LOCATION_PERMISSION_KEY); console.log("[world:location] permission:denied"); resolve(null); }, { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
 }
 
 export async function init(){ if(state.initialized) return; state.initialized=true; await ensureLeaflet(); bindUI(); initWorldStays({ root:$id("view-world"), state, helpers:{ showToast } }); renderRatings(); await centerWorldMapOnCurrentLocation({ force:false }); const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; const geographyPath = firebasePaths.worldGeography(uid); const placesPath = firebasePaths.worldPlaces(uid); const rerender = () => { renderAll(); if (state.map && !state._mapClusterBound) { state._mapClusterBound = true; state.map.on("zoomend moveend", ()=>renderWorldMarkers()); } }; state.unsubGeography=trackedOnValue(ref(db, geographyPath), (snap)=>{ const data=snap.val()||{}; state.geography=Object.values(data).map((x)=>normalize(x,"geography")); rerender(); }, { key:"world-geography", path:geographyPath, module:"world", mode:"onValue", reason:"world-geography", viewId:"view-world" }, onValue); state.unsubPlaces=trackedOnValue(ref(db, placesPath), (snap)=>{ const data=snap.val()||{}; state.places=Object.values(data).map((x)=>normalize({ ...x, lng:x.lng ?? x.lon, googleMapsDirectionsUrl:x.googleMapsDirectionsUrl || x.googleMapsUrl || createGoogleMapsUrl(x.lat, x.lon ?? x.lng), googleMapsUrl:x.googleMapsUrl || x.googleMapsDirectionsUrl || createGoogleMapsUrl(x.lat, x.lon ?? x.lng) },"places")); rerender(); }, { key:"world-places", path:placesPath, module:"world", mode:"onValue", reason:"world-places", viewId:"view-world" }, onValue); }
-export function destroy(){ if(state.unsubGeography) state.unsubGeography(); if(state.unsubPlaces) state.unsubPlaces(); state.unsubGeography=null; state.unsubPlaces=null; if(state.map){ destroyWorldMapLayers(); destroyLeafletMap($id("world-map")); state.map=null; } if(state.miniMap){ destroyLeafletMap($id("world-mini-map")); state.miniMap=null; } state.initialized=false; }
+export function destroy(){ if(state.unsubGeography) state.unsubGeography(); if(state.unsubPlaces) state.unsubPlaces(); state.unsubGeography=null; state.unsubPlaces=null; if(state.map){ destroyWorldMapLayers(); if (state.userLocationMarker) { state.userLocationMarker.remove(); state.userLocationMarker = null; } if (state.userLocationAccuracyCircle) { state.userLocationAccuracyCircle.remove(); state.userLocationAccuracyCircle = null; } destroyLeafletMap($id("world-map")); state.map=null; } if(state.miniMap){ destroyLeafletMap($id("world-mini-map")); state.miniMap=null; } state.initialized=false; }
 export async function onShow(){ if(!state.initialized) await init(); setWindow(state.activeWindow); invalidateLeafletMap(state.map,70); }
 export async function onHide(){ destroy(); }
 export function getListenerCount(){ return (state.unsubGeography?1:0) + (state.unsubPlaces?1:0); }

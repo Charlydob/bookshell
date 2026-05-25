@@ -340,7 +340,36 @@ function renderWorldMarkers(){
   if (addedMarkers === 0) console.warn("[world:markers:empty:samples]", sampleSkipped);
   logWorldClusterZoom();
 }
-function renderMap(){ if(!window.L) return; const host = $id("world-map"); if(!host) return; if(!state.map) state.map = createLeafletMap(host, { center:[state.userCenter.lat, state.userCenter.lon], zoom:5 }); renderWorldMarkers(); }
+async function centerWorldMapOnCurrentLocation({ force = false } = {}) {
+  console.debug("[world:map:center:start]", { force });
+  try {
+    const coords = await getCurrentPositionSafe({ forceRequest:force });
+    if (!coords) throw new Error("Ubicación no disponible");
+    console.debug("[world:map:center:coords]", coords);
+    state.userCenter = { lat:coords.lat, lon:coords.lon };
+    if (state.map) state.map.setView([coords.lat, coords.lon], 9);
+    console.debug("[world:map:center:applied]", { hasMap:Boolean(state.map), center:state.userCenter });
+    return true;
+  } catch (error) {
+    console.warn("[world:map:center:error]", String(error?.message || error));
+    return false;
+  }
+}
+function ensureMapCenterButton(host) {
+  if (!host || host.querySelector("[data-world-map-center-btn]")) return;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.dataset.worldMapCenterBtn = "1";
+  btn.className = "world-optional-location-btn";
+  btn.style.position = "absolute";
+  btn.style.zIndex = "500";
+  btn.style.top = "10px";
+  btn.style.right = "10px";
+  btn.textContent = "Centrar en mi ubicación";
+  host.style.position = "relative";
+  host.appendChild(btn);
+}
+function renderMap(){ if(!window.L) return; const host = $id("world-map"); if(!host) return; if(!state.map) state.map = createLeafletMap(host, { center:[state.userCenter.lat, state.userCenter.lon], zoom:5 }); ensureMapCenterButton(host); renderWorldMarkers(); }
 function setWindow(mode){ state.activeWindow = mode; state.activeSubtab = mode; document.querySelectorAll("#view-world .world-tab").forEach((b)=>b.classList.toggle("active", b.dataset.window===mode)); document.querySelectorAll("#view-world [data-window-panel]").forEach((p)=>p.classList.toggle("active", p.dataset.windowPanel===mode)); invalidateLeafletMap(state.map, 60); }
 
 
@@ -692,6 +721,7 @@ function bindUI(){
     if(t.dataset.worldRate){ const [kind,idv]=t.dataset.worldRate.split(":"); const rows = kind === "geography" ? state.geography : state.places; const rec = rows.find((x)=>x.id===idv); if (!rec) return; rec.rating = Math.min(10, (rec.rating || 0) + 1); await persistWorld(); renderAll(); }
     if (t.id === "world-geo-enable-search" || t.id === "world-place-enable-search") { state.showEditLocationSearch = true; setEditModeUI(); }
     if (t.dataset.worldMapFilterClear) clearWorldMapCategoryFilter(t.dataset.worldMapFilterClear);
+    if (t.dataset.worldMapCenterBtn !== undefined) centerWorldMapOnCurrentLocation({ force:true });
   });
   $id("world-geo-q").addEventListener("input", (e)=> e.target.value.trim().length>1 ? searchGeo(e.target.value.trim()) : ($id("world-geo-results").innerHTML = ""));
   $id("world-place-q").addEventListener("input", (e)=> e.target.value.trim().length>1 ? searchPlace(e.target.value.trim()) : ($id("world-place-results").innerHTML = ""));
@@ -747,7 +777,7 @@ async function getCurrentPositionSafe({ forceRequest = false } = {}){
   return new Promise((resolve)=>navigator.geolocation.getCurrentPosition((pos)=>{ localStorage.setItem(WORLD_LOCATION_PERMISSION_KEY, "true"); console.log("[world:location] permission:accepted"); resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }); }, ()=>{ localStorage.removeItem(WORLD_LOCATION_PERMISSION_KEY); console.log("[world:location] permission:denied"); resolve(null); }, { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
 }
 
-export async function init(){ if(state.initialized) return; state.initialized=true; await ensureLeaflet(); bindUI(); initWorldStays({ root:$id("view-world"), state, helpers:{ showToast } }); renderRatings(); const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; const geographyPath = firebasePaths.worldGeography(uid); const placesPath = firebasePaths.worldPlaces(uid); const rerender = () => { renderAll(); if (state.map && !state._mapClusterBound) { state._mapClusterBound = true; state.map.on("zoomend moveend", ()=>renderWorldMarkers()); } }; state.unsubGeography=trackedOnValue(ref(db, geographyPath), (snap)=>{ const data=snap.val()||{}; state.geography=Object.values(data).map((x)=>normalize(x,"geography")); rerender(); }, { key:"world-geography", path:geographyPath, module:"world", mode:"onValue", reason:"world-geography", viewId:"view-world" }, onValue); state.unsubPlaces=trackedOnValue(ref(db, placesPath), (snap)=>{ const data=snap.val()||{}; state.places=Object.values(data).map((x)=>normalize({ ...x, lng:x.lng ?? x.lon, googleMapsDirectionsUrl:x.googleMapsDirectionsUrl || x.googleMapsUrl || createGoogleMapsUrl(x.lat, x.lon ?? x.lng), googleMapsUrl:x.googleMapsUrl || x.googleMapsDirectionsUrl || createGoogleMapsUrl(x.lat, x.lon ?? x.lng) },"places")); rerender(); }, { key:"world-places", path:placesPath, module:"world", mode:"onValue", reason:"world-places", viewId:"view-world" }, onValue); }
+export async function init(){ if(state.initialized) return; state.initialized=true; await ensureLeaflet(); bindUI(); initWorldStays({ root:$id("view-world"), state, helpers:{ showToast } }); renderRatings(); await centerWorldMapOnCurrentLocation({ force:false }); const uid=getCurrentUserDataRootKey() || auth.currentUser?.uid; if(!uid) return; const geographyPath = firebasePaths.worldGeography(uid); const placesPath = firebasePaths.worldPlaces(uid); const rerender = () => { renderAll(); if (state.map && !state._mapClusterBound) { state._mapClusterBound = true; state.map.on("zoomend moveend", ()=>renderWorldMarkers()); } }; state.unsubGeography=trackedOnValue(ref(db, geographyPath), (snap)=>{ const data=snap.val()||{}; state.geography=Object.values(data).map((x)=>normalize(x,"geography")); rerender(); }, { key:"world-geography", path:geographyPath, module:"world", mode:"onValue", reason:"world-geography", viewId:"view-world" }, onValue); state.unsubPlaces=trackedOnValue(ref(db, placesPath), (snap)=>{ const data=snap.val()||{}; state.places=Object.values(data).map((x)=>normalize({ ...x, lng:x.lng ?? x.lon, googleMapsDirectionsUrl:x.googleMapsDirectionsUrl || x.googleMapsUrl || createGoogleMapsUrl(x.lat, x.lon ?? x.lng), googleMapsUrl:x.googleMapsUrl || x.googleMapsDirectionsUrl || createGoogleMapsUrl(x.lat, x.lon ?? x.lng) },"places")); rerender(); }, { key:"world-places", path:placesPath, module:"world", mode:"onValue", reason:"world-places", viewId:"view-world" }, onValue); }
 export function destroy(){ if(state.unsubGeography) state.unsubGeography(); if(state.unsubPlaces) state.unsubPlaces(); state.unsubGeography=null; state.unsubPlaces=null; if(state.map){ destroyWorldMapLayers(); destroyLeafletMap($id("world-map")); state.map=null; } if(state.miniMap){ destroyLeafletMap($id("world-mini-map")); state.miniMap=null; } state.initialized=false; }
 export async function onShow(){ if(!state.initialized) await init(); setWindow(state.activeWindow); invalidateLeafletMap(state.map,70); }
 export async function onHide(){ destroy(); }

@@ -5265,10 +5265,35 @@ function handleReminderCountdownClick(event) {
 }
 
 function getReminderComputedStatus(reminder) {
-  if (reminder?.status === "completado") return "completado";
-  const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
-  if (!targetAt) return "pendiente";
-  return targetAt < Date.now() ? "vencido" : "pendiente";
+  const todayKey = getTodayDateKey();
+  const dailyTarget = Math.max(1, Number(reminder?.dailyTargetCount || 1));
+  const startDate = String(reminder?.startDate || reminder?.targetDate || "");
+  const endDate = String(reminder?.endDate || reminder?.targetDate || startDate);
+  const todayDone = Number(reminder?.completionsByDate?.[todayKey] || 0) >= dailyTarget;
+  if (todayKey >= startDate && todayKey <= endDate && todayDone) return "completado";
+  if (todayKey > endDate) {
+    for (let cursor = new Date(`${startDate}T00:00:00`); getDateKeyFromDate(cursor) <= endDate; cursor.setDate(cursor.getDate() + 1)) {
+      const key = getDateKeyFromDate(cursor);
+      if (Number(reminder?.completionsByDate?.[key] || 0) < dailyTarget) return "vencido";
+    }
+    return "completado";
+  }
+  return "pendiente";
+}
+
+function normalizeReminderForTreatment(reminder = {}) {
+  const baseDate = String(reminder?.targetDate || reminder?.date || getTodayDateKey()).trim();
+  const startDate = String(reminder?.startDate || baseDate).trim();
+  const endDate = String(reminder?.endDate || baseDate).trim() || startDate;
+  const dailyTargetCount = Math.max(1, Math.min(12, Number(reminder?.dailyTargetCount || 1) || 1));
+  return {
+    ...reminder,
+    targetDate: baseDate,
+    startDate,
+    endDate: endDate < startDate ? startDate : endDate,
+    dailyTargetCount,
+    completionsByDate: typeof reminder?.completionsByDate === "object" && reminder?.completionsByDate ? { ...reminder.completionsByDate } : {},
+  };
 }
 
 function sortReminderChecklistItems(items = []) {
@@ -5461,16 +5486,13 @@ function buildReminderCalendarMap(reminders = [], cells = []) {
 
   dateKeys.forEach((dateKey) => map.set(dateKey, []));
 
-  reminders.forEach((reminder) => {
-    const years = reminder?.repeat === "yearly"
-      ? visibleYears
-      : [parseDateKey(reminder?.targetDate || "")?.year].filter(Boolean);
-
-    years.forEach((year) => {
-      const occurrenceKey = getReminderOccurrenceDateKey(reminder, reminder?.repeat === "yearly" ? year : null);
-      if (!occurrenceKey || !dateKeySet.has(occurrenceKey)) return;
+  reminders.forEach((rawReminder) => {
+    const reminder = normalizeReminderForTreatment(rawReminder);
+    for (let cursor = new Date(`${reminder.startDate}T00:00:00`); getDateKeyFromDate(cursor) <= reminder.endDate; cursor.setDate(cursor.getDate() + 1)) {
+      const occurrenceKey = getDateKeyFromDate(cursor);
+      if (!occurrenceKey || !dateKeySet.has(occurrenceKey)) continue;
       map.set(occurrenceKey, [...(map.get(occurrenceKey) || []), reminder]);
-    });
+    }
   });
 
   for (const [dateKey, items] of map.entries()) {
@@ -5680,10 +5702,7 @@ function flushReminderRemoteRestore() {
 function getRemindersForSelectedCalendarDate(reminders = [], dateKey = state.reminderCalendarSelectedDate) {
   const safeDateKey = parseDateKey(dateKey || "") ? String(dateKey) : "";
   if (!safeDateKey) return Array.isArray(reminders) ? reminders : [];
-  const selectedYear = parseDateKey(safeDateKey)?.year || new Date().getFullYear();
-  return (Array.isArray(reminders) ? reminders : []).filter((reminder) => (
-    getReminderOccurrenceDateKey(reminder, reminder?.repeat === "yearly" ? selectedYear : null) === safeDateKey
-  ));
+  return (Array.isArray(reminders) ? reminders : []).map(normalizeReminderForTreatment).filter((reminder) => safeDateKey >= reminder.startDate && safeDateKey <= reminder.endDate);
 }
 
 function selectReminderCalendarDate(dateKey = "", {
@@ -5780,6 +5799,7 @@ function getFilteredReminders() {
 
 function renderReminderCardsToMarkup(reminders = []) {
   return reminders.map((reminder) => {
+    reminder = normalizeReminderForTreatment(reminder);
     const computedStatus = getReminderComputedStatus(reminder);
     const dateLabel = formatReminderDateTime(reminder);
     const countdown = formatReminderCountdown(reminder, state.reminderCountdownMode);
@@ -5791,6 +5811,9 @@ function renderReminderCardsToMarkup(reminders = []) {
     const progress = checklist.total ? Math.round((checklist.done / checklist.total) * 100) : 0;
     const accentStyle = buildReminderAccentStyle(reminder);
     const detectedLinks = collectReminderExternalLinks(reminder);
+    const selectedDate = state.reminderCalendarSelectedDate || getTodayDateKey();
+    const todayDone = Math.max(0, Number(reminder.completionsByDate?.[selectedDate] || 0));
+    const todayProgress = `${Math.min(todayDone, reminder.dailyTargetCount)}/${reminder.dailyTargetCount} completado hoy`;
     return `
       <article class="notes-reminder-item is-${escapeHtml(computedStatus)}" data-reminder-id="${escapeHtml(reminder.id)}" style="${escapeHtml(accentStyle)}">
         <div class="notes-reminder-main">
@@ -5800,13 +5823,13 @@ function renderReminderCardsToMarkup(reminders = []) {
             ${isChecklist ? `<span class="notes-reminder-expand-hint">${isExpanded ? "▾" : "▸"}</span>` : ""}
           </button>
 
-          <div class="notes-reminder-meta">${escapeHtml(dateLabel)} · ${escapeHtml(reminder?.type || "normal")} · ${escapeHtml(computedStatus)}</div>
+          <div class="notes-reminder-meta">${escapeHtml(`${reminder.startDate} → ${reminder.endDate}`)} · ${escapeHtml(computedStatus)}</div>
 
 <div class="meta-reminder">
           ${categories.length ? `<div class="notes-reminder-categories">${categories.map((category) => `<span class="notes-reminder-chip">${escapeHtml(category)}</span>`).join("")}</div>` : ""}
 
 
-          <div class="notes-reminder-countdown" data-reminder-id="${escapeHtml(reminder.id)}" data-countdown-mode="${escapeHtml(normalizeReminderCountdownMode(state.reminderCountdownMode))}">${escapeHtml(countdown)}</div>
+          <div class="notes-reminder-countdown" data-reminder-id="${escapeHtml(reminder.id)}" data-countdown-mode="${escapeHtml(normalizeReminderCountdownMode(state.reminderCountdownMode))}">${escapeHtml(todayProgress)}</div>
 
 
           ${isChecklist ? `
@@ -5833,6 +5856,7 @@ function renderReminderCardsToMarkup(reminders = []) {
         </div>
 
         <div class="notes-item-actions notes-reminder-actions">
+          <button class="notes-icon-action" type="button" data-act="undo-reminder-check" data-reminder-id="${escapeHtml(reminder.id)}">↩️</button>
           <button class="notes-icon-action" type="button" data-act="edit-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✏️</button>
           <button class="notes-icon-action" type="button" data-act="complete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">✅</button>
           <button class="notes-icon-action" type="button" data-act="delete-reminder" data-reminder-id="${escapeHtml(reminder.id)}">🗑️</button>
@@ -6198,6 +6222,7 @@ function renderRemindersPanel() {
   renderReminderFilterControls();
   renderReminderViewSwitch();
   const filtered = getFilteredReminders();
+  console.debug("[reminders:treatment:render]", { total: filtered.length, selectedDate: state.reminderCalendarSelectedDate });
   ensureReminderCalendarSelection(filtered);
   renderReminderCalendarView(filtered);
   const reminderListState = getReminderListState(filtered);
@@ -7136,6 +7161,9 @@ function openReminderModal(reminder = null, options = {}) {
   $id("notes-reminder-emoji").value = reminder?.emoji || "⏰";
   $id("notes-reminder-type").value = reminder?.type || "normal";
   $id("notes-reminder-date").value = reminder?.targetDate || presetDate || "";
+  $id("notes-reminder-start-date").value = reminder?.startDate || reminder?.targetDate || presetDate || "";
+  $id("notes-reminder-end-date").value = reminder?.endDate || reminder?.targetDate || presetDate || "";
+  $id("notes-reminder-daily-target-count").value = String(Math.max(1, Number(reminder?.dailyTargetCount || 1)));
   $id("notes-reminder-time").value = reminder?.targetTime || "";
   $id("notes-reminder-color").value = normalizeReminderColor(reminder?.color);
   $id("notes-reminder-is-birthday").checked = reminder?.type === "cumpleaños";
@@ -7143,7 +7171,6 @@ function openReminderModal(reminder = null, options = {}) {
   $id("notes-reminder-delete")?.classList.toggle("hidden", !reminder);
   $id("notes-reminder-modal-title").textContent = reminder ? "Editar recordatorio" : "Nuevo recordatorio";
   if ($id("notes-reminder-category-new")) $id("notes-reminder-category-new").value = "";
-  renderReminderAlertDrafts();
   renderReminderCategoryDrafts();
   renderReminderColorPalette(reminder?.color);
   renderReminderChecklistDrafts();
@@ -7158,11 +7185,29 @@ async function handleReminderPrimaryAction(action = "", reminder = null) {
     return true;
   }
   if (action === "complete-reminder") {
-    const nextReminder = { ...reminder, status: "completado", completedAt: Date.now() };
-    const nextReminders = (state.reminders || []).map((item) => (item.id === reminder.id ? nextReminder : item));
-    if (shouldResetReminderFilterToAllPending(nextReminders)) {
-      clearReminderActiveFilter();
-    }
+    const selectedDate = state.reminderCalendarSelectedDate || getTodayDateKey();
+    const normalized = normalizeReminderForTreatment(reminder);
+    const current = Number(normalized.completionsByDate?.[selectedDate] || 0);
+    if (current >= normalized.dailyTargetCount) return true;
+    const nextReminder = {
+      ...normalized,
+      completionsByDate: { ...normalized.completionsByDate, [selectedDate]: current + 1 },
+      updatedAt: Date.now(),
+    };
+    console.info("[reminders:treatment:check]", { reminderId: reminder.id, date: selectedDate, value: current + 1 });
+    await updateReminder(state.rootPath, reminder.id, nextReminder);
+    return true;
+  }
+  if (action === "undo-reminder-check") {
+    const selectedDate = state.reminderCalendarSelectedDate || getTodayDateKey();
+    const normalized = normalizeReminderForTreatment(reminder);
+    const current = Number(normalized.completionsByDate?.[selectedDate] || 0);
+    if (current <= 0) return true;
+    const nextReminder = {
+      ...normalized,
+      completionsByDate: { ...normalized.completionsByDate, [selectedDate]: current - 1 },
+      updatedAt: Date.now(),
+    };
     await updateReminder(state.rootPath, reminder.id, nextReminder);
     return true;
   }
@@ -9019,6 +9064,9 @@ function bindUiEvents() {
     const targetTime = String($id("notes-reminder-time").value || "").trim();
     const color = normalizeReminderColor($id("notes-reminder-color")?.value || DEFAULT_REMINDER_COLOR);
     const isBirthday = Boolean($id("notes-reminder-is-birthday").checked) || type === "cumpleaños";
+    const startDate = String($id("notes-reminder-start-date").value || targetDate || "").trim();
+    const endDate = String($id("notes-reminder-end-date").value || startDate || "").trim();
+    const dailyTargetCount = Math.max(1, Math.min(12, Number($id("notes-reminder-daily-target-count").value || 1) || 1));
     const repeat = $id("notes-reminder-repeat-yearly").checked ? "yearly" : "none";
     const errorField = $id("notes-reminder-form-error");
     errorField.textContent = "";
@@ -9028,6 +9076,10 @@ function bindUiEvents() {
     }
     if (!title || !targetDate) {
       errorField.textContent = "Título y fecha son obligatorios.";
+      return;
+    }
+    if (endDate < startDate) {
+      errorField.textContent = "La fecha fin no puede ser menor que la fecha inicio.";
       return;
     }
     const current = state.reminders.find((row) => row.id === id);
@@ -9041,10 +9093,14 @@ function bindUiEvents() {
       type: isBirthday ? "cumpleaños" : type,
       targetDate,
       targetTime,
+      startDate,
+      endDate,
+      dailyTargetCount,
+      completionsByDate: current?.completionsByDate || {},
       color,
       status: checklistAllDone ? "completado" : (current?.status === "completado" ? "completado" : "pendiente"),
       categories: reminderDraftCategories,
-      remindBefore: reminderDraftAlerts,
+      remindBefore: [],
       checklistItems,
       repeat: isBirthday ? "yearly" : repeat,
       createdAt: current?.createdAt || Date.now(),
@@ -9054,6 +9110,7 @@ function bindUiEvents() {
       notifiedAt: 0,
     };
     try {
+      console.info("[reminders:treatment:save]", { id: id || "new", startDate, endDate, dailyTargetCount });
       if (id) await updateReminder(state.rootPath, id, payload);
       else await createReminder(state.rootPath, payload);
       closeReminderModal();
@@ -9099,7 +9156,7 @@ function subscribeData(uid) {
       state.rootPath = safeRootPath;
       state.folders = payload.folders;
       state.notes = payload.notes;
-      state.reminders = payload.reminders || [];
+      state.reminders = (payload.reminders || []).map((row) => normalizeReminderForTreatment(row));
       state.reminderCategories = payload.reminderCategories || [];
       state.reminderPreferences = payload.reminderPreferences || {};
       if (state.reminderPreferences && !state._reminderPrefsApplied) {

@@ -270,20 +270,22 @@
             <div class="notes-reminder-color-palette" id="notes-reminder-color-palette" role="radiogroup" aria-label="Color del recordatorio"></div>
           </div>
         </div>
-        <div class="notes-reminder-modal-row notes-reminder-row-alerts">
-          <div class="notes-reminder-alert-builder">
-          <div class="field-label">Avisos previos</div>
-          <div class="notes-reminder-alert-inputs">
-            <input id="notes-reminder-alert-amount" type="number" min="1" placeholder="Cantidad" />
-            <select id="notes-reminder-alert-unit" class="field-select">
-              <option value="minutes">Minutos</option>
-              <option value="hours">Horas</option>
-              <option value="days">Días</option>
-            </select>
-            <button class="notes-icon-action" id="notes-reminder-alert-add" type="button">+</button>
+        <div class="notes-reminder-alert-builder notes-reminder-treatment-wrap">
+          <div class="field-label">Repetición diaria / tratamiento</div>
+          <div class="notes-reminder-treatment-grid">
+            <label class="field">
+              <span class="field-label">Fecha inicio</span>
+              <input id="notes-reminder-start-date" type="date" />
+            </label>
+            <label class="field">
+              <span class="field-label">Fecha fin</span>
+              <input id="notes-reminder-end-date" type="date" />
+            </label>
+            <label class="field">
+              <span class="field-label">Veces al día</span>
+              <input id="notes-reminder-daily-target-count" type="number" min="1" max="12" step="1" value="1" inputmode="numeric" />
+            </label>
           </div>
-          <div class="notes-reminder-alert-list" id="notes-reminder-alert-list"></div>
-        </div>
         </div>
         <div class="notes-reminder-modal-row notes-reminder-row-birthday">
           <label class="toggle-pill notes-toggle-field">

@@ -2,6 +2,7 @@ export const DEFAULT_CURRENCY = 'EUR';
 export const SUPPORTED_CURRENCIES = Object.freeze([
   { code: 'EUR', symbol: '€', label: 'EUR € Euro' },
   { code: 'PEN', symbol: 'S/', label: 'PEN S/ Sol peruano' },
+  { code: 'BTC', symbol: '₿', label: 'BTC ₿ Bitcoin' },
   { code: 'USD', symbol: '$', label: 'USD $ Dólar estadounidense' },
   { code: 'GBP', symbol: '£', label: 'GBP £ Libra esterlina' },
   { code: 'CHF', symbol: 'CHF', label: 'CHF CHF Franco suizo' },
@@ -153,6 +154,10 @@ export function getCurrencyRates() {
 export function formatCurrency(amount = 0, currency = DEFAULT_CURRENCY) {
   const safe = Number.isFinite(Number(amount)) ? Number(amount) : 0;
   const code = String(currency || DEFAULT_CURRENCY).toUpperCase();
+  if (code === 'BTC') {
+    const formatted = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 8 }).format(safe);
+    return `${formatted} BTC`;
+  }
   return new Intl.NumberFormat('es-ES', { style: 'currency', currency: code, maximumFractionDigits: 2 }).format(safe);
 }
 

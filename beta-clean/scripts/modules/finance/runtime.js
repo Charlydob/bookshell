@@ -10731,7 +10731,7 @@ function buildWealthByCurrencyRows(accounts = [], targetCurrency = state.finance
 }
 
 const ACCOUNT_ASSET_TYPE_LABELS = Object.freeze({
-  cash: 'Cash / efectivo',
+  cash: 'Efectivo',
   investment: 'Inversión',
   crypto: 'Crypto',
 });
@@ -10752,9 +10752,88 @@ function buildWealthByAssetTypeRows(accounts = [], targetCurrency = state.financ
   return [...grouped.values()].sort((a, b) => ordered.indexOf(a.assetType) - ordered.indexOf(b.assetType));
 }
 
+function renderWealthByCurrencyList(rows = [], assetTypeRows = [], referenceCurrency = getDefaultCurrency(), scope = 'my') {
+  return `<div class="financeCurrencyWealth__list">
+    ${rows.length ? rows.map((row) => {
+      const sameCurrency = row.currency === referenceCurrency;
+      const equivalent = row.missingRate
+        ? '<small class="financeCurrencyWealth__equiv">Sin tasa</small>'
+        : (sameCurrency ? '' : `<small class="financeCurrencyWealth__equiv">≈ ${fmtCurrencyCode(row.converted, referenceCurrency)}</small>`);
+      return `<div class="financeCurrencyWealth__row">
+        <strong class="financeCurrencyWealth__code">${escapeHtml(row.currency)}</strong>
+        <div class="financeCurrencyWealth__bar" aria-hidden="true"><span style="width:${row.pct.toFixed(2)}%"></span></div>
+        <div class="financeCurrencyWealth__amounts">
+          <span>${fmtCurrencyCode(row.totalOriginal, row.currency)}</span>
+          ${equivalent}
+        </div>
+      </div>`;
+    }).join('') : '<p class="finance-empty">Sin cuentas.</p>'}
+  </div>
+  <div class="financeCurrencyWealth__header financeCurrencyWealth__header--types">
+    <div>
+      <h3>Patrimonio por tipo</h3>
+      <small>Suma convertida a ${escapeHtml(referenceCurrency)} · ${scope === 'total' ? 'total' : 'mi parte'}</small>
+    </div>
+  </div>
+  <div class="financeCurrencyWealth__list financeCurrencyWealth__list--types">
+    ${assetTypeRows.map((row) => `<div class="financeCurrencyWealth__row financeCurrencyWealth__row--assetType">
+      <strong class="financeCurrencyWealth__code">${escapeHtml(row.label)}</strong>
+      <div class="financeCurrencyWealth__amounts">
+        <span>${row.missingRate ? 'Sin tasa' : fmtCurrencyCode(row.converted, referenceCurrency)}</span>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+function renderWealthByCurrencyChart(rows = [], assetTypeRows = [], referenceCurrency = getDefaultCurrency()) {
+  const colors = ['#59b4ff', '#40f49f', '#ffcf5c', '#ff708f', '#a88bff', '#5ee7df', '#ff9f43', '#d7ff63'];
+  const chartRows = rows
+    .map((row, index) => ({ ...row, value: Math.max(0, Number(row.converted || 0)), color: colors[index % colors.length] }))
+    .filter((row) => row.value > 0 && !row.missingRate);
+  const total = chartRows.reduce((sum, row) => sum + row.value, 0);
+  const circumference = 100;
+  let offset = 25;
+  const segments = chartRows.map((row) => {
+    const pct = total > 0 ? (row.value / total) * 100 : 0;
+    const segment = `<circle class="financeCurrencyWealth__donutSegment" cx="18" cy="18" r="15.915" fill="none" stroke="${row.color}" stroke-width="5.2" stroke-dasharray="${pct.toFixed(3)} ${Math.max(0, circumference - pct).toFixed(3)}" stroke-dashoffset="${offset.toFixed(3)}"></circle>`;
+    offset -= pct;
+    return segment;
+  }).join('');
+  const legend = chartRows.map((row) => {
+    const pct = total > 0 ? (row.value / total) * 100 : 0;
+    return `<div class="financeCurrencyWealth__legendItem"><i style="background:${row.color}"></i><span>${escapeHtml(row.currency)}</span><small>${pct.toFixed(1)}%</small></div>`;
+  }).join('');
+  const assetTotal = assetTypeRows.reduce((sum, row) => sum + Math.max(0, Number(row.converted || 0)), 0);
+  const typeRows = assetTypeRows.map((row) => {
+    const converted = Number(row.converted || 0);
+    const pct = assetTotal > 0 ? (Math.max(0, converted) / assetTotal) * 100 : 0;
+    return `<div class="financeCurrencyWealth__typeBreakdownRow">
+      <span>${escapeHtml(row.label)}</span>
+      <strong>${row.missingRate ? 'Sin tasa' : fmtCurrencyCode(converted, referenceCurrency)}</strong>
+      <small>${row.missingRate ? '—' : `${pct.toFixed(1)}%`}</small>
+    </div>`;
+  }).join('');
+
+  return `<div class="financeCurrencyWealth__chartView">
+    ${total > 0 ? `<div class="financeCurrencyWealth__donutWrap">
+      <svg class="financeCurrencyWealth__donut" viewBox="0 0 36 36" role="img" aria-label="Distribución del patrimonio por moneda en ${escapeHtml(referenceCurrency)}">
+        <circle class="financeCurrencyWealth__donutTrack" cx="18" cy="18" r="15.915" fill="none" stroke-width="5.2"></circle>
+        ${segments}
+      </svg>
+      <div class="financeCurrencyWealth__donutCenter"><strong>${fmtCurrencyCode(total, referenceCurrency)}</strong><small>Total</small></div>
+    </div>
+    <div class="financeCurrencyWealth__legend">${legend}</div>` : '<p class="finance-empty">Sin datos convertibles para el gráfico.</p>'}
+    <details class="financeCurrencyWealth__typeBreakdown">
+      <summary><span>Desglose por tipo</span><small>Tocar para desplegar</small></summary>
+      <div class="financeCurrencyWealth__typeBreakdownList">${typeRows}</div>
+    </details>
+  </div>`;
+}
+
 function renderWealthByCurrencyCard(accounts = []) {
   const referenceCurrency = state.financeTotalCurrency || getDefaultCurrency();
   const scope = state.balanceAggScope === 'total' ? 'total' : 'my';
+  const view = state.wealthPanelView === 'chart' ? 'chart' : 'list';
   const rows = buildWealthByCurrencyRows(accounts, referenceCurrency, scope);
   const assetTypeRows = buildWealthByAssetTypeRows(accounts, referenceCurrency, scope);
   return `<article class="financeGlassCard financeCurrencyWealthCard">
@@ -10763,38 +10842,15 @@ function renderWealthByCurrencyCard(accounts = []) {
         <h3>Patrimonio por divisa</h3>
         <small>Comparativa en ${escapeHtml(referenceCurrency)} · ${scope === 'total' ? 'total' : 'mi parte'}</small>
       </div>
-      <select class="finance-pill financeTotalCurrencySelect" data-finance-total-currency aria-label="Moneda de referencia patrimonio por divisa">${renderCurrencyOptions(referenceCurrency)}</select>
-    </div>
-    <div class="financeCurrencyWealth__list">
-      ${rows.length ? rows.map((row) => {
-        const sameCurrency = row.currency === referenceCurrency;
-        const equivalent = row.missingRate
-          ? '<small class="financeCurrencyWealth__equiv">Sin tasa</small>'
-          : (sameCurrency ? '' : `<small class="financeCurrencyWealth__equiv">≈ ${fmtCurrencyCode(row.converted, referenceCurrency)}</small>`);
-        return `<div class="financeCurrencyWealth__row">
-          <strong class="financeCurrencyWealth__code">${escapeHtml(row.currency)}</strong>
-          <div class="financeCurrencyWealth__bar" aria-hidden="true"><span style="width:${row.pct.toFixed(2)}%"></span></div>
-          <div class="financeCurrencyWealth__amounts">
-            <span>${fmtCurrencyCode(row.totalOriginal, row.currency)}</span>
-            ${equivalent}
-          </div>
-        </div>`;
-      }).join('') : '<p class="finance-empty">Sin cuentas.</p>'}
-    </div>
-    <div class="financeCurrencyWealth__header financeCurrencyWealth__header--types">
-      <div>
-        <h3>Patrimonio por tipo</h3>
-        <small>Suma convertida a ${escapeHtml(referenceCurrency)} · ${scope === 'total' ? 'total' : 'mi parte'}</small>
+      <div class="financeCurrencyWealth__actions">
+        <div class="financeCurrencyWealth__viewToggle" role="group" aria-label="Vista patrimonio por divisa y tipo">
+          <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${view === 'list' ? 'is-active' : ''}" data-finance-wealth-view="list" aria-pressed="${view === 'list'}">Lista</button>
+          <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${view === 'chart' ? 'is-active' : ''}" data-finance-wealth-view="chart" aria-pressed="${view === 'chart'}">Gráfico</button>
+        </div>
+        <select class="finance-pill financeTotalCurrencySelect" data-finance-total-currency aria-label="Moneda de referencia patrimonio por divisa">${renderCurrencyOptions(referenceCurrency)}</select>
       </div>
     </div>
-    <div class="financeCurrencyWealth__list financeCurrencyWealth__list--types">
-      ${assetTypeRows.map((row) => `<div class="financeCurrencyWealth__row financeCurrencyWealth__row--assetType">
-        <strong class="financeCurrencyWealth__code">${escapeHtml(row.label)}</strong>
-        <div class="financeCurrencyWealth__amounts">
-          <span>${row.missingRate ? 'Sin tasa' : fmtCurrencyCode(row.converted, referenceCurrency)}</span>
-        </div>
-      </div>`).join('')}
-    </div>
+    ${view === 'chart' ? renderWealthByCurrencyChart(rows, assetTypeRows, referenceCurrency) : renderWealthByCurrencyList(rows, assetTypeRows, referenceCurrency, scope)}
   </article>`;
 }
 
@@ -15803,6 +15859,12 @@ if (target.closest('[data-test-fixed-expense]')) {
     }
     const drilldown = target.closest('[data-balance-drilldown]')?.dataset.balanceDrilldown; if (drilldown) { openBalanceDrilldown(drilldown); return; }
     const aggScope = target.closest('[data-fin-agg-scope]')?.dataset.finAggScope; if (aggScope) { state.balanceAggScope = aggScope === 'total' ? 'total' : 'my'; triggerRender(); return; }
+    const wealthView = target.closest('[data-finance-wealth-view]')?.dataset.financeWealthView;
+    if (wealthView) {
+      state.wealthPanelView = wealthView === 'chart' ? 'chart' : 'list';
+      triggerRender();
+      return;
+    }
     const drilldownMonth = target.closest('[data-drilldown-month]')?.dataset.drilldownMonth;
     if (drilldownMonth && state.modal.type === 'balance-drilldown') {
       state.modal = { ...state.modal, monthOffset: Number(state.modal.monthOffset || 0) + Number(drilldownMonth) };

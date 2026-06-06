@@ -40,6 +40,7 @@ export const state = {
   balanceStatsLegendExpanded: true,
   balanceFilterUnlinedOnly: false,
   balanceAggScope: 'my',
+  wealthPanelView: 'list',
   balanceTrendMode: 'expense',
   balanceTrendCategory: 'all',
   balanceAmountAuto: true,

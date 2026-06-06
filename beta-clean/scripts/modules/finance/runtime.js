@@ -9267,6 +9267,7 @@ function donutSegments(mapData = {}, total = 0, options = {}) {
 }
 
 let financeStatsDonutChart = null;
+let financeWealthDonutChart = null;
 
 function updateLegendSelection(selectedKey = '') {
   const rows = document.querySelectorAll('[data-finance-stats-segment]');
@@ -9371,6 +9372,139 @@ function disposeFinanceStatsDonutChart() {
   }
   try { financeStatsDonutChart.dispose(); } catch (_) {}
   financeStatsDonutChart = null;
+}
+
+function updateWealthChartSelection(selectedKey = '') {
+  const safeKey = String(selectedKey || '');
+  document.querySelectorAll('[data-finance-wealth-segment]').forEach((row) => {
+    row.classList.toggle('is-active', String(row.dataset.financeWealthSegment || '') === safeKey);
+  });
+}
+
+function disposeFinanceWealthDonutChart() {
+  if (!financeWealthDonutChart) return;
+  const zr = financeWealthDonutChart.getZr?.();
+  if (zr && financeWealthDonutChart.__financeBgClickHandler) {
+    zr.off('click', financeWealthDonutChart.__financeBgClickHandler);
+    financeWealthDonutChart.__financeBgClickHandler = null;
+  }
+  try { financeWealthDonutChart.dispose(); } catch (_) {}
+  financeWealthDonutChart = null;
+}
+
+async function renderFinanceWealthDonutChart() {
+  const host = document.querySelector('[data-finance-wealth-donut]');
+  if (!host) {
+    disposeFinanceWealthDonutChart();
+    return;
+  }
+  let rows = [];
+  try { rows = JSON.parse(host.dataset.financeWealthDonut || '[]'); } catch (_) { rows = []; }
+  if (!Array.isArray(rows) || !rows.length) {
+    disposeFinanceWealthDonutChart();
+    updateWealthChartSelection('');
+    return;
+  }
+  if (typeof echarts === 'undefined') {
+    try {
+      await ensureFinanceEchartsReady();
+    } catch (error) {
+      console.warn('[finance] no se pudo cargar ECharts para patrimonio', error);
+      disposeFinanceWealthDonutChart();
+      return;
+    }
+  }
+  if (!financeWealthDonutChart || financeWealthDonutChart.getDom() !== host) {
+    disposeFinanceWealthDonutChart();
+    financeWealthDonutChart = echarts.init(host);
+  }
+
+  financeWealthDonutChart.setOption({
+    animation: false,
+    tooltip: {
+      trigger: 'item',
+      confine: true,
+      backgroundColor: 'rgba(12, 20, 44, .94)',
+      borderColor: 'rgba(160,220,255,.45)',
+      textStyle: { color: '#ecf2ff', fontSize: 12 },
+      formatter: (params) => {
+        const data = params?.data || {};
+        const lines = [
+          `<strong>${escapeHtml(data.name || '')}</strong>`,
+          escapeHtml(data.primaryText || ''),
+        ];
+        if (data.secondaryText) lines.push(escapeHtml(data.secondaryText));
+        lines.push(`${Number(params?.percent || data.pct || 0).toFixed(1)}%`);
+        return lines.filter(Boolean).join('<br>');
+      },
+    },
+    series: [{
+      type: 'pie',
+      radius: ['58%', '80%'],
+      center: ['50%', '50%'],
+      avoidLabelOverlap: true,
+      label: { show: false },
+      labelLine: { show: false },
+      emphasis: { scale: true, scaleSize: 4 },
+      selectedMode: 'single',
+      selectedOffset: 3,
+      itemStyle: {
+        borderColor: 'rgba(8,14,34,.92)',
+        borderWidth: 2,
+      },
+      data: rows.map((row) => ({
+        name: row.name,
+        value: Number(row.value || 0),
+        _key: row._key,
+        pct: Number(row.pct || 0),
+        primaryText: row.primaryText,
+        secondaryText: row.secondaryText,
+        selected: String(row._key || '') === String(state.wealthChartSelectedKey || ''),
+        itemStyle: { color: row.color },
+      })),
+    }],
+  }, { notMerge: true });
+
+  const resetSelection = () => {
+    state.wealthChartSelectedKey = null;
+    financeWealthDonutChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+    rows.forEach((_, dataIndex) => financeWealthDonutChart.dispatchAction({ type: 'unselect', seriesIndex: 0, dataIndex }));
+    updateWealthChartSelection('');
+  };
+
+  financeWealthDonutChart.off('click');
+  financeWealthDonutChart.on('click', (params) => {
+    if (params?.seriesType !== 'pie' || !params?.data) return;
+    const key = String(params.data._key || '');
+    const idx = Number(params.dataIndex);
+    if (!key || !Number.isInteger(idx) || idx < 0) return;
+    if (String(state.wealthChartSelectedKey || '') === key) {
+      resetSelection();
+      return;
+    }
+    state.wealthChartSelectedKey = key;
+    rows.forEach((_, dataIndex) => financeWealthDonutChart.dispatchAction({ type: 'unselect', seriesIndex: 0, dataIndex }));
+    financeWealthDonutChart.dispatchAction({ type: 'select', seriesIndex: 0, dataIndex: idx });
+    updateWealthChartSelection(key);
+  });
+
+  const zr = financeWealthDonutChart.getZr?.();
+  if (zr && financeWealthDonutChart.__financeBgClickHandler) zr.off('click', financeWealthDonutChart.__financeBgClickHandler);
+  financeWealthDonutChart.__financeBgClickHandler = (event) => {
+    if (event?.target) return;
+    resetSelection();
+  };
+  if (zr) zr.on('click', financeWealthDonutChart.__financeBgClickHandler);
+
+  financeWealthDonutChart.resize();
+  const selectedIndex = rows.findIndex((row) => String(row._key || '') === String(state.wealthChartSelectedKey || ''));
+  if (selectedIndex >= 0) {
+    financeWealthDonutChart.dispatchAction({ type: 'select', seriesIndex: 0, dataIndex: selectedIndex });
+    updateWealthChartSelection(state.wealthChartSelectedKey);
+  } else {
+    state.wealthChartSelectedKey = null;
+    updateWealthChartSelection('');
+  }
 }
 
 async function renderFinanceStatsDonutChart() {
@@ -10785,48 +10919,99 @@ function renderWealthByCurrencyList(rows = [], assetTypeRows = [], referenceCurr
   </div>`;
 }
 
-function renderWealthByCurrencyChart(rows = [], assetTypeRows = [], referenceCurrency = getDefaultCurrency()) {
+function buildWealthChartCurrencyData(rows = [], referenceCurrency = getDefaultCurrency()) {
   const colors = ['#59b4ff', '#40f49f', '#ffcf5c', '#ff708f', '#a88bff', '#5ee7df', '#ff9f43', '#d7ff63'];
   const chartRows = rows
-    .map((row, index) => ({ ...row, value: Math.max(0, Number(row.converted || 0)), color: colors[index % colors.length] }))
+    .map((row, index) => ({ ...row, name: row.currency, _key: `currency:${row.currency}`, value: Math.max(0, Number(row.converted || 0)), color: colors[index % colors.length] }))
     .filter((row) => row.value > 0 && !row.missingRate);
   const total = chartRows.reduce((sum, row) => sum + row.value, 0);
-  const circumference = 100;
-  let offset = 25;
-  const segments = chartRows.map((row) => {
+  return chartRows.map((row) => {
     const pct = total > 0 ? (row.value / total) * 100 : 0;
-    const segment = `<circle class="financeCurrencyWealth__donutSegment" cx="18" cy="18" r="15.915" fill="none" stroke="${row.color}" stroke-width="5.2" stroke-dasharray="${pct.toFixed(3)} ${Math.max(0, circumference - pct).toFixed(3)}" stroke-dashoffset="${offset.toFixed(3)}"></circle>`;
-    offset -= pct;
-    return segment;
-  }).join('');
-  const legend = chartRows.map((row) => {
+    const sameCurrency = row.currency === referenceCurrency;
+    return {
+      _key: row._key,
+      name: row.currency,
+      value: row.value,
+      pct,
+      color: row.color,
+      primaryText: fmtCurrencyCode(row.totalOriginal, row.currency),
+      secondaryText: sameCurrency ? '' : `≈ ${fmtCurrencyCode(row.converted, referenceCurrency)}`,
+    };
+  });
+}
+
+function buildWealthChartTypeData(assetTypeRows = [], referenceCurrency = getDefaultCurrency()) {
+  const colorsByType = { cash: '#59b4ff', investment: '#40f49f', crypto: '#ffcf5c' };
+  const chartRows = assetTypeRows
+    .map((row) => ({ ...row, name: row.label, _key: `type:${row.assetType}`, value: Math.max(0, Number(row.converted || 0)), color: colorsByType[row.assetType] || '#a88bff' }))
+    .filter((row) => row.value > 0 && !row.missingRate);
+  const total = chartRows.reduce((sum, row) => sum + row.value, 0);
+  return chartRows.map((row) => {
     const pct = total > 0 ? (row.value / total) * 100 : 0;
-    return `<div class="financeCurrencyWealth__legendItem"><i style="background:${row.color}"></i><span>${escapeHtml(row.currency)}</span><small>${pct.toFixed(1)}%</small></div>`;
-  }).join('');
-  const assetTotal = assetTypeRows.reduce((sum, row) => sum + Math.max(0, Number(row.converted || 0)), 0);
-  const typeRows = assetTypeRows.map((row) => {
-    const converted = Number(row.converted || 0);
-    const pct = assetTotal > 0 ? (Math.max(0, converted) / assetTotal) * 100 : 0;
-    return `<div class="financeCurrencyWealth__typeBreakdownRow">
-      <span>${escapeHtml(row.label)}</span>
-      <strong>${row.missingRate ? 'Sin tasa' : fmtCurrencyCode(converted, referenceCurrency)}</strong>
-      <small>${row.missingRate ? '—' : `${pct.toFixed(1)}%`}</small>
-    </div>`;
-  }).join('');
+    return {
+      _key: row._key,
+      name: row.label,
+      value: row.value,
+      pct,
+      color: row.color,
+      primaryText: fmtCurrencyCode(row.converted, referenceCurrency),
+      secondaryText: '',
+    };
+  });
+}
+
+function renderWealthChartBreakdown(chartRows = []) {
+  if (!chartRows.length) return '<p class="finance-empty">Sin desglose convertible.</p>';
+  return `<div class="financeCurrencyWealth__breakdown" aria-label="Desglose del gráfico visible">
+    ${chartRows.map((row) => `<button type="button" class="financeCurrencyWealth__breakdownRow ${String(state.wealthChartSelectedKey || '') === String(row._key || '') ? 'is-active' : ''}" data-finance-wealth-segment="${escapeHtml(row._key)}">
+      <span class="financeCurrencyWealth__breakdownName"><i style="background:${row.color}"></i>${escapeHtml(row.name)}</span>
+      <span class="financeCurrencyWealth__breakdownAmounts">
+        <strong>${escapeHtml(row.primaryText)}</strong>
+        ${row.secondaryText ? `<small>${escapeHtml(row.secondaryText)}</small>` : ''}
+      </span>
+      <small class="financeCurrencyWealth__breakdownPct">${Number(row.pct || 0).toFixed(1)}%</small>
+    </button>`).join('')}
+  </div>`;
+}
+
+function renderWealthByCurrencyChart(rows = [], assetTypeRows = [], referenceCurrency = getDefaultCurrency()) {
+  const mode = state.wealthChartMode === 'types' ? 'types' : 'currencies';
+  const chartRows = mode === 'types'
+    ? buildWealthChartTypeData(assetTypeRows, referenceCurrency)
+    : buildWealthChartCurrencyData(rows, referenceCurrency);
+  const total = chartRows.reduce((sum, row) => sum + Number(row.value || 0), 0);
+  const hasSelected = chartRows.some((row) => String(row._key || '') === String(state.wealthChartSelectedKey || ''));
+  if (!hasSelected) state.wealthChartSelectedKey = null;
+  const chartPayload = chartRows.map((row) => ({
+    _key: row._key,
+    name: row.name,
+    value: row.value,
+    pct: row.pct,
+    color: row.color,
+    primaryText: row.primaryText,
+    secondaryText: row.secondaryText,
+  }));
+  const legend = chartRows.map((row) => `<button type="button" class="financeCurrencyWealth__legendItem ${String(state.wealthChartSelectedKey || '') === String(row._key || '') ? 'is-active' : ''}" data-finance-wealth-segment="${escapeHtml(row._key)}"><i style="background:${row.color}"></i><span>${escapeHtml(row.name)}</span><small>${Number(row.pct || 0).toFixed(1)}%</small></button>`).join('');
 
   return `<div class="financeCurrencyWealth__chartView">
-    ${total > 0 ? `<div class="financeCurrencyWealth__donutWrap">
-      <svg class="financeCurrencyWealth__donut" viewBox="0 0 36 36" role="img" aria-label="Distribución del patrimonio por moneda en ${escapeHtml(referenceCurrency)}">
-        <circle class="financeCurrencyWealth__donutTrack" cx="18" cy="18" r="15.915" fill="none" stroke-width="5.2"></circle>
-        ${segments}
-      </svg>
-      <div class="financeCurrencyWealth__donutCenter"><strong>${fmtCurrencyCode(total, referenceCurrency)}</strong><small>Total</small></div>
+    <div class="financeCurrencyWealth__chartModeToggle" role="group" aria-label="Datos del gráfico de patrimonio">
+      <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${mode === 'currencies' ? 'is-active' : ''}" data-finance-wealth-chart-mode="currencies" aria-pressed="${mode === 'currencies'}">Divisas</button>
+      <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${mode === 'types' ? 'is-active' : ''}" data-finance-wealth-chart-mode="types" aria-pressed="${mode === 'types'}">Tipos</button>
     </div>
-    <div class="financeCurrencyWealth__legend">${legend}</div>` : '<p class="finance-empty">Sin datos convertibles para el gráfico.</p>'}
-    <details class="financeCurrencyWealth__typeBreakdown">
-      <summary><span>Desglose por tipo</span><small>Tocar para desplegar</small></summary>
-      <div class="financeCurrencyWealth__typeBreakdownList">${typeRows}</div>
-    </details>
+    ${total > 0 ? `<div class="financeCurrencyWealth__donutShell">
+      <div class="financeCurrencyWealth__donutWrap">
+        <div
+          class="financeCurrencyWealth__donutChart"
+          data-finance-wealth-donut="${escapeHtml(JSON.stringify(chartPayload))}"
+          style="min-height:260px;width:100%;"
+          role="img"
+          aria-label="Distribución del patrimonio por ${mode === 'types' ? 'tipos' : 'divisas'} en ${escapeHtml(referenceCurrency)}"
+        ></div>
+        <div class="financeCurrencyWealth__donutCenter"><strong>${fmtCurrencyCode(total, referenceCurrency)}</strong><small>Total</small></div>
+      </div>
+      <div class="financeCurrencyWealth__legend">${legend}</div>
+    </div>` : '<p class="finance-empty">Sin datos convertibles para el gráfico.</p>'}
+    ${renderWealthChartBreakdown(chartRows)}
   </div>`;
 }
 
@@ -14469,15 +14654,18 @@ async function render() {
       await ensureFoodCatalogLoaded();
       host.innerHTML = renderFinanceBalance(accounts, categories, txRows);
       await renderFinanceStatsDonutChart();
+      await renderFinanceWealthDonutChart();
       await maybeRolloverSnapshot();
       if (!Object.keys(state.balance.aggregates || {}).length) scheduleAggregateRebuild();
     } else if (state.activeView === 'products') {
       disposeFinanceStatsDonutChart();
+      disposeFinanceWealthDonutChart();
       await ensureFoodCatalogLoaded();
       await ensureFoodMetaCatalogLoaded();
       host.innerHTML = renderFinanceProducts();
     } else {
       disposeFinanceStatsDonutChart();
+      disposeFinanceWealthDonutChart();
       if (state.activeView === 'goals') host.innerHTML = renderFinanceGoals(accounts);
       else if (state.activeView === 'calendar') host.innerHTML = renderFinanceCalendar(accounts, totalSeries);
       else host.innerHTML = renderFinanceHome(accounts, totalSeries);
@@ -15862,7 +16050,28 @@ if (target.closest('[data-test-fixed-expense]')) {
     const wealthView = target.closest('[data-finance-wealth-view]')?.dataset.financeWealthView;
     if (wealthView) {
       state.wealthPanelView = wealthView === 'chart' ? 'chart' : 'list';
+      state.wealthChartSelectedKey = null;
       triggerRender();
+      return;
+    }
+    const wealthChartMode = target.closest('[data-finance-wealth-chart-mode]')?.dataset.financeWealthChartMode;
+    if (wealthChartMode) {
+      state.wealthChartMode = wealthChartMode === 'types' ? 'types' : 'currencies';
+      state.wealthChartSelectedKey = null;
+      triggerRender();
+      return;
+    }
+    const wealthSegment = target.closest('[data-finance-wealth-segment]')?.dataset.financeWealthSegment;
+    if (wealthSegment) {
+      state.wealthChartSelectedKey = String(state.wealthChartSelectedKey || '') === String(wealthSegment || '') ? null : wealthSegment;
+      updateWealthChartSelection(state.wealthChartSelectedKey || '');
+      if (financeWealthDonutChart) {
+        let rows = [];
+        try { rows = JSON.parse(document.querySelector('[data-finance-wealth-donut]')?.dataset.financeWealthDonut || '[]'); } catch (_) { rows = []; }
+        rows.forEach((_, dataIndex) => financeWealthDonutChart.dispatchAction({ type: 'unselect', seriesIndex: 0, dataIndex }));
+        const idx = rows.findIndex((row) => String(row?._key || '') === String(state.wealthChartSelectedKey || ''));
+        if (idx >= 0) financeWealthDonutChart.dispatchAction({ type: 'select', seriesIndex: 0, dataIndex: idx });
+      }
       return;
     }
     const drilldownMonth = target.closest('[data-drilldown-month]')?.dataset.drilldownMonth;
@@ -17090,6 +17299,7 @@ export async function init() {
 export async function onShow() {
   requestAnimationFrame(() => {
     try { financeStatsDonutChart?.resize?.(); } catch (_) {}
+    try { financeWealthDonutChart?.resize?.(); } catch (_) {}
   });
 }
 

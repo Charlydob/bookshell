@@ -213,3 +213,16 @@
   #view-world .world-stays-city-list{padding-left:6px}
   #view-world .world-stays-entry-top{grid-template-columns:minmax(0,1fr) auto;gap:6px}
 }
+
+/* Estancias: ciudades plegables y rangos más secundarios */
+#view-world .world-stays-city-card{display:block;min-width:0;padding:4px 0}
+#view-world details.world-stays-city-card>summary{list-style:none;cursor:pointer;display:flex;flex-direction:column;gap:2px;border-radius:10px;padding:4px 6px;margin-left:-6px}
+#view-world details.world-stays-city-card>summary::-webkit-details-marker{display:none}
+#view-world details.world-stays-city-card>summary:active{background:rgba(255,255,255,.06)}
+#view-world .world-stays-city-summary .world-stays-city-main::after{content:'›';display:inline-block;margin-left:6px;opacity:.55;transition:transform .16s ease}
+#view-world details.world-stays-city-card[open] .world-stays-city-summary .world-stays-city-main::after{transform:rotate(90deg)}
+#view-world .world-stays-entry-list{margin-top:3px!important;gap:2px!important}
+#view-world .world-stays-entry{padding:3px 0!important;gap:1px!important}
+#view-world .world-stays-entry-top{min-height:0;gap:6px}
+#view-world .world-stays-entry-main{font-size:13px!important;line-height:1.15!important;font-weight:500!important;opacity:.82;color:rgba(238,240,255,.86)}
+#view-world .world-stays-entry-actions button{padding:1px 5px!important;font-size:12px!important;min-width:24px!important}

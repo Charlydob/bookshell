@@ -156,9 +156,27 @@ export function formatCurrency(amount = 0, currency = DEFAULT_CURRENCY) {
   return new Intl.NumberFormat('es-ES', { style: 'currency', currency: code, maximumFractionDigits: 2 }).format(safe);
 }
 
+export function normalizeCurrencyCode(currency = DEFAULT_CURRENCY) {
+  const code = String(currency || DEFAULT_CURRENCY).trim().toUpperCase();
+  return SUPPORTED_CURRENCIES.some((row) => row.code === code) ? code : DEFAULT_CURRENCY;
+}
+
+export function convertCurrency(amount = 0, from = DEFAULT_CURRENCY, to = DEFAULT_CURRENCY, ratesOverride = null) {
+  const value = Number(amount || 0);
+  if (!Number.isFinite(value)) return 0;
+  const fromCode = normalizeCurrencyCode(from);
+  const toCode = normalizeCurrencyCode(to);
+  if (fromCode === toCode) return value;
+  const rates = ratesOverride && typeof ratesOverride === 'object' ? ratesOverride : getCurrencyRates();
+  const fromToEUR = fromCode === 'EUR' ? 1 : Number(rates[fromCode]);
+  const toToEUR = toCode === 'EUR' ? 1 : Number(rates[toCode]);
+  if (!(fromToEUR > 0) || !(toToEUR > 0)) return Number.NaN;
+  return (value * fromToEUR) / toToEUR;
+}
+
 export function convertToEUR(amount = 0, currency = DEFAULT_CURRENCY, rate = null) {
   const value = Number(amount || 0);
-  const code = String(currency || DEFAULT_CURRENCY).toUpperCase();
+  const code = normalizeCurrencyCode(currency);
   if (!Number.isFinite(value)) return 0;
   if (code === 'EUR') return value;
   const rates = getCurrencyRates();

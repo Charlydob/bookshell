@@ -318,6 +318,10 @@ function setFinanceTotalCurrency(currency = getDefaultCurrency()) {
   try { localStorage.setItem(FINANCE_TOTAL_CURRENCY_KEY, state.financeTotalCurrency); } catch (_) {}
 }
 function accountCurrency(account = {}) { return normalizeCurrencyCode(account?.currency || getDefaultCurrency()); }
+function accountCurrencySymbol(account = {}) {
+  const code = accountCurrency(account);
+  return SUPPORTED_CURRENCIES.find((row) => row.code === code)?.symbol || code;
+}
 function formatAccountAmount(value = 0, account = {}) { return fmtCurrencyCode(value, accountCurrency(account)); }
 function convertAccountAmount(value = 0, account = {}, targetCurrency = state.financeTotalCurrency || getDefaultCurrency()) {
   const converted = convertCurrency(Number(value || 0), accountCurrency(account), targetCurrency);
@@ -10796,15 +10800,14 @@ function renderFinanceAccountCard(account = {}, { deleteLabel = '🗑️' } = {}
   const editableBalance = account.shared ? account.currentReal : account.current;
   const currency = accountCurrency(account);
   return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${escapeHtml(account.id)}">
-    <div>
-      <strong>${escapeHtml(account.name)}</strong>
-      <div class="financeAccountCard__balanceWrap">
-        <span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'} · ${escapeHtml(currency)}</span>
+    <div class="financeAccountCard__main">
+      <strong class="financeAccountCard__title">${escapeHtml(account.name)}</strong>
+      <div class="financeAccountCard__balanceWrap" aria-label="${escapeHtml(account.shared ? 'Saldo real' : 'Mi saldo')}">
         <input class="financeAccountCard__balance" data-account-input="${escapeHtml(account.id)}" value="${Number(editableBalance || 0).toFixed(2)}" inputmode="decimal" placeholder="0.00" />
-        <span class="financeAccountCard__currencyBadge">${escapeHtml(currency)}</span>
+        <span class="financeAccountCard__currencyBadge" aria-label="${escapeHtml(currency)}">${escapeHtml(accountCurrencySymbol(account))}</span>
         <button class="finance-pill finance-pill--mini" data-account-save="${escapeHtml(account.id)}">Guardar</button>
       </div>
-      <small class="financeAccountCard__formattedBalance">${formatAccountAmount(editableBalance, account)}</small>
+      <small class="financeAccountCard__formattedBalance">${account.shared ? 'Saldo real' : 'Mi saldo'}</small>
       ${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${formatAccountAmount(account.current, account)}</small>` : ''}
     </div>
     <div class="financeAccountCard__side">

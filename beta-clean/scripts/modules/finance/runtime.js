@@ -26,7 +26,7 @@ import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/serv
 import { logFirebaseRead, logFirebaseWrite, registerViewListener, trackedGet, trackedOnValue } from '../../shared/firebase/read-debug.js';
 import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
-import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, convertToEUR, normalizeCurrencyCode } from './finance/currency-utils.js';
+import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, normalizeCurrencyCode } from './finance/currency-utils.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -322,12 +322,18 @@ function accountCurrencySymbol(account = {}) {
   const code = accountCurrency(account);
   return SUPPORTED_CURRENCIES.find((row) => row.code === code)?.symbol || code;
 }
+function getFinanceCurrencyRates() {
+  const rates = { ...getCurrencyRates() };
+  const btcPrice = Number(state.btcEurPrice || 0);
+  if (Number.isFinite(btcPrice) && btcPrice > 0) rates.BTC = btcPrice;
+  return rates;
+}
 function formatAccountAmount(value = 0, account = {}) { return fmtCurrencyCode(value, accountCurrency(account)); }
 function formatAccountBalanceValue(value = 0) { return Number(value || 0).toFixed(2); }
 function formatAccountEurEquivalent(value = 0, account = {}) {
   const currency = accountCurrency(account);
   if (currency === 'EUR') return '';
-  const converted = convertToEUR(Number(value || 0), currency);
+  const converted = convertCurrency(Number(value || 0), currency, 'EUR', getFinanceCurrencyRates());
   if (!Number.isFinite(converted)) return '';
   return `≈ ${fmtCurrency(converted)}`;
 }
@@ -338,7 +344,7 @@ function renderAccountEurEquivalent(value = 0, account = {}, className = '') {
   return `<small class="${classes}">${escapeHtml(equivalent)}</small>`;
 }
 function convertAccountAmount(value = 0, account = {}, targetCurrency = state.financeTotalCurrency || getDefaultCurrency()) {
-  const converted = convertCurrency(Number(value || 0), accountCurrency(account), targetCurrency);
+  const converted = convertCurrency(Number(value || 0), accountCurrency(account), targetCurrency, getFinanceCurrencyRates());
   return Number.isFinite(converted) ? converted : 0;
 }
 function formatFinanceTotal(value = 0) { return fmtCurrencyCode(value, state.financeTotalCurrency || getDefaultCurrency()); }
@@ -712,7 +718,7 @@ function txCurrency(tx = {}, accountsById = {}) {
   return normalizeCurrencyCode(tx?.accountCurrency || tx?.currency || accountsById?.[tx?.accountId]?.currency || getDefaultCurrency());
 }
 function txAmountInCurrency(tx = {}, accountsById = {}, targetCurrency = state.financeTotalCurrency || getDefaultCurrency()) {
-  const converted = convertCurrency(Number(tx?.amount || 0), txCurrency(tx, accountsById), targetCurrency);
+  const converted = convertCurrency(Number(tx?.amount || 0), txCurrency(tx, accountsById), targetCurrency, getFinanceCurrencyRates());
   return Number.isFinite(converted) ? converted : Number(tx?.convertedAmountEUR ?? tx?.totalEUR ?? tx?.amount ?? 0);
 }
 function personalDeltaForTxInCurrency(tx = {}, accountsById = {}, targetCurrency = state.financeTotalCurrency || getDefaultCurrency()) {
@@ -8157,7 +8163,7 @@ function buildAccountModels() {
     const btcPrice = Number(state.btcEurPrice || 0);
     const hasBtc = Boolean(account?.isBitcoin);
     let currentReal = dailyReal.at(-1)?.value ?? 0;
-    if (hasBtc) currentReal = btcUnits * btcPrice;
+    if (hasBtc) currentReal = currency === 'BTC' ? btcUnits : btcUnits * btcPrice;
     const current = currentReal * share.sharedRatio;
 
 
@@ -10649,6 +10655,66 @@ function getBalanceTrendSeries(accountsById = {}, txRows = balanceTxList(), tren
   return { monthKeys, series, tone, maxValue };
 }
 
+
+function getAccountOriginalBalanceForCurrencyComparison(account = {}, scope = state.balanceAggScope === 'total' ? 'total' : 'my') {
+  const ratio = scope === 'total' ? 1 : Number(account?.sharedRatio ?? 1);
+  const safeRatio = Number.isFinite(ratio) ? ratio : 1;
+  if (accountCurrency(account) === 'BTC' && account?.isBitcoin) {
+    return Number(account?.btcUnits || 0) * safeRatio;
+  }
+  const value = scope === 'total' ? Number(account?.currentReal ?? account?.current ?? 0) : Number(account?.current ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function buildWealthByCurrencyRows(accounts = [], targetCurrency = state.financeTotalCurrency || getDefaultCurrency(), scope = state.balanceAggScope === 'total' ? 'total' : 'my') {
+  const rates = getFinanceCurrencyRates();
+  const grouped = new Map();
+  for (const account of accounts || []) {
+    const currency = accountCurrency(account);
+    const totalOriginal = getAccountOriginalBalanceForCurrencyComparison(account, scope);
+    const prev = grouped.get(currency) || { currency, totalOriginal: 0, converted: 0, missingRate: false };
+    const converted = convertCurrency(totalOriginal, currency, targetCurrency, rates);
+    prev.totalOriginal += totalOriginal;
+    if (Number.isFinite(converted)) prev.converted += converted;
+    else prev.missingRate = true;
+    grouped.set(currency, prev);
+  }
+  const rows = [...grouped.values()].sort((a, b) => Math.abs(b.converted) - Math.abs(a.converted) || a.currency.localeCompare(b.currency));
+  const maxAbs = Math.max(1, ...rows.map((row) => Math.abs(Number(row.converted || 0))));
+  return rows.map((row) => ({ ...row, pct: Math.max(2, Math.min(100, (Math.abs(Number(row.converted || 0)) / maxAbs) * 100)) }));
+}
+
+function renderWealthByCurrencyCard(accounts = []) {
+  const referenceCurrency = state.financeTotalCurrency || getDefaultCurrency();
+  const scope = state.balanceAggScope === 'total' ? 'total' : 'my';
+  const rows = buildWealthByCurrencyRows(accounts, referenceCurrency, scope);
+  return `<article class="financeGlassCard financeCurrencyWealthCard">
+    <div class="financeCurrencyWealth__header">
+      <div>
+        <h3>Patrimonio por divisa</h3>
+        <small>Comparativa en ${escapeHtml(referenceCurrency)} · ${scope === 'total' ? 'total' : 'mi parte'}</small>
+      </div>
+      <select class="finance-pill financeTotalCurrencySelect" data-finance-total-currency aria-label="Moneda de referencia patrimonio por divisa">${renderCurrencyOptions(referenceCurrency)}</select>
+    </div>
+    <div class="financeCurrencyWealth__list">
+      ${rows.length ? rows.map((row) => {
+        const sameCurrency = row.currency === referenceCurrency;
+        const equivalent = row.missingRate
+          ? '<small class="financeCurrencyWealth__equiv">Sin tasa</small>'
+          : (sameCurrency ? '' : `<small class="financeCurrencyWealth__equiv">≈ ${fmtCurrencyCode(row.converted, referenceCurrency)}</small>`);
+        return `<div class="financeCurrencyWealth__row">
+          <strong class="financeCurrencyWealth__code">${escapeHtml(row.currency)}</strong>
+          <div class="financeCurrencyWealth__bar" aria-hidden="true"><span style="width:${row.pct.toFixed(2)}%"></span></div>
+          <div class="financeCurrencyWealth__amounts">
+            <span>${fmtCurrencyCode(row.totalOriginal, row.currency)}</span>
+            ${equivalent}
+          </div>
+        </div>`;
+      }).join('') : '<p class="finance-empty">Sin cuentas.</p>'}
+    </div>
+  </article>`;
+}
+
 function renderBalanceTrendChart(data = { monthKeys: [], series: [], tone: 'is-neutral' }) {
   if (!data.series.length) {
     return '<p class="finance-empty">Sin datos.</p>';
@@ -11250,6 +11316,8 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
       </div>
     </details>
   </article>
+
+  ${renderWealthByCurrencyCard(accounts)}
 
   <article class="financeGlassCard"><div class="finance-row"><h3>Presupuestos</h3><button class="finance-pill" data-open-modal="budget">+ Presupuesto</button></div>
   <div class="financeBudgetList">${budgetItems.length ? budgetItems.map((budget) => {

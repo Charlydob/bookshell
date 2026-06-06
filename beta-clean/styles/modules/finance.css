@@ -8756,48 +8756,86 @@ grid-template-columns: 1fr auto;
 
 .financeTab .financeCurrencyWealth__chartView {
   display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.financeTab .financeCurrencyWealth__chartModeToggle {
+  display: inline-flex;
+  justify-self: center;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgba(125, 190, 255, .18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.financeTab .financeCurrencyWealth__donutShell {
+  display: grid;
   gap: 10px;
   min-width: 0;
+  padding: 10px 8px 6px;
+  border: 1px solid rgba(125, 190, 255, .12);
+  border-radius: 18px;
+  background: radial-gradient(circle at 50% 38%, rgba(89, 180, 255, .10), transparent 58%), rgba(255, 255, 255, .018);
+  overflow: visible;
 }
 
 .financeTab .financeCurrencyWealth__donutWrap {
   position: relative;
   display: grid;
   place-items: center;
-  width: min(168px, 54vw);
+  width: min(290px, 100%);
+  max-width: calc(100vw - 56px);
+  min-height: 260px;
   margin: 0 auto;
+  padding: 8px;
+  overflow: visible;
 }
 
-.financeTab .financeCurrencyWealth__donut {
+.financeTab .financeCurrencyWealth__donutChart {
+  width: min(260px, 76vw);
+  height: min(260px, 76vw);
+  max-width: 100%;
+  min-height: 240px;
+  overflow: visible;
+  filter: drop-shadow(0 14px 28px rgba(0, 0, 0, .28));
+}
+
+.financeTab .financeCurrencyWealth__donut,
+.financeTab .financeCurrencyWealth__donutChart canvas,
+.financeTab .financeCurrencyWealth__donutChart svg {
   display: block;
   width: 100%;
-  aspect-ratio: 1;
-  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, .24));
-}
-
-.financeTab .financeCurrencyWealth__donutTrack {
-  stroke: rgba(255, 255, 255, .10);
-}
-
-.financeTab .financeCurrencyWealth__donutSegment {
-  stroke-linecap: round;
+  height: 100%;
+  overflow: visible;
 }
 
 .financeTab .financeCurrencyWealth__donutCenter {
   position: absolute;
-  inset: 31%;
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: grid;
   place-content: center;
   gap: 2px;
+  width: clamp(86px, 28vw, 112px);
+  height: clamp(86px, 28vw, 112px);
+  border: 1px solid rgba(160, 220, 255, .18);
   border-radius: 999px;
-  background: rgba(8, 13, 24, .72);
+  background: rgba(8, 13, 24, .78);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .25), inset 0 0 18px rgba(125, 190, 255, .08);
   text-align: center;
+  pointer-events: none;
 }
 
 .financeTab .financeCurrencyWealth__donutCenter strong {
-  max-width: 72px;
+  max-width: 96px;
   overflow: hidden;
-  font-size: 12px;
+  color: var(--fin-text);
+  font-size: clamp(13px, 3.8vw, 18px);
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8805,8 +8843,8 @@ grid-template-columns: 1fr auto;
 
 .financeTab .financeCurrencyWealth__donutCenter small {
   color: var(--fin-muted);
-  font-size: 9px;
-  font-weight: 800;
+  font-size: 10px;
+  font-weight: 900;
   text-transform: uppercase;
   letter-spacing: .08em;
 }
@@ -8816,22 +8854,34 @@ grid-template-columns: 1fr auto;
   justify-content: center;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 
 .financeTab .financeCurrencyWealth__legendItem {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 24px;
-  padding: 4px 7px;
+  min-height: 26px;
+  padding: 5px 8px;
   border: 1px solid rgba(125, 190, 255, .14);
   border-radius: 999px;
   background: rgba(255, 255, 255, .03);
+  color: inherit;
+  font: inherit;
   font-size: 11px;
   font-weight: 800;
+  cursor: pointer;
 }
 
-.financeTab .financeCurrencyWealth__legendItem i {
+.financeTab .financeCurrencyWealth__legendItem.is-active,
+.financeTab .financeCurrencyWealth__breakdownRow.is-active {
+  border-color: rgba(125, 190, 255, .56);
+  background: linear-gradient(135deg, rgba(89, 180, 255, .20), rgba(64, 244, 159, .10));
+  box-shadow: 0 0 0 1px rgba(125, 190, 255, .18) inset;
+}
+
+.financeTab .financeCurrencyWealth__legendItem i,
+.financeTab .financeCurrencyWealth__breakdownName i {
   width: 8px;
   height: 8px;
   flex: 0 0 auto;
@@ -8842,6 +8892,89 @@ grid-template-columns: 1fr auto;
 .financeTab .financeCurrencyWealth__legendItem small {
   color: var(--fin-muted);
   font-size: 10px;
+}
+
+.financeTab .financeCurrencyWealth__breakdown {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.financeTab .financeCurrencyWealth__breakdownRow {
+  display: grid;
+  grid-template-columns: minmax(64px, .8fr) minmax(0, 1.3fr) minmax(42px, auto);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(125, 190, 255, .16);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, .028);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.financeTab .financeCurrencyWealth__breakdownName {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.financeTab .financeCurrencyWealth__breakdownAmounts {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.15;
+  text-align: right;
+}
+
+.financeTab .financeCurrencyWealth__breakdownAmounts strong,
+.financeTab .financeCurrencyWealth__breakdownAmounts small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.financeTab .financeCurrencyWealth__breakdownAmounts small,
+.financeTab .financeCurrencyWealth__breakdownPct {
+  color: var(--fin-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.financeTab .financeCurrencyWealth__breakdownPct {
+  text-align: right;
+}
+
+@media (max-width: 420px) {
+  .financeTab .financeCurrencyWealth__donutWrap {
+    width: min(272px, 100%);
+    max-width: calc(100vw - 42px);
+    min-height: 238px;
+    padding: 4px;
+  }
+  .financeTab .financeCurrencyWealth__donutChart {
+    width: min(238px, 78vw);
+    height: min(238px, 78vw);
+    min-height: 224px;
+  }
+  .financeTab .financeCurrencyWealth__breakdownRow {
+    grid-template-columns: minmax(52px, .72fr) minmax(0, 1.28fr) minmax(38px, auto);
+    padding: 8px;
+  }
 }
 
 .financeTab .financeCurrencyWealth__typeBreakdown {

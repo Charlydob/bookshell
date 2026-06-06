@@ -8717,6 +8717,20 @@ grid-template-columns: 1fr auto;
   font-weight: 700;
 }
 
+.financeTab .financeCurrencyWealth__header--types {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(125, 190, 255, .16);
+}
+
+.financeTab .financeCurrencyWealth__row--assetType {
+  grid-template-columns: minmax(130px, 1fr) minmax(118px, auto);
+}
+
+.financeTab .financeCurrencyWealth__row--assetType .financeCurrencyWealth__code {
+  letter-spacing: 0;
+}
+
 @media (max-width: 520px) {
   .financeTab .financeCurrencyWealth__header {
     align-items: center;

@@ -322,8 +322,13 @@ function isLegacyBitcoinAccount(account = {}) { return account?.isBitcoin === tr
 function normalizeAccountAssetType(account = {}) {
   const raw = String(account?.assetType || '').trim().toLowerCase();
   if (ACCOUNT_ASSET_TYPES.includes(raw)) return raw;
-  if (isLegacyBitcoinAccount(account)) return 'crypto';
+  if (isLegacyBitcoinAccount(account) || String(account?.currency || '').trim().toUpperCase() === 'BTC') return 'crypto';
   return 'cash';
+}
+function normalizeFinanceAccountRecord(account = {}) {
+  const assetType = normalizeAccountAssetType(account);
+  const currency = assetType === 'crypto' ? 'BTC' : normalizeCurrencyCode(account?.currency || getDefaultCurrency());
+  return { ...account, assetType, currency, isBitcoin: assetType === 'crypto' };
 }
 function isCryptoAccount(account = {}) { return normalizeAccountAssetType(account) === 'crypto'; }
 function accountCurrency(account = {}) {
@@ -868,7 +873,7 @@ function collectBalanceRowsFromRoot(root = {}, financePath = state.financePath) 
 }
 function syncLocalAccountsFromRoot(root = {}) {
   if (!root?.accounts || typeof root.accounts !== 'object') return;
-  state.accounts = Object.values(root.accounts).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  state.accounts = Object.values(root.accounts).map(normalizeFinanceAccountRecord).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 }
 function pruneLocalLegacyTxRows(txId) {
   const safeId = String(txId || '').trim();
@@ -10725,10 +10730,33 @@ function buildWealthByCurrencyRows(accounts = [], targetCurrency = state.finance
   return rows.map((row) => ({ ...row, pct: Math.max(2, Math.min(100, (Math.abs(Number(row.converted || 0)) / maxAbs) * 100)) }));
 }
 
+const ACCOUNT_ASSET_TYPE_LABELS = Object.freeze({
+  cash: 'Cash / efectivo',
+  investment: 'Inversión',
+  crypto: 'Crypto',
+});
+function buildWealthByAssetTypeRows(accounts = [], targetCurrency = state.financeTotalCurrency || getDefaultCurrency(), scope = state.balanceAggScope === 'total' ? 'total' : 'my') {
+  const rates = getFinanceCurrencyRates();
+  const grouped = new Map(ACCOUNT_ASSET_TYPES.map((assetType) => [assetType, { assetType, label: ACCOUNT_ASSET_TYPE_LABELS[assetType] || assetType, converted: 0, missingRate: false }]));
+  for (const account of accounts || []) {
+    const assetType = normalizeAccountAssetType(account);
+    const currency = accountCurrency(account);
+    const totalOriginal = getAccountOriginalBalanceForCurrencyComparison(account, scope);
+    const converted = convertCurrency(totalOriginal, currency, targetCurrency, rates);
+    const prev = grouped.get(assetType) || { assetType, label: ACCOUNT_ASSET_TYPE_LABELS[assetType] || assetType, converted: 0, missingRate: false };
+    if (Number.isFinite(converted)) prev.converted += converted;
+    else prev.missingRate = true;
+    grouped.set(assetType, prev);
+  }
+  const ordered = ['cash', 'investment', 'crypto'];
+  return [...grouped.values()].sort((a, b) => ordered.indexOf(a.assetType) - ordered.indexOf(b.assetType));
+}
+
 function renderWealthByCurrencyCard(accounts = []) {
   const referenceCurrency = state.financeTotalCurrency || getDefaultCurrency();
   const scope = state.balanceAggScope === 'total' ? 'total' : 'my';
   const rows = buildWealthByCurrencyRows(accounts, referenceCurrency, scope);
+  const assetTypeRows = buildWealthByAssetTypeRows(accounts, referenceCurrency, scope);
   return `<article class="financeGlassCard financeCurrencyWealthCard">
     <div class="financeCurrencyWealth__header">
       <div>
@@ -10752,6 +10780,20 @@ function renderWealthByCurrencyCard(accounts = []) {
           </div>
         </div>`;
       }).join('') : '<p class="finance-empty">Sin cuentas.</p>'}
+    </div>
+    <div class="financeCurrencyWealth__header financeCurrencyWealth__header--types">
+      <div>
+        <h3>Patrimonio por tipo</h3>
+        <small>Suma convertida a ${escapeHtml(referenceCurrency)} · ${scope === 'total' ? 'total' : 'mi parte'}</small>
+      </div>
+    </div>
+    <div class="financeCurrencyWealth__list financeCurrencyWealth__list--types">
+      ${assetTypeRows.map((row) => `<div class="financeCurrencyWealth__row financeCurrencyWealth__row--assetType">
+        <strong class="financeCurrencyWealth__code">${escapeHtml(row.label)}</strong>
+        <div class="financeCurrencyWealth__amounts">
+          <span>${row.missingRate ? 'Sin tasa' : fmtCurrencyCode(row.converted, referenceCurrency)}</span>
+        </div>
+      </div>`).join('')}
     </div>
   </article>`;
 }
@@ -13621,7 +13663,7 @@ function applyRemoteData(val = {}, replace = false) {
   const root = val && typeof val === 'object' ? val : {};
   const accountsMap = root.accounts || (replace ? {} : Object.fromEntries(state.accounts.map((acc) => [acc.id, acc])));
   const fallbackEntries = replace ? {} : state.legacyEntries;
-  state.accounts = Object.values(accountsMap).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  state.accounts = Object.values(accountsMap).map(normalizeFinanceAccountRecord).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   state.legacyEntries = root.accountsEntries || root.entries || fallbackEntries;
   state.balance = {
     tx: root.balance?.tx || root.tx || (replace ? {} : state.balance.tx),
@@ -14010,11 +14052,20 @@ async function addAccount({ name, shared = false, sharedRatio = 0.5, assetType =
   const id = push(ref(db, `${state.financePath}/accounts`)).key;
   const ratio = shared ? clampRatio(sharedRatio, 0.5) : 1;
   const normalizedMeta = normalizeAccountMetaPayload({ assetType, isBitcoin, btcUnits, initialValue, currency });
-  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, currency: normalizedMeta.currency, assetType: normalizedMeta.assetType, shared, sharedRatio: ratio, isBitcoin: normalizedMeta.isBitcoin, btcUnits: normalizedMeta.btcUnits, cardLast4: normalizeCardLast4(cardLast4), createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
+  const createdAt = nowTs();
+  const accountPayload = normalizeFinanceAccountRecord({ id, name, currency: normalizedMeta.currency, assetType: normalizedMeta.assetType, shared, sharedRatio: ratio, isBitcoin: normalizedMeta.isBitcoin, btcUnits: normalizedMeta.btcUnits, cardLast4: normalizeCardLast4(cardLast4), createdAt, updatedAt: createdAt, entries: {}, snapshots: {} });
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), accountPayload));
+  patchFinanceCacheRoot(getPrimaryFinanceCacheKey(), `accounts/${id}`, accountPayload);
+  syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
+  clearFinanceDerivedCaches();
+  scheduleFinanceSnapshotSave('account-create');
   const parsedInitial = parseEuroNumber(initialValue);
   if (Number.isFinite(parsedInitial)) {
     const day = dayKeyFromTs(Date.now());
-    await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}/snapshots/${day}`), { value: parsedInitial, updatedAt: nowTs() }));
+    const snapshotPayload = { value: parsedInitial, updatedAt: nowTs() };
+    await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}/snapshots/${day}`), snapshotPayload));
+    patchFinanceCacheRoot(resolveFinanceAccountCacheKey(id), `accounts/${id}/snapshots/${day}`, snapshotPayload);
+    syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
     await recomputeAccountEntries(id, day);
   }
 }
@@ -14044,7 +14095,13 @@ async function updateAccountMeta(accountId, payload = {}) {
   const shared = Boolean(payload.shared);
   const sharedRatio = shared ? clampRatio(payload.sharedRatio, 0.5) : 1;
   const normalizedMeta = normalizeAccountMetaPayload(payload);
-  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, currency: normalizedMeta.currency, assetType: normalizedMeta.assetType, shared, sharedRatio, isBitcoin: normalizedMeta.isBitcoin, btcUnits: normalizedMeta.btcUnits, cardLast4: normalizeCardLast4(payload.cardLast4), updatedAt: nowTs() }));
+  const accountPatch = { ...payload, currency: normalizedMeta.currency, assetType: normalizedMeta.assetType, shared, sharedRatio, isBitcoin: normalizedMeta.isBitcoin, btcUnits: normalizedMeta.btcUnits, cardLast4: normalizeCardLast4(payload.cardLast4), updatedAt: nowTs() };
+  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), accountPatch));
+  const cacheKey = resolveFinanceAccountCacheKey(accountId);
+  Object.entries(accountPatch).forEach(([key, value]) => patchFinanceCacheRoot(cacheKey, `accounts/${accountId}/${key}`, value));
+  syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
+  clearFinanceDerivedCaches();
+  scheduleFinanceSnapshotSave('account-meta-update');
 }
 async function saveSnapshot(accountId, day, value) {
   const parsedValue = parseEuroNumber(value);

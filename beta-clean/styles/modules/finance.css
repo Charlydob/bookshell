@@ -8542,3 +8542,95 @@ grid-template-columns: 1fr auto;
   .financeTab .financeAccountCard__deltaPill,
   .financeTab .finance__accounts .financeAccountCard__deltaPill{max-width:calc(100% - 42px);text-align:left}
 }
+
+/* Account card balance layout: amount and currency must share one baseline flex row. */
+.financeTab .financeAccountCard__balanceBlock{
+  display:grid;
+  gap:0;
+  min-width:0;
+}
+.financeTab .account-balance-row,
+.financeTab .financeAccountCard__balanceWrap.account-balance-row{
+  display:flex;
+  align-items:baseline;
+  gap:6px;
+  min-width:0;
+  max-width:100%;
+  line-height:1;
+}
+.financeTab .account-balance,
+.financeTab .financeAccountCard__balance.account-balance{
+  position:static!important;
+  flex:0 1 auto;
+  width:clamp(6.4ch,34vw,9.2ch);
+  min-width:0!important;
+  max-width:100%!important;
+  border:0;
+  background:transparent;
+  color:var(--fin-text);
+  padding:0;
+  font-size:clamp(2rem,7vw,3rem);
+  line-height:1;
+  text-align:left;
+  letter-spacing:-.045em;
+  box-shadow:none;
+}
+.financeTab .account-currency-symbol,
+.financeTab .financeAccountCard__currencySymbol,
+.financeTab .financeAccountCard__currencyBadge{
+  position:static!important;
+  inset:auto!important;
+  transform:none!important;
+  display:inline-flex;
+  align-items:baseline;
+  flex:0 0 auto;
+  align-self:baseline;
+  padding:0!important;
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+  color:rgba(236,242,255,.85);
+  font-size:clamp(.78rem,2.5vw,1.14rem);
+  font-weight:800;
+  line-height:1;
+  letter-spacing:.01em;
+  white-space:nowrap;
+  opacity:.85;
+}
+.financeTab .account-eur-equivalent{
+  display:block;
+  font-size:12px;
+  opacity:.7;
+  margin-top:4px;
+  line-height:1.2;
+  color:var(--fin-muted);
+}
+.financeTab .financeAccountCard__actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.financeTab .finance-shared-chip{
+  display:grid;
+  gap:2px;
+  align-items:start;
+  justify-items:start;
+  color:var(--fin-muted);
+  line-height:1.2;
+}
+.financeTab .finance-shared-chip .account-eur-equivalent,
+.financeTab .finance-shared-chip__eur{
+  margin-top:0;
+}
+@media (max-width:560px){
+  .financeTab .account-balance,
+  .financeTab .financeAccountCard__balance.account-balance{
+    width:clamp(5.8ch,47vw,8.4ch);
+    font-size:clamp(1.82rem,10.5vw,2.45rem);
+  }
+  .financeTab .account-currency-symbol,
+  .financeTab .financeAccountCard__currencySymbol,
+  .financeTab .financeAccountCard__currencyBadge{
+    font-size:clamp(.72rem,4.2vw,1.05rem);
+  }
+}

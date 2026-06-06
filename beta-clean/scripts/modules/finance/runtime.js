@@ -26,7 +26,7 @@ import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/serv
 import { logFirebaseRead, logFirebaseWrite, registerViewListener, trackedGet, trackedOnValue } from '../../shared/firebase/read-debug.js';
 import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
-import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, normalizeCurrencyCode } from './finance/currency-utils.js';
+import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, convertToEUR, normalizeCurrencyCode } from './finance/currency-utils.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -323,6 +323,20 @@ function accountCurrencySymbol(account = {}) {
   return SUPPORTED_CURRENCIES.find((row) => row.code === code)?.symbol || code;
 }
 function formatAccountAmount(value = 0, account = {}) { return fmtCurrencyCode(value, accountCurrency(account)); }
+function formatAccountBalanceValue(value = 0) { return Number(value || 0).toFixed(2); }
+function formatAccountEurEquivalent(value = 0, account = {}) {
+  const currency = accountCurrency(account);
+  if (currency === 'EUR') return '';
+  const converted = convertToEUR(Number(value || 0), currency);
+  if (!Number.isFinite(converted)) return '';
+  return `≈ ${fmtCurrency(converted)}`;
+}
+function renderAccountEurEquivalent(value = 0, account = {}, className = '') {
+  const equivalent = formatAccountEurEquivalent(value, account);
+  if (!equivalent) return '';
+  const classes = ['account-eur-equivalent', className].filter(Boolean).join(' ');
+  return `<small class="${classes}">${escapeHtml(equivalent)}</small>`;
+}
 function convertAccountAmount(value = 0, account = {}, targetCurrency = state.financeTotalCurrency || getDefaultCurrency()) {
   const converted = convertCurrency(Number(value || 0), accountCurrency(account), targetCurrency);
   return Number.isFinite(converted) ? converted : 0;
@@ -10799,16 +10813,20 @@ function renderFinanceCalendarPanel(accounts, totalSeries, { withToggle = false 
 function renderFinanceAccountCard(account = {}, { deleteLabel = '🗑️' } = {}) {
   const editableBalance = account.shared ? account.currentReal : account.current;
   const currency = accountCurrency(account);
+  const sharedPart = account.shared ? Number(account.current || 0) : 0;
   return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${escapeHtml(account.id)}">
     <div class="financeAccountCard__main">
       <strong class="financeAccountCard__title">${escapeHtml(account.name)}</strong>
-      <div class="financeAccountCard__balanceWrap" aria-label="${escapeHtml(account.shared ? 'Saldo real' : 'Mi saldo')}">
-        <input class="financeAccountCard__balance" data-account-input="${escapeHtml(account.id)}" value="${Number(editableBalance || 0).toFixed(2)}" inputmode="decimal" placeholder="0.00" />
-        <span class="financeAccountCard__currencyBadge" aria-label="${escapeHtml(currency)}">${escapeHtml(accountCurrencySymbol(account))}</span>
-        <button class="finance-pill finance-pill--mini" data-account-save="${escapeHtml(account.id)}">Guardar</button>
+      <div class="financeAccountCard__balanceBlock">
+        <div class="financeAccountCard__balanceWrap account-balance-row" aria-label="${escapeHtml(account.shared ? 'Saldo real' : 'Mi saldo')}">
+          <input class="financeAccountCard__balance account-balance" data-account-input="${escapeHtml(account.id)}" value="${formatAccountBalanceValue(editableBalance)}" inputmode="decimal" placeholder="0.00" />
+          <span class="financeAccountCard__currencySymbol account-currency-symbol" aria-label="${escapeHtml(currency)}">${escapeHtml(accountCurrencySymbol(account))}</span>
+        </div>
+        ${renderAccountEurEquivalent(editableBalance, account)}
       </div>
+      <div class="financeAccountCard__actions"><button class="finance-pill finance-pill--mini" data-account-save="${escapeHtml(account.id)}">Guardar</button></div>
       <small class="financeAccountCard__formattedBalance">${account.shared ? 'Saldo real' : 'Mi saldo'}</small>
-      ${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${formatAccountAmount(account.current, account)}</small>` : ''}
+      ${account.shared ? `<small class="finance-shared-chip"><span>Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${escapeHtml(formatAccountBalanceValue(sharedPart))} ${escapeHtml(accountCurrencySymbol(account))}</span>${renderAccountEurEquivalent(sharedPart, account, 'finance-shared-chip__eur')}</small>` : ''}
     </div>
     <div class="financeAccountCard__side">
       <span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${account.range.delta > 0 ? '+' : ''}${formatAccountAmount(account.range.delta, account)}</span>

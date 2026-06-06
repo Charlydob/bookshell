@@ -8,6 +8,7 @@ let unsub = null;
 let autoStayInFlight = false;
 let lastAutoStayError = null;
 const collapsedCountries = new Set();
+const expandedCities = new Set();
 let globalStayModalHandlerBound = false;
 let activeEditStayId = null;
 let searchAbortController = null;
@@ -245,13 +246,14 @@ function render() {
     const countryMetrics = buildMetricSegments(country.days, alive, stats.yearDays);
     const cities = stayViewOptions.view === "countriesOnly" ? "" : country.cities.map((city) => {
       const cityMetrics = buildMetricSegments(city.days, alive, stats.yearDays);
+      const cityKey = `${country.key}::${normalizeGroupText(city.city)}::${normalizeGroupText(city.region)}`;
       const rows = city.rangos.map((stay) => {
         const rangeDays = Number(stay.displayDays || 0);
         const rangeMetrics = buildMetricSegments(rangeDays, alive, stats.yearDays);
         const dateLine = stay.startDate && stay.endDate ? `${fmtDate(stay.startDate)} → ${fmtDate(stay.endDate)}` : "Sin fechas exactas";
         return `<li class="world-stays-entry"><div class="world-stays-entry-top"><span class="world-stays-entry-main">${esc(dateLine)}${rangeMetrics.length ? ` · ${esc(rangeMetrics.join(" · "))}` : ""}</span><div class="world-stays-entry-actions"><button type="button" data-world-stay-edit="${esc(stay.id)}" aria-label="Editar rango">✏️</button><button type="button" data-world-stay-delete="${esc(stay.id)}" aria-label="Eliminar rango">🗑️</button></div></div></li>`;
       }).join("");
-      return `<li class="world-stays-city-item"><div class="world-stays-city-card"><div class="world-stays-city-main">${esc(city.city)}${cityMetrics.length ? ` · ${esc(cityMetrics.join(" · "))}` : ""}</div><small class="world-stays-city-location">${esc(formatLocationLine(city.city, city.region, city.country))}</small><ul class="world-stays-entry-list">${rows}</ul></div></li>`;
+      return `<li class="world-stays-city-item"><details class="world-stays-city-card" ${expandedCities.has(cityKey) ? "open" : ""} data-city-key="${esc(cityKey)}"><summary class="world-stays-city-summary"><div class="world-stays-city-main">${esc(city.city)}${cityMetrics.length ? ` · ${esc(cityMetrics.join(" · "))}` : ""}</div><small class="world-stays-city-location">${esc(formatLocationLine(city.city, city.region, city.country))}</small></summary><ul class="world-stays-entry-list">${rows}</ul></details></li>`;
     }).join("");
     return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)}${countryMetrics.length ? ` · ${esc(countryMetrics.join(" · "))}` : ""} ▾</span></summary>${stayViewOptions.view === "countriesOnly" ? "" : `<ul class="world-stays-city-list">${cities || '<li class="world-stays-city-item">Sin ciudad registrada.</li>'}</ul>`}</details>`;
   }).join("");
@@ -477,10 +479,18 @@ export function initWorldStays({ root }) {
     });
     root.addEventListener("toggle", (e) => {
     const details = e.target;
-    if (!(details instanceof HTMLDetailsElement) || !details.matches(".world-stays-country")) return;
-    const key = details.dataset.countryKey || "";
-    if (!key) return;
-    if (details.open) collapsedCountries.delete(key); else collapsedCountries.add(key);
+    if (!(details instanceof HTMLDetailsElement)) return;
+    if (details.matches(".world-stays-country")) {
+      const key = details.dataset.countryKey || "";
+      if (!key) return;
+      if (details.open) collapsedCountries.delete(key); else collapsedCountries.add(key);
+      return;
+    }
+    if (details.matches(".world-stays-city-card")) {
+      const key = details.dataset.cityKey || "";
+      if (!key) return;
+      if (details.open) expandedCities.add(key); else expandedCities.delete(key);
+    }
     });
   }
 

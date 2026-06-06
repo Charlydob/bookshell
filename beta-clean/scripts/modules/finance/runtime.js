@@ -26,7 +26,7 @@ import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/serv
 import { logFirebaseRead, logFirebaseWrite, registerViewListener, trackedGet, trackedOnValue } from '../../shared/firebase/read-debug.js';
 import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
-import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR } from './finance/currency-utils.js';
+import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, normalizeCurrencyCode } from './finance/currency-utils.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -133,6 +133,7 @@ function clearFinanceDerivedCaches() {
   financeDerivedCache.accountMerge.goalsRef = null;
   financeDerivedCache.accountMerge.model = null;
   financeDerivedCache.totalSeries.accountsRef = null;
+  financeDerivedCache.totalSeries.currency = '';
   financeDerivedCache.totalSeries.rows = [];
 }
 
@@ -304,8 +305,51 @@ function setHomePanelView(nextView = 'hero') {
 }
 function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s])); }
 function fmtCurrency(value) { return formatCurrency(Number(value || 0), 'EUR'); }
-function fmtCurrencyCode(value, currency = 'EUR') { return formatCurrency(Number(value || 0), currency || 'EUR'); }
+function fmtCurrencyCode(value, currency = 'EUR') { return formatCurrency(Number(value || 0), normalizeCurrencyCode(currency || 'EUR')); }
 function fmtSignedCurrency(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${fmtCurrency(num)}`; }
+
+const FINANCE_TOTAL_CURRENCY_KEY = 'bookshell_finance_total_currency';
+const MIN_FINANCE_TOTAL_CURRENCIES = Object.freeze(['EUR', 'CHF', 'USD', 'PEN', 'BRL']);
+function readFinanceTotalCurrency() {
+  try { return normalizeCurrencyCode(localStorage.getItem(FINANCE_TOTAL_CURRENCY_KEY) || getDefaultCurrency()); } catch (_) { return getDefaultCurrency(); }
+}
+function setFinanceTotalCurrency(currency = getDefaultCurrency()) {
+  state.financeTotalCurrency = normalizeCurrencyCode(currency);
+  try { localStorage.setItem(FINANCE_TOTAL_CURRENCY_KEY, state.financeTotalCurrency); } catch (_) {}
+}
+function accountCurrency(account = {}) { return normalizeCurrencyCode(account?.currency || getDefaultCurrency()); }
+function formatAccountAmount(value = 0, account = {}) { return fmtCurrencyCode(value, accountCurrency(account)); }
+function convertAccountAmount(value = 0, account = {}, targetCurrency = state.financeTotalCurrency || getDefaultCurrency()) {
+  const converted = convertCurrency(Number(value || 0), accountCurrency(account), targetCurrency);
+  return Number.isFinite(converted) ? converted : 0;
+}
+function formatFinanceTotal(value = 0) { return fmtCurrencyCode(value, state.financeTotalCurrency || getDefaultCurrency()); }
+function fmtSignedFinanceTotal(value = 0) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${formatFinanceTotal(num)}`; }
+function renderCurrencyOptions(selected = getDefaultCurrency()) {
+  const selectedCode = normalizeCurrencyCode(selected);
+  const codes = [...new Set([...MIN_FINANCE_TOTAL_CURRENCIES, ...SUPPORTED_CURRENCIES.map((row) => row.code)])];
+  return codes.map((code) => {
+    const row = SUPPORTED_CURRENCIES.find((item) => item.code === code) || { code, symbol: code, label: code };
+    return `<option value="${escapeHtml(code)}" title="${escapeHtml(row.label || code)}" ${selectedCode === code ? 'selected' : ''}>${escapeHtml(`${code} ${row.symbol || ''}`.trim())}</option>`;
+  }).join('');
+}
+function storeCurrencyKey(store = '') { return firebaseSafeKey(normalizeFoodName(store).toLocaleLowerCase('es')); }
+function getStoreDefaultCurrency(store = '') {
+  const key = storeCurrencyKey(store);
+  const raw = key ? state.productsHub?.settings?.storeCurrencies?.[key] : '';
+  return raw ? normalizeCurrencyCode(raw) : '';
+}
+state.financeTotalCurrency = readFinanceTotalCurrency();
+
+async function persistStoreDefaultCurrency(store = '', currency = getDefaultCurrency()) {
+  const key = storeCurrencyKey(store);
+  if (!key) return;
+  const code = normalizeCurrencyCode(currency);
+  state.productsHub = state.productsHub || {};
+  state.productsHub.settings = { ...(state.productsHub.settings || {}), storeCurrencies: { ...(state.productsHub?.settings?.storeCurrencies || {}), [key]: code } };
+  if (state.financePath) await safeFirebase(() => update(ref(db, `${state.financePath}/shoppingHub/settings/storeCurrencies`), { [firebaseSafeKey(key)]: code }));
+}
+
 function fmtSignedPercent(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${num.toFixed(2)}%`; }
 function toneClass(value) { if (value > 0) return 'is-positive'; if (value < 0) return 'is-negative'; return 'is-neutral'; }
 function dayKeyFromTs(ts) { const d = new Date(Number(ts || Date.now())); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
@@ -645,6 +689,29 @@ if (safeType === 'income') {
   if (safeType === 'transfer') return 0;
   return 0;
 }
+
+function txCurrency(tx = {}, accountsById = {}) {
+  return normalizeCurrencyCode(tx?.accountCurrency || tx?.currency || accountsById?.[tx?.accountId]?.currency || getDefaultCurrency());
+}
+function txAmountInCurrency(tx = {}, accountsById = {}, targetCurrency = state.financeTotalCurrency || getDefaultCurrency()) {
+  const converted = convertCurrency(Number(tx?.amount || 0), txCurrency(tx, accountsById), targetCurrency);
+  return Number.isFinite(converted) ? converted : Number(tx?.convertedAmountEUR ?? tx?.totalEUR ?? tx?.amount ?? 0);
+}
+function personalDeltaForTxInCurrency(tx = {}, accountsById = {}, targetCurrency = state.financeTotalCurrency || getDefaultCurrency()) {
+  const safeType = normalizeTxType(tx?.type);
+  const amount = txAmountInCurrency(tx, accountsById, targetCurrency);
+  if (!Number.isFinite(amount)) return 0;
+  const ratio = personalRatioForTx(tx, accountsById);
+  if (safeType === 'income') {
+    const acc = accountsById[tx?.accountId];
+    if (acc?.shared) return 0;
+    return amount;
+  }
+  if (safeType === 'expense') return -amount * ratio;
+  if (safeType === 'transfer') return 0;
+  return 0;
+}
+
 function movementSign(type) { return type === 'income' ? 1 : -1; }
 function txSortTs(row) {
   return new Date(row?.date || row?.dateISO || 0).getTime() || 0;
@@ -3372,7 +3439,7 @@ function renderProductsAccountSelect(model = null) {
   return `
     <select class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--payment" name="accountId" data-products-receipt-payment aria-label="Cuenta">
       <option value="">Sin cuenta</option>
-      ${(state.accounts || []).map((account) => `<option value="${escapeHtml(account.id)}" ${current === account.id ? 'selected' : ''}>${escapeHtml(account.name || account.id)}</option>`).join('')}
+      ${(state.accounts || []).map((account) => `<option value="${escapeHtml(account.id)}" ${current === account.id ? 'selected' : ''}>${escapeHtml(`${account.name || account.id} · ${accountCurrency(account)}`)}</option>`).join('')}
     </select>
   `;
 }
@@ -5135,7 +5202,7 @@ function readProductsListDraftFromDom(root = document) {
   nextList.ticketCategoryId = String(scope.querySelector('[name="ticketCategoryId"]')?.value || nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '').trim();
   nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
-  const ticketCurrency = String(scope.querySelector('[data-products-receipt-currency]')?.value || nextList.tickets?.[activeTicketId]?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const ticketCurrency = normalizeCurrencyCode(scope.querySelector('[data-products-receipt-currency]')?.value || nextList.tickets?.[activeTicketId]?.ticketCurrency || getStoreDefaultCurrency(nextList.store) || getDefaultCurrency());
   const derivedFromEUR = ticketCurrency === 'EUR'
     ? 1
     : Number(nextList.tickets?.[activeTicketId]?.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(nextList.tickets?.[activeTicketId]?.exchangeRateToEUR || 0))));
@@ -6260,6 +6327,13 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
   if (!(totalAmount > 0)) {
     throw new Error('receipt-invalid-total');
   }
+  const account = (state.accounts || []).find((item) => String(item.id || '') === accountId) || {};
+  const inputCurrency = normalizeCurrencyCode(options.ticketCurrency || list.ticketCurrency || list.currency || getDefaultCurrency());
+  const accountCur = accountCurrency(account);
+  const totalEUR = Number(options.totalEUR ?? list.totalEUR ?? normalizeMovementCurrencyPayload({ amount: totalAmount, currency: inputCurrency, exchangeRateToEUR: Number(options.exchangeRateToEUR || list.exchangeRateToEUR || 0) }).amountEUR);
+  const amountDebited = convertCurrency(totalAmount, inputCurrency, accountCur);
+  if (!Number.isFinite(amountDebited)) throw new Error('receipt-fx-missing-account-currency');
+  const rateUsed = inputCurrency === accountCur ? 1 : (amountDebited / Math.max(0.0000001, totalAmount));
 
   const normalizedLines = buildReceiptMovementLines(lines, list, category).map((item) => {
     const fallbackProductId = String(item.productId || item.foodId || item.productKey || firebaseSafeKeyLoose(item.name || 'producto')).trim();
@@ -6294,12 +6368,18 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
       paymentMethod: list.paymentMethod || 'Tarjeta',
       estimatedTotal: lines.reduce((sum, line) => sum + (Number(line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1))), 0),
       actualTotal: totalAmount,
+      inputCurrency,
+      accountCurrency: accountCur,
+      totalOriginal: Number(options.totalOriginal ?? list.totalOriginal ?? totalAmount),
+      totalEUR,
+      amountDebited: Number(amountDebited || 0),
+      rateUsed,
     },
   };
   const payload = {
     id: saveId,
     type: 'expense',
-    amount: Number(options.totalEUR ?? list.totalEUR ?? totalAmount),
+    amount: Number(amountDebited || 0),
     date: dateISO,
     monthKey: dateISO.slice(0, 7),
     accountId,
@@ -6307,11 +6387,18 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     toAccountId: '',
     category,
     note,
-    currency: 'EUR',
+    currency: accountCur,
+    inputCurrency,
+    accountCurrency: accountCur,
+    accountAmount: Number(amountDebited || 0),
+    amountDebited: Number(amountDebited || 0),
     originalAmount: Number(options.totalOriginal ?? list.totalOriginal ?? totalAmount),
-    originalCurrency: String(options.ticketCurrency || list.ticketCurrency || 'EUR').toUpperCase(),
-    exchangeRateToEUR: Number(list.exchangeRateToEUR || 1),
-    exchangeRateFromEUR: Number(list.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(list.exchangeRateToEUR || 1)))),
+    originalCurrency: inputCurrency,
+    totalOriginal: Number(options.totalOriginal ?? list.totalOriginal ?? totalAmount),
+    totalEUR,
+    rateUsed,
+    exchangeRateToEUR: Number(options.exchangeRateToEUR || list.exchangeRateToEUR || 1),
+    exchangeRateFromEUR: Number(options.exchangeRateFromEUR || list.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(options.exchangeRateToEUR || list.exchangeRateToEUR || 1)))),
     source: 'ticket',
     receiptId,
     store,
@@ -6330,6 +6417,9 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     movementId: saveId,
     accountId,
     total: totalAmount,
+    inputCurrency,
+    accountCurrency: accountCur,
+    amountDebited,
     lineCount: lines.length,
     store,
     paymentMethod: list.paymentMethod || 'Tarjeta',
@@ -6547,10 +6637,12 @@ async function confirmProductsTicketFromDom() {
       dateISO: confirmedDateISO,
       confirmedAt: confirmedAtTs,
       estimatedTotal,
-      actualTotal: Number(receiptCurrencyPayload.amountEUR || validation.total),
+      actualTotal: Number(actualTotalOriginal || 0),
       totalOriginal: Number(actualTotalOriginal || 0),
       totalEUR: Number(receiptCurrencyPayload.amountEUR || validation.total),
       ticketCurrency: receiptCurrency,
+      inputCurrency: receiptCurrency,
+      accountCurrency: accountCurrency((state.accounts || []).find((item) => String(item.id) === validation.accountId) || {}),
       exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1),
       exchangeRateFromEUR: Number(activeTicketMeta.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(receiptCurrencyPayload.exchangeRateToEUR || 1)))),
       exchangeRateUpdatedAt: String(activeTicketMeta.exchangeRateUpdatedAt || ''),
@@ -6585,6 +6677,8 @@ async function confirmProductsTicketFromDom() {
       ...ticketPayload,
       total: Number(receiptCurrencyPayload.amountEUR || validation.total),
       ticketCurrency: receiptCurrency,
+      inputCurrency: receiptCurrency,
+      accountCurrency: accountCurrency((state.accounts || []).find((item) => String(item.id) === validation.accountId) || {}),
       exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1),
       exchangeRateFromEUR: Number(activeTicketMeta.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(receiptCurrencyPayload.exchangeRateToEUR || 1)))),
       exchangeRateUpdatedAt: String(activeTicketMeta.exchangeRateUpdatedAt || ''),
@@ -6769,6 +6863,15 @@ function normalizeProductsHubTicket(id = '', payload = {}) {
     confirmedAt: normalizedConfirmedAt,
     estimatedTotal: normalizeProductPositiveNumber(payload?.estimatedTotal, 0),
     actualTotal: normalizeProductPositiveNumber(payload?.actualTotal, 0),
+    totalOriginal: normalizeProductPositiveNumber(payload?.totalOriginal ?? payload?.originalAmount, normalizeProductPositiveNumber(payload?.actualTotal, 0)),
+    totalEUR: normalizeProductPositiveNumber(payload?.totalEUR ?? payload?.convertedAmountEUR, 0),
+    inputCurrency: normalizeCurrencyCode(payload?.inputCurrency || payload?.ticketCurrency || payload?.currency || getDefaultCurrency()),
+    ticketCurrency: normalizeCurrencyCode(payload?.ticketCurrency || payload?.inputCurrency || payload?.currency || getDefaultCurrency()),
+    accountCurrency: normalizeCurrencyCode(payload?.accountCurrency || getDefaultCurrency()),
+    amountDebited: normalizeProductPositiveNumber(payload?.amountDebited ?? payload?.accountAmount, 0),
+    rateUsed: normalizeProductNumber(payload?.rateUsed, 1),
+    exchangeRateToEUR: normalizeProductNumber(payload?.exchangeRateToEUR, 1),
+    exchangeRateFromEUR: normalizeProductNumber(payload?.exchangeRateFromEUR, 1),
     lines: normalizeProductsHubLineMap(payload?.lines || {}),
     createdAt: normalizeProductNumber(payload?.createdAt, nowTs()),
     updatedAt: normalizeProductNumber(payload?.updatedAt, nowTs()),
@@ -8020,6 +8123,7 @@ function buildAccountModels() {
 
   const rows = state.accounts.map((account) => {
     const share = normalizeAccountShare(account);
+    const currency = accountCurrency(account);
 
 
     const sourceEntries = Object.keys(account.entries || {}).length ? (account.entries || {}) : (account.daily || {});
@@ -8052,7 +8156,7 @@ function buildAccountModels() {
     
     if (share.shared) log(`account sharedRatio=${share.sharedRatio} applied`, { accountId: account.id });
 
-    return { ...account, ...share, daily, dailyReal, current, currentReal, btcPrice, range, };
+    return { ...account, currency, ...share, daily, dailyReal, current, currentReal, btcPrice, range, };
   });
 
   cache.accountsRef = state.accounts;
@@ -8065,7 +8169,8 @@ function buildAccountModels() {
 
 function buildTotalSeries(accounts) {
   const cache = financeDerivedCache.totalSeries;
-  if (cache.accountsRef === accounts) {
+  const totalCurrency = state.financeTotalCurrency || getDefaultCurrency();
+  if (cache.accountsRef === accounts && cache.currency === totalCurrency) {
     return cache.rows;
   }
   const daySet = new Set();
@@ -8073,12 +8178,14 @@ function buildTotalSeries(accounts) {
   const days = [...daySet].sort();
   if (!days.length) {
     cache.accountsRef = accounts;
+    cache.currency = totalCurrency;
     cache.rows = [];
     return cache.rows;
   }
-  const perAccount = Object.fromEntries(accounts.map((account) => [account.id, Object.fromEntries(account.daily.map((p) => [p.day, p.value]))]));
+  const perAccount = Object.fromEntries(accounts.map((account) => [account.id, Object.fromEntries(account.daily.map((p) => [p.day, convertAccountAmount(p.value, account, totalCurrency)]))]));
   const running = Object.fromEntries(accounts.map((account) => [account.id, 0]));
   cache.accountsRef = accounts;
+  cache.currency = totalCurrency;
   cache.rows = days.map((day) => {
     accounts.forEach((account) => { if (perAccount[account.id][day] != null) running[account.id] = perAccount[account.id][day]; });
     return { day, ts: parseDayKey(day), value: Object.values(running).reduce((sum, val) => sum + Number(val || 0), 0) };
@@ -8121,9 +8228,10 @@ function syncFinanceAchievementsApi() {
 }
 
 function publishFinanceTotals(accounts = []) {
-  const myTotal = accounts.reduce((sum, account) => sum + Number(account.current || 0), 0);
-  const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
-  const payload = { myTotal, totalReal, ts: Date.now() };
+  const totalCurrency = state.financeTotalCurrency || getDefaultCurrency();
+  const myTotal = accounts.reduce((sum, account) => sum + convertAccountAmount(account.current, account, totalCurrency), 0);
+  const totalReal = accounts.reduce((sum, account) => sum + convertAccountAmount(account.currentReal, account, totalCurrency), 0);
+  const payload = { myTotal, totalReal, currency: totalCurrency, ts: Date.now() };
   try { localStorage.setItem(FINANCE_TOTALS_CACHE_KEY, JSON.stringify(payload)); } catch (_) {}
   try { window.__bookshellFinanceTotals = payload; } catch (_) {}
   try { window.dispatchEvent(new CustomEvent('bookshell:finance-totals', { detail: payload })); } catch (_) {}
@@ -8478,18 +8586,18 @@ function summaryForMonth(monthKey, accountsById = {}, txRows = balanceTxList()) 
 function calcAggForBucket(txListBucket = [], accountsById = {}) {
   const incomeMy = txListBucket
     .filter((tx) => normalizeTxType(tx.type) === 'income')
-    .reduce((s, tx) => s + Math.max(0, personalDeltaForTx(tx, accountsById)), 0);
+    .reduce((s, tx) => s + Math.max(0, personalDeltaForTxInCurrency(tx, accountsById)), 0);
 
   const expenseMy = txListBucket
     .filter((tx) => normalizeTxType(tx.type) === 'expense')
-    .reduce((s, tx) => s + Math.max(0, -personalDeltaForTx(tx, accountsById)), 0);
+    .reduce((s, tx) => s + Math.max(0, -personalDeltaForTxInCurrency(tx, accountsById)), 0);
 
   const transferImpactMy = txListBucket
     .filter((tx) => normalizeTxType(tx.type) === 'transfer')
-    .reduce((s, tx) => s + personalDeltaForTx(tx, accountsById), 0);
+    .reduce((s, tx) => s + personalDeltaForTxInCurrency(tx, accountsById), 0);
 
-  const incomeTotal = txListBucket.filter((tx) => normalizeTxType(tx.type) === 'income').reduce((s, tx) => s + Number(tx.amount || 0), 0);
-  const expenseTotal = txListBucket.filter((tx) => normalizeTxType(tx.type) === 'expense').reduce((s, tx) => s + Number(tx.amount || 0), 0);
+  const incomeTotal = txListBucket.filter((tx) => normalizeTxType(tx.type) === 'income').reduce((s, tx) => s + txAmountInCurrency(tx, accountsById), 0);
+  const expenseTotal = txListBucket.filter((tx) => normalizeTxType(tx.type) === 'expense').reduce((s, tx) => s + txAmountInCurrency(tx, accountsById), 0);
 
   return {
     incomeMy,
@@ -8767,8 +8875,8 @@ function buildBalanceStats(rows, accountsById) {
   let totalFoodSpentPersonal = 0;
   let totalFoodSpentGlobal = 0;
   rows.forEach((row) => {
-    const amountGlobal = Math.abs(Number(row.amount || 0));
-    const amountPersonal = Math.abs(personalDeltaForTx(row, accountsById));
+    const amountGlobal = Math.abs(txAmountInCurrency(row, accountsById));
+    const amountPersonal = Math.abs(personalDeltaForTxInCurrency(row, accountsById));
     if (!amountPersonal && !amountGlobal) return;
     const category = row.category || 'Sin categoría';
     if (row.type === 'expense') {
@@ -8926,8 +9034,8 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
   rows.forEach((row) => {
     if (row.type !== txMode) return;
     const amount = scope === 'global'
-      ? Math.abs(Number(row.amount || 0))
-      : Math.abs(personalDeltaForTx(row, accountsById));
+      ? Math.abs(txAmountInCurrency(row, accountsById))
+      : Math.abs(personalDeltaForTxInCurrency(row, accountsById));
     if (!amount) return;
     let key = 'Sin datos';
     if (groupBy === 'account') key = accountsById[row.accountId]?.name || 'Sin cuenta';
@@ -8954,7 +9062,7 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
     const scopedAmountByTx = {};
     rows.forEach((row) => {
       if (row.type !== txMode) return;
-      const scopedAmount = scope === 'global' ? Math.abs(Number(row.amount || 0)) : Math.abs(personalDeltaForTx(row, accountsById));
+      const scopedAmount = scope === 'global' ? Math.abs(txAmountInCurrency(row, accountsById)) : Math.abs(personalDeltaForTxInCurrency(row, accountsById));
       if (!scopedAmount) return;
       scopedAmountByTx[row.id] = scopedAmount;
     });
@@ -9479,11 +9587,12 @@ function renderFinanceHeroPanel({ total, totalReal, totalRange, chart }, { withT
   return `<article class="finance__hero">
     <div class="financePanelTopbar">
       <div class="financePanelHeading"><p class="finance__eyebrow">TOTAL</p></div>
+      <select class="finance-pill financeTotalCurrencySelect" data-finance-total-currency aria-label="Moneda del total">${renderCurrencyOptions(state.financeTotalCurrency || getDefaultCurrency())}</select>
       ${toggle}
     </div>
-    <h2 id="finance-totalValue">${fmtCurrency(total)}</h2>
-    <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
-    <p>Saldo real: <strong>${fmtCurrency(totalReal)}</strong> · Mi parte: <strong>${fmtCurrency(total)}</strong></p>
+    <h2 id="finance-totalValue">${formatFinanceTotal(total)}</h2>
+    <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedFinanceTotal(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
+    <p>Saldo real: <strong>${formatFinanceTotal(totalReal)}</strong> · Mi parte: <strong>${formatFinanceTotal(total)}</strong></p>
     <div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div>
   </article>`;
 }
@@ -10682,13 +10791,37 @@ function renderFinanceCalendarPanel(accounts, totalSeries, { withToggle = false 
   </article>`;
 }
 
+
+function renderFinanceAccountCard(account = {}, { deleteLabel = '🗑️' } = {}) {
+  const editableBalance = account.shared ? account.currentReal : account.current;
+  const currency = accountCurrency(account);
+  return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${escapeHtml(account.id)}">
+    <div>
+      <strong>${escapeHtml(account.name)}</strong>
+      <div class="financeAccountCard__balanceWrap">
+        <span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'} · ${escapeHtml(currency)}</span>
+        <input class="financeAccountCard__balance" data-account-input="${escapeHtml(account.id)}" value="${Number(editableBalance || 0).toFixed(2)}" inputmode="decimal" placeholder="0.00" />
+        <span class="financeAccountCard__currencyBadge">${escapeHtml(currency)}</span>
+        <button class="finance-pill finance-pill--mini" data-account-save="${escapeHtml(account.id)}">Guardar</button>
+      </div>
+      <small class="financeAccountCard__formattedBalance">${formatAccountAmount(editableBalance, account)}</small>
+      ${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${formatAccountAmount(account.current, account)}</small>` : ''}
+    </div>
+    <div class="financeAccountCard__side">
+      <span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${account.range.delta > 0 ? '+' : ''}${formatAccountAmount(account.range.delta, account)}</span>
+      <button class="financeAccountCard__menuBtn" data-delete-account="${escapeHtml(account.id)}">${escapeHtml(deleteLabel)}</button>
+    </div>
+  </article>`;
+}
+
 function renderFinanceHome(accounts, totalSeries) {
   const root = resolveFinanceRoot();
   if (!root) throw new Error('[finance] finance root not available before renderFinanceHome');
   if (!$opt('#finance-content')) ensureFinanceHost($opt, $req);
 
-  const total = accounts.reduce((sum, account) => sum + account.current, 0);
-  const totalReal = accounts.reduce((sum, account) => sum + Number(account.currentReal || 0), 0);
+  const totalCurrency = state.financeTotalCurrency || getDefaultCurrency();
+  const total = accounts.reduce((sum, account) => sum + convertAccountAmount(account.current, account, totalCurrency), 0);
+  const totalReal = accounts.reduce((sum, account) => sum + convertAccountAmount(account.currentReal, account, totalCurrency), 0);
   const totalRange = computeDeltaForRange(totalSeries, state.rangeMode);
   const chart = chartModelForRange(totalSeries, state.rangeMode);
   const homePanelView = normalizeHomePanelView(state.homePanelView);
@@ -10707,22 +10840,22 @@ function renderFinanceHome(accounts, totalSeries) {
       <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
         ${primaryPanel}
         <article class="finance__accounts"><div class="finance__sectionHeader"><h2></h2><div class="finance-row-cuenta"><button class="finance-pill" data-new-account>+ Cuenta</button></div></div>
-        <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">⋯</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todaví­a.</p>'}</div></article>
+        <div id="finance-accountsList">${accounts.map((account) => renderFinanceAccountCard(account, { deleteLabel: '⋯' })).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
       </section>`;
   }
   return `
     <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
-      <article class="finance__hero"><div class="financePanelTopbar"><div class="financePanelHeading"><p class="finance__eyebrow">TOTAL</p></div>${renderFinanceHomePanelToggle('hero')}</div><h2 id="finance-totalValue">${fmtCurrency(total)}</h2>
-        <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedCurrency(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
-        <p>Saldo real: <strong>${fmtCurrency(totalReal)}</strong> · Mi parte: <strong>${fmtCurrency(total)}</strong></p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
+      <article class="finance__hero"><div class="financePanelTopbar"><div class="financePanelHeading"><p class="finance__eyebrow">TOTAL</p></div><select class="finance-pill financeTotalCurrencySelect" data-finance-total-currency aria-label="Moneda del total">${renderCurrencyOptions(state.financeTotalCurrency || getDefaultCurrency())}</select>${renderFinanceHomePanelToggle('hero')}</div><h2 id="finance-totalValue">${formatFinanceTotal(total)}</h2>
+        <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedFinanceTotal(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
+        <p>Saldo real: <strong>${formatFinanceTotal(totalReal)}</strong> · Mi parte: <strong>${formatFinanceTotal(total)}</strong></p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
       
         <article class="finance__controls" id="controles-ventana-main-finanzas">
         <select class="finance-pill" data-range><option value="total" ${state.rangeMode === 'total' ? 'selected' : ''}>Total</option><option value="month" ${state.rangeMode === 'month' ? 'selected' : ''}>Mes</option><option value="week" ${state.rangeMode === 'week' ? 'selected' : ''}>Semana</option><option value="year" ${state.rangeMode === 'year' ? 'selected' : ''}>Año</option></select>
         <button class="finance-pill" data-history>Historial</button>
         <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select></article>
-      <article class="finance__compareRow"><div class="finance-chip ${toneClass(compareCurrent.delta)}">Actual: ${fmtSignedCurrency(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div><div class="finance-chip ${toneClass(comparePrev.delta)}">Anterior: ${fmtSignedCurrency(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div></article>
+      <article class="finance__compareRow"><div class="finance-chip ${toneClass(compareCurrent.delta)}">Actual: ${fmtSignedFinanceTotal(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div><div class="finance-chip ${toneClass(comparePrev.delta)}">Anterior: ${fmtSignedFinanceTotal(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div></article>
       <article class="finance__accounts"><div class="finance__sectionHeader"><h2></h2><div class="finance-row-cuenta"><button class="finance-pill finance-pill--mini" id="fusionar-cuentas" data-account-merge-open>Fusionar</button><button class="finance-pill" data-new-account>+ Cuenta</button></div></div>
-      <div id="finance-accountsList">${accounts.map((account) => { const editableBalance = account.shared ? account.currentReal : account.current; return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${account.id}"><div><strong>${escapeHtml(account.name)}</strong><div class="financeAccountCard__balanceWrap"><span class="financeAccountCard__balanceLabel">${account.shared ? 'Saldo real' : 'Mi saldo'}</span><input class="financeAccountCard__balance" data-account-input="${account.id}" value="${editableBalance.toFixed(2)}" inputmode="decimal" placeholder="" /><button class="finance-pill finance-pill--mini" data-account-save="${account.id}">Guardar</button></div>${account.shared ? `<small class="finance-shared-chip">Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${fmtCurrency(account.current)}</small>` : ''}</div><div class="financeAccountCard__side"><span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${fmtSignedCurrency(account.range.delta)}</span><button class="financeAccountCard__menuBtn" data-delete-account="${account.id}">🗑️</button></div></article>`; }).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
+      <div id="finance-accountsList">${accounts.map((account) => renderFinanceAccountCard(account, { deleteLabel: '🗑️' })).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
     </section>`;
 }
 
@@ -10936,19 +11069,19 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
     <button class="finance-pill ${state.balanceAggScope === 'total' ? 'finAgg__active' : ''}" data-fin-agg-scope="total">Total</button>
   </div>
   <div class="financeSummaryGrid">
-  <button class="dash-balance" type="button" data-balance-drilldown="income"><small class="pill-ingresos-mes">Ingresos (${aggScope === 'total' ? 'total' : 'mi parte'})</small><strong class="is-positive">${fmtCurrency(aggScope === 'total' ? monthAgg.incomeTotal : monthAgg.incomeMy)}</strong></button>
-  <button class="dash-balance" type="button" data-balance-drilldown="expense"><small class="pill-gastos-mes">Gastos (${aggScope === 'total' ? 'total' : 'mi parte'})</small><strong class="is-negative">${fmtCurrency(aggScope === 'total' ? monthAgg.expenseTotal : monthAgg.expenseMy)}</strong></button>
+  <button class="dash-balance" type="button" data-balance-drilldown="income"><small class="pill-ingresos-mes">Ingresos (${aggScope === 'total' ? 'total' : 'mi parte'})</small><strong class="is-positive">${formatFinanceTotal(aggScope === 'total' ? monthAgg.incomeTotal : monthAgg.incomeMy)}</strong></button>
+  <button class="dash-balance" type="button" data-balance-drilldown="expense"><small class="pill-gastos-mes">Gastos (${aggScope === 'total' ? 'total' : 'mi parte'})</small><strong class="is-negative">${formatFinanceTotal(aggScope === 'total' ? monthAgg.expenseTotal : monthAgg.expenseMy)}</strong></button>
     <div class="dash-balance">
-      <small>ΔNeto</small><strong class="${toneClass(aggScope === 'total' ? monthAgg.netOperativeTotal : monthAgg.netOperativeMy)}">${fmtCurrency(aggScope === 'total' ? monthAgg.netOperativeTotal : monthAgg.netOperativeMy)}</strong></div>
+      <small>ΔNeto</small><strong class="${toneClass(aggScope === 'total' ? monthAgg.netOperativeTotal : monthAgg.netOperativeMy)}">${formatFinanceTotal(aggScope === 'total' ? monthAgg.netOperativeTotal : monthAgg.netOperativeMy)}</strong></div>
     
   
 
-    <div class="dash-balance"><small>Δ Cuentas (real)</small><strong class="${toneClass(monthAccountsDeltaReal)}">${fmtCurrency(monthAccountsDeltaReal)}</strong></div>
+    <div class="dash-balance"><small>Δ Cuentas (real)</small><strong class="${toneClass(monthAccountsDeltaReal)}">${formatFinanceTotal(monthAccountsDeltaReal)}</strong></div>
     </div>
-  <div class="dash-balance-patrimonio"><small>ΔPatrimonio</small><strong class="${toneClass(aggScope === 'total' ? monthAgg.netWealthTotal : monthAgg.netWealthMy)}">${fmtCurrency(aggScope === 'total' ? monthAgg.netWealthTotal : monthAgg.netWealthMy)}</strong>
+  <div class="dash-balance-patrimonio"><small>ΔPatrimonio</small><strong class="${toneClass(aggScope === 'total' ? monthAgg.netWealthTotal : monthAgg.netWealthMy)}">${formatFinanceTotal(aggScope === 'total' ? monthAgg.netWealthTotal : monthAgg.netWealthMy)}</strong>
     
-      <small>Imp.trans.: ${fmtSignedCurrency(aggScope === 'total' ? monthAgg.transferImpactTotal : monthAgg.transferImpactMy)}</small></div>
-  <div class="finance-chip ${toneClass(prevSummary.net)}">Mes anterior: ${fmtSignedCurrency(prevSummary.net)}</div></article>
+      <small>Imp.trans.: ${fmtSignedFinanceTotal(aggScope === 'total' ? monthAgg.transferImpactTotal : monthAgg.transferImpactMy)}</small></div>
+  <div class="finance-chip ${toneClass(prevSummary.net)}">Mes anterior: ${fmtSignedFinanceTotal(prevSummary.net)}</div></article>
   
   
  <details class="financeGlassCard" id="finance-balance-tx-details" data-balance-tx-details ${state.balanceTxDetailsOpen ? 'open' : ''}>
@@ -12013,7 +12146,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
     state.lineChart = { points: chart.points || [], mode: 'total', kind: 'account', accountId: account.id, accountName: account.name };
     const preview = state.modal.importPreview;
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3> ${escapeHtml(account.name)}</h3><div class="finance-row"><button class="finance-pill finance-pill--mini" data-edit-account="${account.id}">Editar cuenta</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header>
-      <p>Saldo real: <strong>${fmtCurrency(account.currentReal)}</strong>${account.shared ? ` · Mi parte: <strong>${fmtCurrency(account.current)}</strong>` : ''}</p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos.</div>'}</div>
+      <p>Saldo real: <strong>${formatAccountAmount(account.currentReal, account)}</strong>${account.shared ? ` · Mi parte: <strong>${formatAccountAmount(account.current, account)}</strong>` : ''}</p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos.</div>'}</div>
       <form class="finance-entry-form" data-account-entry-form="${account.id}"><input name="day" type="date" value="${dayKeyFromTs(Date.now())}" required /><input name="value" type="number" step="0.01" placeholder="Valor real" required /><button class="finance-pill" id="guardar-dato-vista-detalle" type="submit">💳</button></form>
       <div class="finance-table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ</th><th>Δ%</th><th></th></tr></thead><tbody>${account.daily.slice().reverse().map((row) => `<tr><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td><td><form data-account-row-form="${account.id}:${row.day}"><input name="value" type="number" step="0.01" value="${Number(row.realValue || row.value || 0)}"/></form></td><td class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</td><td class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</td><td>
       <div class="boton-editar-borrar"><button class="finance-pill finance-pill--mini" data-save-day="${account.id}:${row.day}">✏️</button><button class="finance-pill finance-pill--mini" data-delete-day="${account.id}:${row.day}">❌</button></div></td></tr>`).join('') || '<tr><td colspan="5">Sin registros.</td></tr>'}</tbody></table></div>
@@ -12660,7 +12793,7 @@ if (form) {
       const originalCurrency = String(row.originalCurrency || row.currency || 'EUR').toUpperCase();
       const hasOriginal = originalCurrency !== 'EUR' && Number.isFinite(Number(row.originalAmount));
       const originalText = hasOriginal ? ` · ${formatCurrency(row.originalAmount, originalCurrency)}` : '';
-      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrency(row.amount)}${originalText}</strong><span class="finance-row" id="filas-movimiento" >${actionButtons}</span></div>`;
+      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrencyCode(row.amount, row.accountCurrency || row.currency || 'EUR')}${originalText}</strong><span class="finance-row" id="filas-movimiento" >${actionButtons}</span></div>`;
     }).join('') || '<p class="finance-empty">Sin movimientos.</p>'}</div></div>`;
     return;
   }
@@ -12671,7 +12804,7 @@ if (form) {
     const rows = buildDrilldownRows(txType, monthKey);
     const title = txType === 'income' ? 'Ingresos' : 'Gastos';
     const accountName = (id) => escapeHtml(resolvedAccounts.find((a) => a.id === id)?.name || 'Sin cuenta');
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title} · ${monthLabelByKey(monthKey)}</h3><div class="finance-row"><button class="finance-pill" data-drilldown-month="-1">◀</button><button class="finance-pill" data-drilldown-month="1">▶</button><button class="finance-pill" data-drilldown-add="${txType}">+ Añadir</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header><div class="financeTxList financeTxList--scroll" style="max-height:360px;overflow-y:auto;">${rows.map((row) => { const oc=String(row.originalCurrency || row.currency || 'EUR').toUpperCase(); const extra=oc!=='EUR'&&Number.isFinite(Number(row.originalAmount))?` · ${formatCurrency(row.originalAmount, oc)}`:''; return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountName(row.accountId)}</span><strong class="${txType === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrency(row.amount)}${extra}</strong></div>`; }).join('') || '<p class="finance-empty">Sin registros en este mes.</p>'}</div></div>`;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title} · ${monthLabelByKey(monthKey)}</h3><div class="finance-row"><button class="finance-pill" data-drilldown-month="-1">◀</button><button class="finance-pill" data-drilldown-month="1">▶</button><button class="finance-pill" data-drilldown-add="${txType}">+ Añadir</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header><div class="financeTxList financeTxList--scroll" style="max-height:360px;overflow-y:auto;">${rows.map((row) => { const oc=String(row.originalCurrency || row.currency || 'EUR').toUpperCase(); const extra=oc!=='EUR'&&Number.isFinite(Number(row.originalAmount))?` · ${formatCurrency(row.originalAmount, oc)}`:''; return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountName(row.accountId)}</span><strong class="${txType === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrencyCode(row.amount, row.accountCurrency || row.currency || 'EUR')}${extra}</strong></div>`; }).join('') || '<p class="finance-empty">Sin registros en este mes.</p>'}</div></div>`;
     return;
   }
   if (state.modal.type === 'calendar-day-edit') {
@@ -12754,7 +12887,7 @@ if (form) {
   }
 
   if (state.modal.type === 'history') {
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Historial</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><div class="finance-history-list">${accounts.map((account) => `<details class="finance-history-item" data-history-account="${account.id}"><summary><strong>${escapeHtml(account.name)}</strong><small>${account.daily.length} registros · ${fmtCurrency(account.current)}</small></summary><div class="finance-history-rows" data-history-rows="${account.id}"><p class="finance-empty">Pulsa para cargar…</p></div></details>`).join('') || '<p class="finance-empty">Sin historial.</p>'}</div></div>`;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>Historial</h3><button class="finance-pill" data-close-modal>Cerrar</button></header><div class="finance-history-list">${accounts.map((account) => `<details class="finance-history-item" data-history-account="${account.id}"><summary><strong>${escapeHtml(account.name)}</strong><small>${account.daily.length} registros · ${formatAccountAmount(account.current, account)}</small></summary><div class="finance-history-rows" data-history-rows="${account.id}"><p class="finance-empty">Pulsa para cargar…</p></div></details>`).join('') || '<p class="finance-empty">Sin historial.</p>'}</div></div>`;
     return;
   }
   if (state.modal.type === 'edit-account') {
@@ -12766,6 +12899,9 @@ if (form) {
     <form id="grid-modal-edicion-cuenta" class="finance-entry-form" data-edit-account-form="${account.id}">
     
     <input type="text" name="name" value="${escapeHtml(account.name)}" required />
+    <label>Moneda
+      <select name="currency">${renderCurrencyOptions(accountCurrency(account))}</select>
+    </label>
     
     <div id="checkboxs-edicion-cuenta">
     <label>
@@ -12814,6 +12950,10 @@ if (form) {
       <label class="financeAccountForm__field">
         <span class="financeAccountForm__label">Valor inicial</span>
         <input type="number" name="initialValue" step="0.01" inputmode="decimal" value="0" placeholder="0.00" />
+      </label>
+      <label class="financeAccountForm__field">
+        <span class="financeAccountForm__label">Moneda</span>
+        <select name="currency">${renderCurrencyOptions(getDefaultCurrency())}</select>
       </label>
       </div>
       <div class="financeAccountForm__toggles finance-account-create-flags" role="group" aria-label="Opciones de cuenta">
@@ -13732,10 +13872,10 @@ function subscribe() {
   }
 }
 
-async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin = false, btcUnits = 0, cardLast4 = '', initialValue = 0 }) {
+async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin = false, btcUnits = 0, cardLast4 = '', initialValue = 0, currency = getDefaultCurrency() }) {
   const id = push(ref(db, `${state.financePath}/accounts`)).key;
   const ratio = shared ? clampRatio(sharedRatio, 0.5) : 1;
-  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, shared, sharedRatio: ratio, isBitcoin: Boolean(isBitcoin), btcUnits: Number(btcUnits || 0), cardLast4: normalizeCardLast4(cardLast4), createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, currency: normalizeCurrencyCode(currency), shared, sharedRatio: ratio, isBitcoin: Boolean(isBitcoin), btcUnits: Number(btcUnits || 0), cardLast4: normalizeCardLast4(cardLast4), createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
   const parsedInitial = parseEuroNumber(initialValue);
   if (Number.isFinite(parsedInitial)) {
     const day = dayKeyFromTs(Date.now());
@@ -13765,7 +13905,7 @@ function syncNewAccountFormUI(formEl) {
 async function updateAccountMeta(accountId, payload = {}) {
   const shared = Boolean(payload.shared);
   const sharedRatio = shared ? clampRatio(payload.sharedRatio, 0.5) : 1;
-  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, shared, sharedRatio, isBitcoin: Boolean(payload.isBitcoin), btcUnits: Number(payload.btcUnits || 0), cardLast4: normalizeCardLast4(payload.cardLast4), updatedAt: nowTs() }));
+  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, currency: normalizeCurrencyCode(payload.currency || getDefaultCurrency()), shared, sharedRatio, isBitcoin: Boolean(payload.isBitcoin), btcUnits: Number(payload.btcUnits || 0), cardLast4: normalizeCardLast4(payload.cardLast4), updatedAt: nowTs() }));
 }
 async function saveSnapshot(accountId, day, value) {
   const parsedValue = parseEuroNumber(value);
@@ -15617,6 +15757,7 @@ view.addEventListener('focusout', async (event) => {
   }, evtOpts);
   view.addEventListener('change', async (event) => {
     if (event.target.matches('[data-range]')) { state.rangeMode = event.target.value; triggerRender(); }
+    if (event.target.matches('[data-finance-total-currency]')) { setFinanceTotalCurrency(event.target.value); clearFinanceDerivedCaches(); try { await resolveExchangeRateFromEUR(state.financeTotalCurrency); } catch (_) { toast('No se pudo actualizar la tasa; usando caché si existe'); } triggerRender(); return; }
     if (event.target.matches('[data-compare]')) { state.compareMode = event.target.value; triggerRender(); }
     if (event.target.matches('[data-finance-goals-sort]')) { setFinanceGoalsSortMode(event.target.value); triggerRender(); return; }
     if (event.target.matches('[data-calendar-account]')) { state.calendarAccountId = event.target.value; triggerRender(); }
@@ -15661,6 +15802,8 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment], [data-products-ticket-category], [data-products-receipt-currency]')) {
       if (event.target.matches('[data-products-receipt-currency]')) {
         const currency = String(event.target.value || '').toUpperCase();
+        const draftForStoreCurrency = readProductsListDraftFromDom(view);
+        if (draftForStoreCurrency.store) await persistStoreDefaultCurrency(draftForStoreCurrency.store, currency);
         console.info('[finance:currency] selected', { currency });
         if (state.productsReceiptError) setProductsReceiptError('');
         await applyTicketCurrencyRateFromApi(view, currency);
@@ -15672,6 +15815,15 @@ view.addEventListener('focusout', async (event) => {
         return;
       }
       if (state.productsReceiptError) setProductsReceiptError('');
+      if (event.target.matches('[data-products-store-select]')) {
+        const draftForStore = readProductsListDraftFromDom(view);
+        const defaultCurrency = getStoreDefaultCurrency(draftForStore.store);
+        const currencySelect = view.querySelector('[data-products-receipt-currency]');
+        if (currencySelect && defaultCurrency) {
+          currencySelect.value = defaultCurrency;
+          await applyTicketCurrencyRateFromApi(view, defaultCurrency);
+        }
+      }
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
       return;
@@ -16157,7 +16309,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       return;
     }
     if (event.target.matches('[data-new-account-form]')) {
-      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 50) / 100; const isBitcoin = form.get('isBitcoin') === 'on'; const btcUnits = Number(form.get('btcUnits') || 0); const initialValue = Number(form.get('initialValue') || 0); const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); if (name) { const duplicates = getCardLast4Duplicates(cardLast4); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await addAccount({ name, shared, sharedRatio, isBitcoin, btcUnits, cardLast4, initialValue }); } state.modal = { type: null }; triggerRender(); return;
+      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 50) / 100; const isBitcoin = form.get('isBitcoin') === 'on'; const btcUnits = Number(form.get('btcUnits') || 0); const initialValue = Number(form.get('initialValue') || 0); const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); if (name) { const duplicates = getCardLast4Duplicates(cardLast4); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await addAccount({ name, currency: String(form.get('currency') || getDefaultCurrency()).toUpperCase(), shared, sharedRatio, isBitcoin, btcUnits, cardLast4, initialValue }); } state.modal = { type: null }; triggerRender(); return;
     }
     if (event.target.matches('[data-calendar-day-form]')) {
       event.preventDefault();
@@ -16197,7 +16349,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       event.preventDefault();
       const accountId = event.target.dataset.editAccountForm;
       const form = new FormData(event.target);
-      const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); const duplicates = getCardLast4Duplicates(cardLast4, accountId); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5), isBitcoin: form.get('isBitcoin') === 'on', btcUnits: Number(form.get('btcUnits') || 0), cardLast4 });
+      const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); const duplicates = getCardLast4Duplicates(cardLast4, accountId); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), currency: String(form.get('currency') || getDefaultCurrency()).toUpperCase(), shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5), isBitcoin: form.get('isBitcoin') === 'on', btcUnits: Number(form.get('btcUnits') || 0), cardLast4 });
       state.modal = { type: null };
       triggerRender();
       return;
@@ -16222,6 +16374,10 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       const amount = parseMoney(String(form.get('amount') || ''));
       const movementCurrency = String(form.get('currency') || getDefaultCurrency()).toUpperCase();
       const currencyPayload = normalizeMovementCurrencyPayload({ amount, currency: movementCurrency });
+      const targetAccountForMovement = (type === 'income' || type === 'expense') ? (state.accounts || []).find((item) => String(item.id) === accountId) : null;
+      const movementAccountCurrency = targetAccountForMovement ? accountCurrency(targetAccountForMovement) : movementCurrency;
+      const accountAmount = targetAccountForMovement ? convertCurrency(amount, movementCurrency, movementAccountCurrency) : Number(currencyPayload.amountEUR || amount);
+      if (targetAccountForMovement && !Number.isFinite(accountAmount)) { toast('No hay tasa para convertir a la moneda de la cuenta'); return; }
       const dateISO = toIsoDay(String(form.get('dateISO') || dayKeyFromTs(Date.now()))) || dayKeyFromTs(Date.now());
       const pickedCategory = String(form.get('category') || '').trim();
       const category = type === 'transfer' ? 'transfer' : (pickedCategory || 'Sin categoría');
@@ -16346,12 +16502,16 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         ...(prev && typeof prev === 'object' ? clonePlain(prev) : {}),
         id: saveId,
         type,
-        amount: Number(currencyPayload.amountEUR || 0),
+        amount: Number(accountAmount || 0),
         originalAmount: Number(currencyPayload.originalAmount || amount),
         originalCurrency: movementCurrency,
+        inputCurrency: movementCurrency,
+        accountCurrency: movementAccountCurrency,
+        accountAmount: Number(accountAmount || 0),
         exchangeRateToEUR: Number(currencyPayload.exchangeRateToEUR || 1),
         convertedAmountEUR: Number(currencyPayload.convertedAmountEUR || currencyPayload.amountEUR || amount),
-        currency: 'EUR',
+        totalEUR: Number(currencyPayload.convertedAmountEUR || currencyPayload.amountEUR || amount),
+        currency: movementAccountCurrency,
         date: dateISO,
         monthKey: dateISO.slice(0, 7),
         accountId: type === 'transfer' ? '' : accountId,
@@ -16396,7 +16556,12 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         ? {
           ...(linkedRecurringTemplate && typeof linkedRecurringTemplate === 'object' ? linkedRecurringTemplate : {}),
           type,
-          amount: Number(currencyPayload.amountEUR || 0),
+          amount: Number(accountAmount || 0),
+          originalAmount: Number(currencyPayload.originalAmount || amount),
+          originalCurrency: movementCurrency,
+          accountCurrency: movementAccountCurrency,
+          convertedAmountEUR: Number(currencyPayload.convertedAmountEUR || currencyPayload.amountEUR || amount),
+          currency: movementAccountCurrency,
           accountId: type === 'transfer' ? '' : accountId,
           fromAccountId: type === 'transfer' ? fromAccountId : '',
           toAccountId: type === 'transfer' ? toAccountId : '',

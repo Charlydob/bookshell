@@ -839,14 +839,12 @@ flex-direction: column;
   display: none;
 }
 .financeTab .finance__accounts .financeAccountCard__balance{
-  position: absolute;
-  left: 20px;
-  top: 40px;
-  min-width: 150px;
-  max-width: 150px;
+  position: static;
+  min-width: 0;
+  max-width: none;
 }
 .financeTab .finance__accounts .financeAccountCard{
-  padding: 9px
+  padding: 12px 14px;
 }
 .financeTab .finance-entry-form{
   display: grid;
@@ -8511,8 +8509,16 @@ grid-template-columns: 1fr auto;
 
 /* Monedas por cuenta y selector de total */
 .financeTab .financeTotalCurrencySelect{min-width:92px;max-width:120px;padding-inline:10px;font-size:12px}
-.financeTab .financeAccountCard__currencyBadge{align-self:stretch;display:inline-flex;align-items:center;padding:0 8px;border-radius:10px;background:rgba(255,255,255,.08);color:var(--fin-muted);font-size:12px;font-weight:700;letter-spacing:.02em}
-.financeTab .financeAccountCard__formattedBalance{display:block;margin-top:4px;color:var(--fin-muted);font-size:12px;font-weight:700}
+.financeTab .financeAccountCard{align-items:stretch;min-width:0}
+.financeTab .financeAccountCard__main{display:grid;gap:6px;min-width:0;flex:1 1 auto}
+.financeTab .financeAccountCard__title{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:clamp(1.08rem,2.6vw,1.55rem);line-height:1.15}
+.financeTab .financeAccountCard__balanceWrap{display:flex;align-items:baseline;gap:7px;min-width:0;max-width:100%}
+.financeTab .financeAccountCard__balance{position:static!important;flex:0 1 auto;width:clamp(6.4ch,34vw,9.2ch);min-width:0!important;max-width:100%!important;font-size:clamp(2rem,7vw,3rem);line-height:.98;text-align:left;letter-spacing:-.045em}
+.financeTab .financeAccountCard__currencyBadge{display:inline-flex;align-items:baseline;flex:0 0 auto;padding:0;border:0;border-radius:0;background:transparent;color:rgba(236,242,255,.82);font-size:clamp(.78rem,2.5vw,1.24rem);font-weight:800;line-height:1;letter-spacing:.01em;white-space:nowrap}
+.financeTab .financeAccountCard__formattedBalance{display:block;margin-top:0;color:var(--fin-muted);font-size:11px;font-weight:700;line-height:1.1}
+.financeTab .financeAccountCard__side{flex:0 0 auto;align-content:space-between;min-width:max-content}
+.financeTab .financeAccountCard__deltaPill,
+.financeTab .finance__accounts .financeAccountCard__deltaPill{max-width:150px;min-width:0;white-space:normal;line-height:1.15}
 .financeTab #modal-cuenta-nueva select,
 .financeTab #financeAccountCreateForm select,
 .financeTab [data-edit-account-form] select[name="currency"]{width:100%;min-height:42px;border:1px solid rgba(255,255,255,.14);border-radius:12px;background:rgba(8,14,30,.92);color:var(--fin-text);padding:0 12px;font:inherit}
@@ -8520,9 +8526,19 @@ grid-template-columns: 1fr auto;
 @media (max-width:560px){
   .financeTab .financePanelTopbar{gap:8px;flex-wrap:wrap}
   .financeTab .financeTotalCurrencySelect{margin-left:auto;min-height:34px}
-  .financeTab .financeAccountCard__balanceWrap{grid-template-columns:minmax(0,1fr) auto;gap:6px}
-  .financeTab .financeAccountCard__balanceLabel{grid-column:1/-1}
-  .financeTab .financeAccountCard__balance{min-width:0}
-  .financeTab .financeAccountCard__currencyBadge{justify-content:center;min-width:54px}
+  .financeTab .financeAccountCard{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 10px;padding:12px}
+  .financeTab .financeAccountCard__balanceWrap{gap:6px}
+  .financeTab .financeAccountCard__balance{width:clamp(5.8ch,47vw,8.4ch);font-size:clamp(1.82rem,10.5vw,2.45rem)}
+  .financeTab .financeAccountCard__currencyBadge{font-size:clamp(.72rem,4.2vw,1.05rem)}
+  .financeTab .financeAccountCard__side{gap:6px;justify-items:end;align-content:start;min-width:0}
+  .financeTab .financeAccountCard__deltaPill,
+  .financeTab .finance__accounts .financeAccountCard__deltaPill{max-width:112px;min-width:0;font-size:9.5px;text-align:right}
+  .financeTab .financeAccountCard__menuBtn{width:30px;min-width:30px;height:30px}
   .financeTab #financeAccountCreateForm .finance-account-create-grid{grid-template-columns:1fr!important}
+}
+@media (max-width:380px){
+  .financeTab .financeAccountCard{grid-template-columns:1fr;gap:8px}
+  .financeTab .financeAccountCard__side{display:flex;align-items:center;justify-content:space-between;min-width:0}
+  .financeTab .financeAccountCard__deltaPill,
+  .financeTab .finance__accounts .financeAccountCard__deltaPill{max-width:calc(100% - 42px);text-align:left}
 }

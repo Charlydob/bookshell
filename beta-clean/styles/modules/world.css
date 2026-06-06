@@ -197,3 +197,19 @@
 @media (max-width:460px){
   #view-world .world-category-emoji-field{grid-template-columns:auto minmax(0,1fr)}
 }
+#view-world .world-stays-controls{display:flex;flex-direction:column;gap:7px;margin:8px 0;min-width:0}
+#view-world .world-stays-filter-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+#view-world .world-stays-filter{border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:6px 9px;background:rgba(255,255,255,.07);color:#eef0ff;font-size:12px;line-height:1.1}
+#view-world .world-stays-filter.active{border-color:rgba(99,215,255,.6);background:linear-gradient(120deg,rgba(117,110,255,.72),rgba(74,184,255,.62))}
+#view-world .world-stays-year-input{width:88px;padding:6px 8px!important;font-size:12px}
+#view-world .world-stays-scope-note{opacity:.78;font-size:11px;line-height:1.25}
+#view-world .world-stays-city-card{display:flex;flex-direction:column;gap:3px;min-width:0;padding:6px 0}
+#view-world .world-stays-city-location{font-size:11px;line-height:1.25;opacity:.72;overflow-wrap:anywhere}
+#view-world .world-stays-entry-list{border-left:1px solid rgba(255,255,255,.14);margin:6px 0 0 8px!important;padding-left:10px!important}
+#view-world .world-stays-entry-dates{font-size:12px;opacity:.84}
+@media (max-width:460px){
+  #view-world .world-stays-filter-group{gap:5px}
+  #view-world .world-stays-filter{padding:6px 8px;font-size:11px}
+  #view-world .world-stays-city-list{padding-left:6px}
+  #view-world .world-stays-entry-top{grid-template-columns:minmax(0,1fr) auto;gap:6px}
+}

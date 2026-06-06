@@ -317,9 +317,22 @@ function setFinanceTotalCurrency(currency = getDefaultCurrency()) {
   state.financeTotalCurrency = normalizeCurrencyCode(currency);
   try { localStorage.setItem(FINANCE_TOTAL_CURRENCY_KEY, state.financeTotalCurrency); } catch (_) {}
 }
-function accountCurrency(account = {}) { return normalizeCurrencyCode(account?.currency || getDefaultCurrency()); }
+const ACCOUNT_ASSET_TYPES = Object.freeze(['cash', 'crypto', 'investment']);
+function isLegacyBitcoinAccount(account = {}) { return account?.isBitcoin === true || account?.isBitcoinAccount === true; }
+function normalizeAccountAssetType(account = {}) {
+  const raw = String(account?.assetType || '').trim().toLowerCase();
+  if (ACCOUNT_ASSET_TYPES.includes(raw)) return raw;
+  if (isLegacyBitcoinAccount(account)) return 'crypto';
+  return 'cash';
+}
+function isCryptoAccount(account = {}) { return normalizeAccountAssetType(account) === 'crypto'; }
+function accountCurrency(account = {}) {
+  if (isCryptoAccount(account)) return 'BTC';
+  return normalizeCurrencyCode(account?.currency || getDefaultCurrency());
+}
 function accountCurrencySymbol(account = {}) {
   const code = accountCurrency(account);
+  if (code === 'BTC') return 'BTC';
   return SUPPORTED_CURRENCIES.find((row) => row.code === code)?.symbol || code;
 }
 function getFinanceCurrencyRates() {
@@ -329,7 +342,13 @@ function getFinanceCurrencyRates() {
   return rates;
 }
 function formatAccountAmount(value = 0, account = {}) { return fmtCurrencyCode(value, accountCurrency(account)); }
-function formatAccountBalanceValue(value = 0) { return Number(value || 0).toFixed(2); }
+function formatAccountBalanceValue(value = 0, account = {}) {
+  const safe = Number(value || 0);
+  if (accountCurrency(account) === 'BTC') {
+    return safe.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 8, useGrouping: false });
+  }
+  return safe.toFixed(2);
+}
 function formatAccountEurEquivalent(value = 0, account = {}) {
   const currency = accountCurrency(account);
   if (currency === 'EUR') return '';
@@ -356,6 +375,23 @@ function renderCurrencyOptions(selected = getDefaultCurrency()) {
     const row = SUPPORTED_CURRENCIES.find((item) => item.code === code) || { code, symbol: code, label: code };
     return `<option value="${escapeHtml(code)}" title="${escapeHtml(row.label || code)}" ${selectedCode === code ? 'selected' : ''}>${escapeHtml(`${code} ${row.symbol || ''}`.trim())}</option>`;
   }).join('');
+}
+
+function renderAccountAssetTypeOptions(selected = 'cash') {
+  const value = ACCOUNT_ASSET_TYPES.includes(String(selected || '').toLowerCase()) ? String(selected).toLowerCase() : 'cash';
+  const options = [
+    ['cash', 'Normal'],
+    ['crypto', 'Bitcoin / crypto'],
+    ['investment', 'Acciones / inversión'],
+  ];
+  return options.map(([code, label]) => `<option value="${escapeHtml(code)}" ${value === code ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
+}
+function normalizeAccountMetaPayload(payload = {}) {
+  const assetType = ACCOUNT_ASSET_TYPES.includes(String(payload.assetType || '').toLowerCase()) ? String(payload.assetType).toLowerCase() : (payload.isBitcoin ? 'crypto' : 'cash');
+  const currency = assetType === 'crypto' ? 'BTC' : normalizeCurrencyCode(payload.currency || getDefaultCurrency());
+  const isBitcoin = assetType === 'crypto';
+  const btcUnits = isBitcoin ? Number(payload.btcUnits || payload.initialValue || 0) : 0;
+  return { assetType, currency, isBitcoin, btcUnits: Number.isFinite(btcUnits) ? btcUnits : 0 };
 }
 function storeCurrencyKey(store = '') { return firebaseSafeKey(normalizeFoodName(store).toLocaleLowerCase('es')); }
 function getStoreDefaultCurrency(store = '') {
@@ -8147,6 +8183,7 @@ function buildAccountModels() {
 
   const rows = state.accounts.map((account) => {
     const share = normalizeAccountShare(account);
+    const assetType = normalizeAccountAssetType(account);
     const currency = accountCurrency(account);
 
 
@@ -8157,13 +8194,16 @@ function buildAccountModels() {
     Object.entries(legacyDaily).forEach(([day, record]) => {
       if (!modernByDay[day] || modernByDay[day].ts < record.ts) modernByDay[day] = { ...record, source: 'legacy' };
     });
-    const dailyReal = Object.entries(modernByDay).map(([day, record]) => ({ day, ts: Number(record.ts || parseDayKey(day)), value: Number(record.value || 0), source: record.source || 'derived' }))
+    let dailyReal = Object.entries(modernByDay).map(([day, record]) => ({ day, ts: Number(record.ts || parseDayKey(day)), value: Number(record.value || 0), source: record.source || 'derived' }))
       .sort((a, b) => a.ts - b.ts);
     const btcUnits = Number(account?.btcUnits || 0);
     const btcPrice = Number(state.btcEurPrice || 0);
-    const hasBtc = Boolean(account?.isBitcoin);
+    const hasBtc = isCryptoAccount({ ...account, assetType });
+    if (hasBtc && isLegacyBitcoinAccount(account) && account?.currency !== 'BTC' && Number.isFinite(btcUnits) && btcUnits > 0) {
+      dailyReal = dailyReal.map((point) => ({ ...point, value: btcUnits, source: point.source || 'legacyBitcoinUnits' }));
+    }
     let currentReal = dailyReal.at(-1)?.value ?? 0;
-    if (hasBtc) currentReal = currency === 'BTC' ? btcUnits : btcUnits * btcPrice;
+    if (hasBtc && Number.isFinite(btcUnits) && btcUnits > 0) currentReal = btcUnits;
     const current = currentReal * share.sharedRatio;
 
 
@@ -8180,7 +8220,7 @@ function buildAccountModels() {
     
     if (share.shared) log(`account sharedRatio=${share.sharedRatio} applied`, { accountId: account.id });
 
-    return { ...account, currency, ...share, daily, dailyReal, current, currentReal, btcPrice, range, };
+    return { ...account, currency, assetType, isBitcoin: hasBtc || Boolean(account?.isBitcoin), ...share, daily, dailyReal, current, currentReal, btcPrice, range, };
   });
 
   cache.accountsRef = state.accounts;
@@ -8268,7 +8308,7 @@ async function maybeAutoBitcoinDailySnapshots(accounts = []) {
   const todayKey = dayKeyFromTs(Date.now());
   if (!todayKey) return;
 
-  const candidates = (accounts || []).filter((acc) => Boolean(acc?.isBitcoin));
+  const candidates = (accounts || []).filter((acc) => isCryptoAccount(acc));
   for (const account of candidates) {
     const btcUnits = Number(account?.btcUnits || 0);
     if (!Number.isFinite(btcUnits) || btcUnits <= 0) continue;
@@ -8277,7 +8317,7 @@ async function maybeAutoBitcoinDailySnapshots(accounts = []) {
     const hasSnapshotToday = !!snapshots?.[todayKey] || normalizeSnapshots(snapshots).some((row) => row.day === todayKey);
     if (hasSnapshotToday) continue;
 
-    const value = Math.round((btcUnits * btcPrice) * 100) / 100;
+    const value = Math.round(btcUnits * 100000000) / 100000000;
     if (!Number.isFinite(value) || value <= 0) continue;
 
     await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${account.id}/snapshots/${todayKey}`), {
@@ -10659,8 +10699,9 @@ function getBalanceTrendSeries(accountsById = {}, txRows = balanceTxList(), tren
 function getAccountOriginalBalanceForCurrencyComparison(account = {}, scope = state.balanceAggScope === 'total' ? 'total' : 'my') {
   const ratio = scope === 'total' ? 1 : Number(account?.sharedRatio ?? 1);
   const safeRatio = Number.isFinite(ratio) ? ratio : 1;
-  if (accountCurrency(account) === 'BTC' && account?.isBitcoin) {
-    return Number(account?.btcUnits || 0) * safeRatio;
+  if (isCryptoAccount(account)) {
+    const btcUnits = Number(account?.btcUnits || 0);
+    if (Number.isFinite(btcUnits) && btcUnits > 0) return btcUnits * safeRatio;
   }
   const value = scope === 'total' ? Number(account?.currentReal ?? account?.current ?? 0) : Number(account?.current ?? 0);
   return Number.isFinite(value) ? value : 0;
@@ -10880,19 +10921,22 @@ function renderFinanceAccountCard(account = {}, { deleteLabel = '🗑️' } = {}
   const editableBalance = account.shared ? account.currentReal : account.current;
   const currency = accountCurrency(account);
   const sharedPart = account.shared ? Number(account.current || 0) : 0;
+  const assetType = normalizeAccountAssetType(account);
+  const assetLabel = assetType === 'investment' ? '<span class="finance-pill finance-pill--mini financeAccountCard__assetTag">Inversión</span>' : (assetType === 'crypto' ? '<span class="finance-pill finance-pill--mini financeAccountCard__assetTag">Crypto</span>' : '');
   return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${escapeHtml(account.id)}">
     <div class="financeAccountCard__main">
       <strong class="financeAccountCard__title">${escapeHtml(account.name)}</strong>
+      ${assetLabel}
       <div class="financeAccountCard__balanceBlock">
         <div class="financeAccountCard__balanceWrap account-balance-row" aria-label="${escapeHtml(account.shared ? 'Saldo real' : 'Mi saldo')}">
-          <input class="financeAccountCard__balance account-balance" data-account-input="${escapeHtml(account.id)}" value="${formatAccountBalanceValue(editableBalance)}" inputmode="decimal" placeholder="0.00" />
+          <input class="financeAccountCard__balance account-balance" data-account-input="${escapeHtml(account.id)}" value="${formatAccountBalanceValue(editableBalance, account)}" inputmode="decimal" step="${currency === 'BTC' ? '0.00000001' : '0.01'}" placeholder="0.00" />
           <span class="financeAccountCard__currencySymbol account-currency-symbol" aria-label="${escapeHtml(currency)}">${escapeHtml(accountCurrencySymbol(account))}</span>
         </div>
         ${renderAccountEurEquivalent(editableBalance, account)}
       </div>
       <div class="financeAccountCard__actions"><button class="finance-pill finance-pill--mini" data-account-save="${escapeHtml(account.id)}">Guardar</button></div>
       <small class="financeAccountCard__formattedBalance">${account.shared ? 'Saldo real' : 'Mi saldo'}</small>
-      ${account.shared ? `<small class="finance-shared-chip"><span>Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${escapeHtml(formatAccountBalanceValue(sharedPart))} ${escapeHtml(accountCurrencySymbol(account))}</span>${renderAccountEurEquivalent(sharedPart, account, 'finance-shared-chip__eur')}</small>` : ''}
+      ${account.shared ? `<small class="finance-shared-chip"><span>Compartida ${(account.sharedRatio * 100).toFixed(0)}% · Mi parte: ${escapeHtml(formatAccountBalanceValue(sharedPart, account))} ${escapeHtml(accountCurrencySymbol(account))}</span>${renderAccountEurEquivalent(sharedPart, account, 'finance-shared-chip__eur')}</small>` : ''}
     </div>
     <div class="financeAccountCard__side">
       <span class="financeAccountCard__deltaPill finance-chip ${toneClass(account.range.delta)}">${RANGE_LABEL[state.rangeMode]} ${fmtSignedPercent(account.range.deltaPct)} · ${account.range.delta > 0 ? '+' : ''}${formatAccountAmount(account.range.delta, account)}</span>
@@ -12236,8 +12280,8 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
     const preview = state.modal.importPreview;
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3> ${escapeHtml(account.name)}</h3><div class="finance-row"><button class="finance-pill finance-pill--mini" data-edit-account="${account.id}">Editar cuenta</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header>
       <p>Saldo real: <strong>${formatAccountAmount(account.currentReal, account)}</strong>${account.shared ? ` · Mi parte: <strong>${formatAccountAmount(account.current, account)}</strong>` : ''}</p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos.</div>'}</div>
-      <form class="finance-entry-form" data-account-entry-form="${account.id}"><input name="day" type="date" value="${dayKeyFromTs(Date.now())}" required /><input name="value" type="number" step="0.01" placeholder="Valor real" required /><button class="finance-pill" id="guardar-dato-vista-detalle" type="submit">💳</button></form>
-      <div class="finance-table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ</th><th>Δ%</th><th></th></tr></thead><tbody>${account.daily.slice().reverse().map((row) => `<tr><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td><td><form data-account-row-form="${account.id}:${row.day}"><input name="value" type="number" step="0.01" value="${Number(row.realValue || row.value || 0)}"/></form></td><td class="${toneClass(row.delta)}">${fmtSignedCurrency(row.delta)}</td><td class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</td><td>
+      <form class="finance-entry-form" data-account-entry-form="${account.id}"><input name="day" type="date" value="${dayKeyFromTs(Date.now())}" required /><input name="value" type="number" step="${accountCurrency(account) === 'BTC' ? '0.00000001' : '0.01'}" placeholder="Valor real" required /><button class="finance-pill" id="guardar-dato-vista-detalle" type="submit">💳</button></form>
+      <div class="finance-table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ</th><th>Δ%</th><th></th></tr></thead><tbody>${account.daily.slice().reverse().map((row) => `<tr><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td><td><form data-account-row-form="${account.id}:${row.day}"><input name="value" type="number" step="${accountCurrency(account) === 'BTC' ? '0.00000001' : '0.01'}" value="${Number(row.realValue || row.value || 0)}"/></form></td><td class="${toneClass(row.delta)}">${row.delta > 0 ? '+' : ''}${formatAccountAmount(row.delta, account)}</td><td class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</td><td>
       <div class="boton-editar-borrar"><button class="finance-pill finance-pill--mini" data-save-day="${account.id}:${row.day}">✏️</button><button class="finance-pill finance-pill--mini" data-delete-day="${account.id}:${row.day}">❌</button></div></td></tr>`).join('') || '<tr><td colspan="5">Sin registros.</td></tr>'}</tbody></table></div>
       <section class="financeImportBox">
       
@@ -12988,6 +13032,9 @@ if (form) {
     <form id="grid-modal-edicion-cuenta" class="finance-entry-form" data-edit-account-form="${account.id}">
     
     <input type="text" name="name" value="${escapeHtml(account.name)}" required />
+    <label>Tipo de cuenta
+      <select name="assetType" data-account-asset-type>${renderAccountAssetTypeOptions(normalizeAccountAssetType(account))}</select>
+    </label>
     <label>Moneda
       <select name="currency">${renderCurrencyOptions(accountCurrency(account))}</select>
     </label>
@@ -12999,9 +13046,8 @@ if (form) {
 
     <select name="sharedRatio"><option value="0.5" ${(account.sharedRatio === 0.5) ? 'selected' : ''}>50%</option></select>
     
-    <div id="btc-input">
-    <label><input class="app-toggle__input" type="checkbox" name="isBitcoin" ${account.isBitcoin ? 'checked' : ''} /><span> Cuenta Bitcoin</span></label>
-    <input type="number" name="btcUnits" step="0.00000001" min="0" value="${Number(account.btcUnits || 0)}" placeholder="BTC unidades" />
+    <div id="btc-input" data-account-btc-fields ${isCryptoAccount(account) ? '' : 'hidden'}>
+    <input type="number" name="btcUnits" step="0.00000001" min="0" value="${Number(account.btcUnits || account.currentReal || 0)}" placeholder="Cantidad BTC" />
 
     </div>
     </div>
@@ -13015,7 +13061,7 @@ if (form) {
     
     
     
-    <small id="valor-btc">BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(Number(account.btcUnits || 0) * Number(state.btcEurPrice || 0))}</small>
+    <small id="valor-btc" data-account-btc-hint ${isCryptoAccount(account) ? '' : 'hidden'}>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency((Number(account.btcUnits || account.currentReal || 0)) * Number(state.btcEurPrice || 0))}</small>
     <button class="finance-pill" type="submit">Guardar</button></form></div>`;
     return;
   }
@@ -13041,13 +13087,16 @@ if (form) {
         <input type="number" name="initialValue" step="0.01" inputmode="decimal" value="0" placeholder="0.00" />
       </label>
       <label class="financeAccountForm__field">
+        <span class="financeAccountForm__label">Tipo de cuenta</span>
+        <select name="assetType" data-account-asset-type>${renderAccountAssetTypeOptions('cash')}</select>
+      </label>
+      <label class="financeAccountForm__field">
         <span class="financeAccountForm__label">Moneda</span>
         <select name="currency">${renderCurrencyOptions(getDefaultCurrency())}</select>
       </label>
       </div>
       <div class="financeAccountForm__toggles finance-account-create-flags" role="group" aria-label="Opciones de cuenta">
         <label class="financeAccountForm__toggle"><input type="checkbox" name="shared" /> <span>Compartida</span></label>
-        <label class="financeAccountForm__toggle"><input type="checkbox" name="isBitcoin" /> <span>Cuenta Bitcoin</span></label>
       </div>
       <div class="financeAccountForm__conditional finance-account-create-shared" data-account-shared-fields hidden>
         <label class="financeAccountForm__field">
@@ -13058,10 +13107,6 @@ if (form) {
         </label>
       </div>
       <div class="financeAccountForm__conditional finance-account-create-btc" data-account-btc-fields hidden>
-        <label class="financeAccountForm__field" id="btc-zona-de-input" >
-          <span class="financeAccountForm__label">BTC unidades</span>
-          <input type="number" name="btcUnits" step="0.00000001" min="0" value="0" placeholder="BTC unidades" />
-        </label>
         <p class="financeAccountForm__hint" data-account-btc-hint>BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(0)}</p>
       </div>
       <div class="financeAccountForm__actions"><button class="finance-pill" type="submit">Crear</button></div>
@@ -13961,10 +14006,11 @@ function subscribe() {
   }
 }
 
-async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin = false, btcUnits = 0, cardLast4 = '', initialValue = 0, currency = getDefaultCurrency() }) {
+async function addAccount({ name, shared = false, sharedRatio = 0.5, assetType = 'cash', isBitcoin = false, btcUnits = 0, cardLast4 = '', initialValue = 0, currency = getDefaultCurrency() }) {
   const id = push(ref(db, `${state.financePath}/accounts`)).key;
   const ratio = shared ? clampRatio(sharedRatio, 0.5) : 1;
-  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, currency: normalizeCurrencyCode(currency), shared, sharedRatio: ratio, isBitcoin: Boolean(isBitcoin), btcUnits: Number(btcUnits || 0), cardLast4: normalizeCardLast4(cardLast4), createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
+  const normalizedMeta = normalizeAccountMetaPayload({ assetType, isBitcoin, btcUnits, initialValue, currency });
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${id}`), { id, name, currency: normalizedMeta.currency, assetType: normalizedMeta.assetType, shared, sharedRatio: ratio, isBitcoin: normalizedMeta.isBitcoin, btcUnits: normalizedMeta.btcUnits, cardLast4: normalizeCardLast4(cardLast4), createdAt: nowTs(), updatedAt: nowTs(), entries: {}, snapshots: {} }));
   const parsedInitial = parseEuroNumber(initialValue);
   if (Number.isFinite(parsedInitial)) {
     const day = dayKeyFromTs(Date.now());
@@ -13976,7 +14022,8 @@ async function addAccount({ name, shared = false, sharedRatio = 0.5, isBitcoin =
 function syncNewAccountFormUI(formEl) {
   if (!formEl) return;
   const isShared = !!formEl.querySelector('input[name="shared"]')?.checked;
-  const isBitcoin = !!formEl.querySelector('input[name="isBitcoin"]')?.checked;
+  const assetType = String(formEl.querySelector('[name="assetType"]')?.value || 'cash').toLowerCase();
+  const isBitcoin = assetType === 'crypto';
   const sharedBlock = formEl.querySelector('[data-account-shared-fields]');
   const bitcoinBlock = formEl.querySelector('[data-account-btc-fields]');
   if (sharedBlock) sharedBlock.hidden = !isShared;
@@ -13984,8 +14031,10 @@ function syncNewAccountFormUI(formEl) {
 
   const ratioInput = formEl.querySelector('[name="sharedRatio"]');
   if (ratioInput && !isShared) ratioInput.value = '50';
+  const currencyInput = formEl.querySelector('[name="currency"]');
+  if (currencyInput && isBitcoin) currencyInput.value = 'BTC';
 
-  const btcUnits = Number(formEl.querySelector('input[name="btcUnits"]')?.value || 0);
+  const btcUnits = Number(formEl.querySelector('input[name="btcUnits"]')?.value || formEl.querySelector('input[name="initialValue"]')?.value || 0);
   const btcHint = formEl.querySelector('[data-account-btc-hint]');
   if (btcHint) {
     btcHint.textContent = `BTC/EUR: ${state.btcEurPrice ? fmtCurrency(state.btcEurPrice) : '—'} · Valor estimado: ${fmtCurrency(Number.isFinite(btcUnits) ? btcUnits * Number(state.btcEurPrice || 0) : 0)}`;
@@ -13994,12 +14043,17 @@ function syncNewAccountFormUI(formEl) {
 async function updateAccountMeta(accountId, payload = {}) {
   const shared = Boolean(payload.shared);
   const sharedRatio = shared ? clampRatio(payload.sharedRatio, 0.5) : 1;
-  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, currency: normalizeCurrencyCode(payload.currency || getDefaultCurrency()), shared, sharedRatio, isBitcoin: Boolean(payload.isBitcoin), btcUnits: Number(payload.btcUnits || 0), cardLast4: normalizeCardLast4(payload.cardLast4), updatedAt: nowTs() }));
+  const normalizedMeta = normalizeAccountMetaPayload(payload);
+  await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { ...payload, currency: normalizedMeta.currency, assetType: normalizedMeta.assetType, shared, sharedRatio, isBitcoin: normalizedMeta.isBitcoin, btcUnits: normalizedMeta.btcUnits, cardLast4: normalizeCardLast4(payload.cardLast4), updatedAt: nowTs() }));
 }
 async function saveSnapshot(accountId, day, value) {
   const parsedValue = parseEuroNumber(value);
   if (!Number.isFinite(parsedValue) || !day) return false;
   await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`), { value: parsedValue, updatedAt: nowTs() }));
+  const account = (state.accounts || []).find((item) => String(item.id) === String(accountId));
+  if (isCryptoAccount(account)) {
+    await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { btcUnits: parsedValue, currency: 'BTC', assetType: 'crypto', isBitcoin: true, updatedAt: nowTs() }));
+  }
   await recomputeAccountEntries(accountId, day);
   toast('Guardado');
   return true;
@@ -15767,7 +15821,8 @@ view.addEventListener('focusout', async (event) => {
     }
     const saved = await saveSnapshot(accountId, dayKeyFromTs(Date.now()), nextNum);
   if (saved) {
-      event.target.value = String(nextNum.toFixed(2));
+      const account = (state.accounts || []).find((item) => String(item.id) === String(accountId));
+      event.target.value = formatAccountBalanceValue(nextNum, account || {});
       event.target.dataset.prev = event.target.value;
       triggerRender();
     }
@@ -15942,8 +15997,8 @@ view.addEventListener('focusout', async (event) => {
       await toggleFoodExtras(form);
       maybeToggleCategoryCreate(form);
     }
-    if (event.target.matches('[data-new-account-form] input[name="shared"], [data-new-account-form] input[name="isBitcoin"]')) {
-      syncNewAccountFormUI(event.target.closest('[data-new-account-form]'));
+    if (event.target.matches('[data-new-account-form] input[name="shared"], [data-new-account-form] [name="assetType"], [data-edit-account-form] input[name="shared"], [data-edit-account-form] [name="assetType"]')) {
+      syncNewAccountFormUI(event.target.closest('[data-new-account-form], [data-edit-account-form]'));
       return;
     }
     if (event.target.matches('[data-tx-type]')) {
@@ -15987,7 +16042,7 @@ view.addEventListener('focusout', async (event) => {
       const cleaned = String(event.target.value || '').replace(/\D/g, '').slice(0, 4);
       if (event.target.value !== cleaned) event.target.value = cleaned;
     }
-    if (event.target.matches('[data-new-account-form] input[name="btcUnits"], [data-new-account-form] input[name="sharedRatio"]')) {
+    if (event.target.matches('[data-new-account-form] input[name="btcUnits"], [data-new-account-form] input[name="initialValue"], [data-new-account-form] input[name="sharedRatio"]')) {
       syncNewAccountFormUI(event.target.closest('[data-new-account-form]'));
     }
     if (event.target.matches('[data-products-catalog-search]')) {
@@ -16398,7 +16453,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       return;
     }
     if (event.target.matches('[data-new-account-form]')) {
-      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 50) / 100; const isBitcoin = form.get('isBitcoin') === 'on'; const btcUnits = Number(form.get('btcUnits') || 0); const initialValue = Number(form.get('initialValue') || 0); const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); if (name) { const duplicates = getCardLast4Duplicates(cardLast4); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await addAccount({ name, currency: String(form.get('currency') || getDefaultCurrency()).toUpperCase(), shared, sharedRatio, isBitcoin, btcUnits, cardLast4, initialValue }); } state.modal = { type: null }; triggerRender(); return;
+      event.preventDefault(); const form = new FormData(event.target); const name = String(form.get('name') || '').trim(); const shared = form.get('shared') === 'on'; const sharedRatio = Number(form.get('sharedRatio') || 50) / 100; const assetType = String(form.get('assetType') || 'cash').toLowerCase(); const isBitcoin = assetType === 'crypto'; const btcUnits = Number(form.get('btcUnits') || form.get('initialValue') || 0); const initialValue = Number(form.get('initialValue') || 0); const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); if (name) { const duplicates = getCardLast4Duplicates(cardLast4); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await addAccount({ name, currency: isBitcoin ? 'BTC' : String(form.get('currency') || getDefaultCurrency()).toUpperCase(), assetType, shared, sharedRatio, isBitcoin, btcUnits, cardLast4, initialValue }); } state.modal = { type: null }; triggerRender(); return;
     }
     if (event.target.matches('[data-calendar-day-form]')) {
       event.preventDefault();
@@ -16438,7 +16493,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       event.preventDefault();
       const accountId = event.target.dataset.editAccountForm;
       const form = new FormData(event.target);
-      const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); const duplicates = getCardLast4Duplicates(cardLast4, accountId); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), currency: String(form.get('currency') || getDefaultCurrency()).toUpperCase(), shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5), isBitcoin: form.get('isBitcoin') === 'on', btcUnits: Number(form.get('btcUnits') || 0), cardLast4 });
+      const cardLast4Raw = String(form.get('cardLast4') || '').trim(); const cardLast4 = normalizeCardLast4(cardLast4Raw); if (cardLast4Raw && !cardLast4) toast('Tarjeta: usa exactamente 4 dígitos o déjalo vacío'); const duplicates = getCardLast4Duplicates(cardLast4, accountId); if (duplicates.length) toast('last4 duplicado: el import no podrá decidir'); const assetType = String(form.get('assetType') || 'cash').toLowerCase(); await updateAccountMeta(accountId, { name: String(form.get('name') || '').trim(), currency: assetType === 'crypto' ? 'BTC' : String(form.get('currency') || getDefaultCurrency()).toUpperCase(), assetType, shared: form.get('shared') === 'on', sharedRatio: Number(form.get('sharedRatio') || 0.5), isBitcoin: assetType === 'crypto', btcUnits: Number(form.get('btcUnits') || 0), cardLast4 });
       state.modal = { type: null };
       triggerRender();
       return;

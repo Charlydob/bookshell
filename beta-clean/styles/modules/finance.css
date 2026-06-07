@@ -9091,3 +9091,34 @@ grid-template-columns: 1fr auto;
     font-size: 11px;
   }
 }
+
+/* Movimiento: título y nota en la primera pestaña */
+.financeTab #finance-modal.fin-move-modal .fm-field--title,
+.financeTab #finance-modal.fin-move-modal[data-tx-step="base"] .fm-field--note{
+  display: flex;
+}
+
+.financeTab #finance-modal.fin-move-modal .fm-field--title .fm-label,
+.financeTab #finance-modal.fin-move-modal .fm-field--note .fm-label{
+  display: block;
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: rgba(236, 242, 255, .62);
+  opacity: 1;
+}
+
+.financeTab #finance-modal.fin-move-modal .fm-control--note{
+  min-height: 58px;
+  height: auto;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  resize: vertical;
+  line-height: 1.35;
+}
+
+.financeTab #finance-modal.fin-move-modal[data-tx-step="category"] .fm-field--title,
+.financeTab #finance-modal.fin-move-modal[data-tx-step="food"] .fm-field--title,
+.financeTab #finance-modal.fin-move-modal[data-tx-step="food"] .fm-field--note{
+  display: none;
+}

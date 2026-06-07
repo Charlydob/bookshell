@@ -828,6 +828,7 @@ function normalizeBalanceRowRecord(id, row = {}, source = 'transactions', fallba
     fromAccountId: String(row?.fromAccountId ?? row?.extras?.fromAccountId ?? ''),
     toAccountId: String(row?.toAccountId ?? row?.extras?.toAccountId ?? ''),
     note: String(row?.note ?? row?.extras?.note ?? ''),
+    title: String(row?.title ?? row?.extras?.title ?? ''),
     date,
     dateISO,
     monthKey,
@@ -8775,6 +8776,7 @@ function getEmptyMovementForm(overrides = {}) {
     fromAccountId: '',
     toAccountId: '',
     category: '',
+    title: '',
     note: '',
     linkedHabitId: '',
     allocationMode: 'point',
@@ -8824,6 +8826,7 @@ function movementDraftFromRecurring(recurringId = '', recurringData = {}, monthK
     fromAccountId: String(recurringData.fromAccountId || '').trim(),
     toAccountId: String(recurringData.toAccountId || '').trim(),
     category: String(recurringData.category || '').trim(),
+    title: String(recurringData.title || '').trim(),
     note: String(recurringData.note || '').trim(),
     linkedHabitId: String(recurringData.linkedHabitId || '').trim(),
     allocationMode: allocation.mode === 'period' ? allocation.period : 'point',
@@ -12800,6 +12803,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
   const defaultCategory = txEdit?.category || state.balanceFormState.category || '';
   const defaultDate = txEdit?.date || isoToDay(txEdit?.dateISO || '') || state.balanceFormState.dateISO || dayKeyFromTs(Date.now());
   const defaultAmount = txEdit ? String(txEdit?.amount ?? '') : (state.balanceFormState.amount || '');
+  const defaultTitle = txEdit?.title || state.balanceFormState.title || '';
   const defaultNote = txEdit?.note || state.balanceFormState.note || '';
   const defaultLinkedHabitId = (txEdit?.linkedHabitId || state.balanceFormState.linkedHabitId || '').trim();
   const defaultAllocation = normalizeTxAllocation(txEdit?.allocation || {
@@ -12974,8 +12978,14 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
           </div>
         </div>
         
+        <div class="fm-field fm-field--title">
+          <label class="fm-label" for="fm-tx-title">Título</label>
+          <input id="fm-tx-title" class="fm-control fm-control--title" name="title" type="text" placeholder="Título (opcional)" value="${escapeHtml(defaultTitle)}" aria-label="Título"/>
+        </div>
+
         <div class="fm-field fm-field--note">
-          <input id="fm-tx-note" class="fm-control fm-control--note" name="note" type="text" placeholder="Nota (opcional)" value="${escapeHtml(defaultNote)}" aria-label="Nota"/>
+          <label class="fm-label" for="fm-tx-note">Nota</label>
+          <textarea id="fm-tx-note" class="fm-control fm-control--note" name="note" rows="2" placeholder="Nota (opcional)" aria-label="Nota">${escapeHtml(defaultNote)}</textarea>
         </div>
       </div>
 
@@ -13209,7 +13219,7 @@ if (form) {
       const originalCurrency = String(row.originalCurrency || row.currency || 'EUR').toUpperCase();
       const hasOriginal = originalCurrency !== 'EUR' && Number.isFinite(Number(row.originalAmount));
       const originalText = hasOriginal ? ` · ${formatCurrency(row.originalAmount, originalCurrency)}` : '';
-      return `<div class="financeTxRow"><span>${escapeHtml(row.note || row.category || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrencyCode(row.amount, row.accountCurrency || row.currency || 'EUR')}${originalText}</strong><span class="finance-row" id="filas-movimiento" >${actionButtons}</span></div>`;
+      return `<div class="financeTxRow"><span>${escapeHtml(row.title || row.note || row.category || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrencyCode(row.amount, row.accountCurrency || row.currency || 'EUR')}${originalText}</strong><span class="finance-row" id="filas-movimiento" >${actionButtons}</span></div>`;
     }).join('') || '<p class="finance-empty">Sin movimientos.</p>'}</div></div>`;
     return;
   }
@@ -13220,7 +13230,7 @@ if (form) {
     const rows = buildDrilldownRows(txType, monthKey);
     const title = txType === 'income' ? 'Ingresos' : 'Gastos';
     const accountName = (id) => escapeHtml(resolvedAccounts.find((a) => a.id === id)?.name || 'Sin cuenta');
-    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title} · ${monthLabelByKey(monthKey)}</h3><div class="finance-row"><button class="finance-pill" data-drilldown-month="-1">◀</button><button class="finance-pill" data-drilldown-month="1">▶</button><button class="finance-pill" data-drilldown-add="${txType}">+ Añadir</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header><div class="financeTxList financeTxList--scroll" style="max-height:360px;overflow-y:auto;">${rows.map((row) => { const oc=String(row.originalCurrency || row.currency || 'EUR').toUpperCase(); const extra=oc!=='EUR'&&Number.isFinite(Number(row.originalAmount))?` · ${formatCurrency(row.originalAmount, oc)}`:''; return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.note || row.category || '—')} · ${accountName(row.accountId)}</span><strong class="${txType === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrencyCode(row.amount, row.accountCurrency || row.currency || 'EUR')}${extra}</strong></div>`; }).join('') || '<p class="finance-empty">Sin registros en este mes.</p>'}</div></div>`;
+    backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3>${title} · ${monthLabelByKey(monthKey)}</h3><div class="finance-row"><button class="finance-pill" data-drilldown-month="-1">◀</button><button class="finance-pill" data-drilldown-month="1">▶</button><button class="finance-pill" data-drilldown-add="${txType}">+ Añadir</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header><div class="financeTxList financeTxList--scroll" style="max-height:360px;overflow-y:auto;">${rows.map((row) => { const oc=String(row.originalCurrency || row.currency || 'EUR').toUpperCase(); const extra=oc!=='EUR'&&Number.isFinite(Number(row.originalAmount))?` · ${formatCurrency(row.originalAmount, oc)}`:''; return `<div class="financeTxRow"><span>${new Date(row.date || row.dateISO).toLocaleDateString('es-ES')}</span><span>${escapeHtml(row.title || row.note || row.category || '—')} · ${accountName(row.accountId)}</span><strong class="${txType === 'income' ? 'is-positive' : 'is-negative'}">${fmtCurrencyCode(row.amount, row.accountCurrency || row.currency || 'EUR')}${extra}</strong></div>`; }).join('') || '<p class="finance-empty">Sin registros en este mes.</p>'}</div></div>`;
     return;
   }
   if (state.modal.type === 'calendar-day-edit') {
@@ -13780,6 +13790,7 @@ function persistBalanceFormState(form) {
     fromAccountId: String(fd.get('fromAccountId') || ''),
     toAccountId: String(fd.get('toAccountId') || ''),
     category: String(fd.get('category') || ''),
+    title: String(fd.get('title') || ''),
     note: String(fd.get('note') || ''),
     linkedHabitId: String(fd.get('linkedHabitId') || ''),
     allocationMode: String(fd.get('allocationMode') || 'point'),
@@ -16844,6 +16855,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       const txId = String(form.get('txId') || '').trim();
       const type = normalizeTxType(String(form.get('type') || 'expense'));
       const amount = parseMoney(String(form.get('amount') || ''));
+      const accountId = String(form.get('accountId') || '').trim();
       const movementCurrency = String(form.get('currency') || getDefaultCurrency()).toUpperCase();
       const currencyPayload = normalizeMovementCurrencyPayload({ amount, currency: movementCurrency });
       const targetAccountForMovement = (type === 'income' || type === 'expense') ? (state.accounts || []).find((item) => String(item.id) === accountId) : null;
@@ -16852,9 +16864,9 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       if (targetAccountForMovement && !Number.isFinite(accountAmount)) { toast('No hay tasa para convertir a la moneda de la cuenta'); return; }
       const dateISO = toIsoDay(String(form.get('dateISO') || dayKeyFromTs(Date.now()))) || dayKeyFromTs(Date.now());
       const pickedCategory = String(form.get('category') || '').trim();
-      const category = type === 'transfer' ? 'transfer' : (pickedCategory || 'Sin categoría');
+      const category = type === 'transfer' ? 'transfer' : pickedCategory;
+      const title = String(form.get('title') || '').trim();
       const note = String(form.get('note') || '').trim();
-      const accountId = String(form.get('accountId') || '');
       const fromAccountId = String(form.get('fromAccountId') || '');
       const toAccountId = String(form.get('toAccountId') || '');
       const personalRatioMode = String(form.get('personalRatioMode') || 'auto');
@@ -16883,13 +16895,15 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         customStart: allocationCustomStart,
         customEnd: allocationCustomEnd
       } : { mode: 'point', period: 'day', anchorDate: dateISO }, dateISO);
+      if (!['income', 'expense', 'transfer'].includes(type)) { toast('Tipo de movimiento inválido'); return; }
       if (!Number.isFinite(amount) || amount <= 0) {
         console.warn('[FINANCE][BALANCE] invalid amount', form.get('amount'), amount);
-        toast('Cantidad inválida');
+        toast('Importe inválido: introduce una cantidad mayor que 0');
         return;
       }
       if ((type === 'income' || type === 'expense') && !accountId) { toast('Selecciona una cuenta'); return; }
-      if (type === 'transfer' && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) { toast('Transferencia inválida'); return; }
+      if ((type === 'income' || type === 'expense') && !category) { toast('Selecciona una categoría'); return; }
+      if (type === 'transfer' && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) { toast('Transferencia inválida: elige dos cuentas distintas'); return; }
       const mealType = normalizeFoodName(String(form.get('foodMealType') || ''));
       const cuisine = normalizeFoodName(String(form.get('foodCuisine') || ''));
       const place = normalizeFoodName(String(form.get('foodPlace') || ''));
@@ -16991,6 +17005,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         toAccountId: type === 'transfer' ? toAccountId : '',
         category,
         categoryId: String(form.get('categoryId') || prev?.categoryId || category || '').trim(),
+        title,
         note,
         ...(Number.isFinite(nextPersonalRatio) ? { personalRatio: nextPersonalRatio } : {}),
         linkedHabitId,
@@ -17038,6 +17053,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
           fromAccountId: type === 'transfer' ? fromAccountId : '',
           toAccountId: type === 'transfer' ? toAccountId : '',
           category,
+          title,
           note,
           ...(Number.isFinite(nextPersonalRatio) ? { personalRatio: nextPersonalRatio } : {}),
           linkedHabitId,
@@ -17101,7 +17117,12 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       }
       const touched = new Set([payload.accountId, payload.fromAccountId, payload.toAccountId, prev?.accountId, prev?.fromAccountId, prev?.toAccountId].filter(Boolean));
       const recomputeStart = [dateISO, prev?.date, isoToDay(prev?.dateISO || '')].filter(Boolean).sort()[0] || dateISO;
-      await persistRecomputedFinanceAccountEntries(Array.from(touched), recomputeStart, 'save-transaction');
+      try {
+        await persistRecomputedFinanceAccountEntries(Array.from(touched), recomputeStart, 'save-transaction');
+      } catch (error) {
+        log('no se pudieron recalcular los apuntes de cuenta tras guardar el movimiento', error);
+        toast('Movimiento guardado; no se pudo recalcular cuentas');
+      }
       state.balance = state.balance || {};
       state.balance.transactions = {
         ...(state.balance.transactions || {}),

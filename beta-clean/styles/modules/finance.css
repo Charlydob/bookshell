@@ -9122,3 +9122,20 @@ grid-template-columns: 1fr auto;
 .financeTab #finance-modal.fin-move-modal[data-tx-step="food"] .fm-field--note{
   display: none;
 }
+
+/* Ensure finance modals always sit above the floating add button and bottom navigation. */
+#finance-modalOverlay,
+.financeTab #finance-modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30000 !important;
+}
+#finance-modalOverlay.is-open,
+.financeTab #finance-modalOverlay.is-open {
+  display: flex;
+}
+#finance-modalOverlay #finance-modal,
+.financeTab #finance-modalOverlay #finance-modal {
+  position: relative;
+  z-index: 30001;
+}

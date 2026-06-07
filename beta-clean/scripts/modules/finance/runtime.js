@@ -650,6 +650,28 @@ function parseProductsReceiptMoney(value, fallback = NaN, { blankAsNaN = false }
   const parsed = parseEuroNumber(raw);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
 }
+function parseProductsReceiptQuantity(value, fallback = 1) {
+  const parsed = parseEuroNumber(value);
+  const numeric = Number.isFinite(parsed) ? parsed : Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+}
+function normalizeProductsReceiptLinePrices(line = {}) {
+  const qty = Math.max(0.01, parseProductsReceiptQuantity(line?.qty, 1));
+  const estimatedPrice = parseProductsReceiptMoney(
+    line?.estimatedPrice ?? line?.unitPrice ?? line?.price,
+    0,
+  );
+  const actualPrice = parseProductsReceiptMoney(
+    line?.actualPrice ?? line?.priceOriginal ?? line?.unitPrice ?? line?.price ?? line?.estimatedPrice,
+    estimatedPrice,
+  );
+  return {
+    ...line,
+    qty,
+    estimatedPrice: Number.isFinite(estimatedPrice) ? estimatedPrice : 0,
+    actualPrice: Number.isFinite(actualPrice) ? actualPrice : (Number.isFinite(estimatedPrice) ? estimatedPrice : 0),
+  };
+}
 function resolveProductsReceiptDiffMeta(diff = 0) {
   const safeDiff = Number(diff || 0);
   const tone = safeDiff > 0.005 ? 'expensive' : safeDiff < -0.005 ? 'cheap' : 'even';
@@ -673,9 +695,9 @@ function normalizeReceiptLine(rawLine = {}, fallback = {}) {
     ...fallback,
     ...(rawLine || {}),
   };
-  const qty = Math.max(0.01, Number(base.qty || 1));
-  const estimatedPrice = normalizeProductPositiveNumber(base.estimatedPrice, 0);
-  const actualPrice = normalizeProductPositiveNumber(base.actualPrice, estimatedPrice);
+  const qty = Math.max(0.01, parseProductsReceiptQuantity(base.qty, 1));
+  const estimatedPrice = parseProductsReceiptMoney(base.estimatedPrice, 0);
+  const actualPrice = parseProductsReceiptMoney(base.actualPrice, estimatedPrice);
   return {
     ...base,
     qty,
@@ -2337,7 +2359,7 @@ function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
   const safeId = String(ticketId || payload?.id || createFinanceRecordId('lticket')).trim();
   const ticketCurrency = String(payload?.ticketCurrency || getDefaultCurrency()).toUpperCase();
   const ticketCountry = String(payload?.ticketCountry || payload?.country || '').trim();
-  const exchangeRateToEUR = Number(payload?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
+  const exchangeRateToEUR = ticketCurrency === 'EUR' ? 1 : Number(payload?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
   const exchangeRateFromEUR = ticketCurrency === 'EUR' ? 1 : (Number(payload?.exchangeRateFromEUR || (1 / Math.max(0.0000001, exchangeRateToEUR))) || 1);
   return {
     id: safeId,
@@ -3579,7 +3601,7 @@ function renderProductsReceiptLineRow(line, model) {
   const normalized = calculateLineTotals(line);
   const ticketCurrency = String(model?.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
   const lineCurrency = String(line?.currency || ticketCurrency).toUpperCase();
-  const lineRate = Number(line?.exchangeRateToEUR || model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
+  const lineRate = lineCurrency === 'EUR' ? 1 : Number(line?.exchangeRateToEUR || model?.activeTicket?.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
   const lineTotalOriginal = Number(line?.priceOriginal ?? normalized.actualPrice ?? 0);
   const lineTotalEUR = Number(line?.priceEUR ?? (Number(lineTotalOriginal || 0) * Math.max(0.0000001, Number(lineRate || 1))));
   console.info('[finance:currency] item-price-eur', { itemId: lineId, item: line?.name || '', original: lineTotalOriginal, currency: lineCurrency, exchangeRateToEUR: lineRate, eur: lineTotalEUR });
@@ -4112,7 +4134,7 @@ function renderProductsTicketHero(model, options = {}) {
   const receiptEstimatedTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.estimatedSubtotal || 0), 0);
   const receiptActualTotal = (model.listLines || []).reduce((sum, line) => sum + Number(line.actualSubtotal || 0), 0);
   const ticketCurrency = String(model.activeTicket?.ticketCurrency || getDefaultCurrency()).toUpperCase();
-  const exchangeRateToEUR = Number(model.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
+  const exchangeRateToEUR = ticketCurrency === 'EUR' ? 1 : Number(model.activeTicket?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
   const converterDraft = resolveProductsConverterDraft(model);
   const receiptTotalEUR = Number(normalizeMovementCurrencyPayload({ amount: receiptActualTotal, currency: ticketCurrency, exchangeRateToEUR }).amountEUR || 0);
   const diffMeta = resolveProductsReceiptDiffMeta(receiptActualTotal - receiptEstimatedTotal);
@@ -4260,7 +4282,7 @@ const ticketDeleteHint = ticket.txId
           const imageUrl = String(ticket.imageUrl || ticket.receiptImageUrl || ticket.image || '').trim();
           const resolvedTotals = resolveTicketTotals(ticket);
           const historyCurrency = resolvedTotals.currency;
-          const historyRateToEUR = Number(resolvedTotals.rateToEUR || getCurrencyRates()[historyCurrency] || 1);
+          const historyRateToEUR = historyCurrency === 'EUR' ? 1 : Number(resolvedTotals.rateToEUR || getCurrencyRates()[historyCurrency] || 1);
           const historyTotalOriginal = Number(resolvedTotals.totalOriginal || 0);
           const historyTotalEUR = Number(resolvedTotals.totalEUR || 0);
           return `
@@ -4280,7 +4302,7 @@ const ticketDeleteHint = ticket.txId
                   ${Object.values(ticket.lines || {}).map((line) => {
                     const lineCurrency = String(line.currency || historyCurrency).toUpperCase();
                     const lineOriginal = Number(line.priceOriginal ?? line.actualPrice ?? line.estimatedPrice ?? 0);
-                    const lineRateToEUR = Number(line.exchangeRateToEUR || historyRateToEUR || 1);
+                    const lineRateToEUR = lineCurrency === 'EUR' ? 1 : Number(line.exchangeRateToEUR || historyRateToEUR || 1);
                     const lineEUR = Number((line.priceEUR ?? normalizeMovementCurrencyPayload({ amount: lineOriginal, currency: lineCurrency, exchangeRateToEUR: lineRateToEUR }).amountEUR) || 0);
                     return `
                     <div class="productsWorkbench__ticketRegistryLine">
@@ -5296,7 +5318,7 @@ function readProductsListDraftFromDom(root = document) {
     const lineTicketId = String(rowEl.querySelector(`[data-products-line-ticket-id="${lineId}"]`)?.value || baseList.lines?.[lineId]?.ticketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
     syncProductsReceiptLineToBacking(root, lineId);
     const receiptName = productsDomValue(root, [`[data-products-receipt-name="${lineId}"]`], '');
-    const qty = Math.max(0.01, Number(productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`], rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseLine.qty || 1) || rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseLine.qty || 1));
+    const qty = parseProductsReceiptQuantity(productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`], rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseLine.qty || 1) || rowEl.querySelector(`[data-products-line-qty="${lineId}"]`)?.value || baseLine.qty || 1, 1);
     const estimatedPriceFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.estimatedPrice, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0)));
     const actualPriceFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.actualPrice, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseLine.estimatedPrice || 0)));
     const estimatedPrice = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], estimatedPriceFallback), estimatedPriceFallback);
@@ -5337,7 +5359,7 @@ function syncProductsTicketComposerDom(root = document) {
     const lineId = String(rowEl.dataset.productsLineRow || '').trim();
     if (!lineId) return;
     syncProductsReceiptLineToBacking(root, lineId);
-    const qty = Math.max(0.01, Number(productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`, `[data-products-line-qty="${lineId}"]`], 1)));
+    const qty = Math.max(0.01, parseProductsReceiptQuantity(productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`, `[data-products-line-qty="${lineId}"]`], 1), 1));
     const estimatedPriceFallback = Math.max(0, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0));
     const actualPriceFallback = Math.max(0, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || estimatedPriceFallback));
     const estimatedPriceParsed = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], ''), NaN, { blankAsNaN: true });
@@ -5385,7 +5407,7 @@ function syncProductsTicketComposerDom(root = document) {
     const draft = ensureProductsListTickets(readProductsListDraftFromDom(root));
     const activeTicketId = String(draft?.activeTicketId || draft?.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
     const ticketCurrency = String(draft?.tickets?.[activeTicketId]?.ticketCurrency || getDefaultCurrency()).toUpperCase();
-    addTotal.textContent = fmtCurrencyCode(Math.max(0, Number(addQty?.value || 1)) * Math.max(0, Number(addUnit?.value || 0)), ticketCurrency);
+    addTotal.textContent = fmtCurrencyCode(Math.max(0, parseProductsReceiptQuantity(addQty?.value || 1, 1)) * Math.max(0, parseProductsReceiptMoney(addUnit?.value || '', 0)), ticketCurrency);
   }
   const storeSelect = scope.querySelector('[name="store"]');
   const storeValue = String((storeSelect?.value === '__new__' ? scope.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || 'Supermercado').trim() || 'Supermercado';
@@ -5406,7 +5428,7 @@ function syncProductsTicketComposerDom(root = document) {
   const activeDraftTicketId = String(draftCurrency?.activeTicketId || draftCurrency?.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   const activeTicketCurrency = String(draftCurrency?.tickets?.[activeDraftTicketId]?.ticketCurrency || getDefaultCurrency()).toUpperCase();
   if (listTotal) listTotal.textContent = fmtCurrencyCode(activeTicketTotals.estimatedTotal, activeTicketCurrency);
-  if (ticketTotal) ticketTotal.textContent = fmtCurrencyCode(receiptTotals.actualTotal, activeTicketCurrency);
+  if (ticketTotal) ticketTotal.textContent = fmtCurrencyCode(activeTicketTotals.actualTotal, activeTicketCurrency);
   if (ticketTotalFooter) ticketTotalFooter.textContent = fmtCurrencyCode(activeTicketTotals.actualTotal, activeTicketCurrency);
   if (ticketDiffRow) {
     const diffMeta = resolveProductsReceiptDiffMeta(activeTicketTotals.diffTotal);
@@ -5437,7 +5459,7 @@ async function updateReceiptLine(ticketId = '', lineId = '', patch = {}, options
   const targetTicketId = String(ticketId || currentLine.ticketId || draft.activeTicketId || draft.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
   const targetTicket = draft.tickets?.[targetTicketId] || {};
   const targetCurrency = String(targetTicket.ticketCurrency || currentLine.currency || getDefaultCurrency()).toUpperCase();
-  const targetRateToEUR = Number(targetTicket.exchangeRateToEUR || getCurrencyRates()[targetCurrency] || 1);
+  const targetRateToEUR = targetCurrency === 'EUR' ? 1 : Number(targetTicket.exchangeRateToEUR || getCurrencyRates()[targetCurrency] || 1);
   const nextLine = calculateLineTotals(normalizeReceiptLine({ ...currentLine, ...patch, ticketId: targetTicketId }, currentLine));
   const priceOriginal = Number(nextLine.actualPrice || 0);
   draft.lines[safeLineId] = {
@@ -5677,18 +5699,18 @@ async function addProductToActiveProductsListFromReceipt(productId = '') {
     .filter((line) => String(line.productId || '').trim() === String(product.canonicalId || product.id || '').trim())
     .filter((line) => String(line.ticketId || '').trim() === activeTicketId)
     .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0];
-  const addQty = Number(document.querySelector('[data-products-receipt-add-qty]')?.value || 1);
-  const addUnit = Number(document.querySelector('[data-products-receipt-add-unit]')?.value || 0);
+  const addQty = parseProductsReceiptQuantity(document.querySelector('[data-products-receipt-add-qty]')?.value || 1, 1);
+  const addUnit = parseProductsReceiptMoney(document.querySelector('[data-products-receipt-add-unit]')?.value || '', 0);
   if (addedLine?.id) {
     const activeTicket = nextList.tickets?.[activeTicketId] || {};
     const itemCurrency = String(activeTicket.ticketCurrency || 'EUR').toUpperCase();
-    const enteredPrice = Math.max(0, addUnit || nextList.lines[addedLine.id].actualPrice || nextList.lines[addedLine.id].estimatedPrice || 0);
-    const rateToEUR = Number(activeTicket.exchangeRateToEUR || getCurrencyRates()[itemCurrency] || 1);
+    const enteredPrice = Math.max(0, addUnit > 0 ? addUnit : (nextList.lines[addedLine.id].actualPrice || nextList.lines[addedLine.id].estimatedPrice || 0));
+    const rateToEUR = itemCurrency === 'EUR' ? 1 : Number(activeTicket.exchangeRateToEUR || getCurrencyRates()[itemCurrency] || 1);
     nextList.lines[addedLine.id] = {
       ...nextList.lines[addedLine.id],
       qty: Math.max(0.01, addQty || nextList.lines[addedLine.id].qty || 1),
       actualPrice: enteredPrice,
-      estimatedPrice: Math.max(0, nextList.lines[addedLine.id].estimatedPrice || enteredPrice || 0),
+      estimatedPrice: Math.max(0, addUnit > 0 ? enteredPrice : (nextList.lines[addedLine.id].estimatedPrice || enteredPrice || 0)),
       currency: itemCurrency,
       exchangeRateToEUR: rateToEUR,
       priceOriginal: enteredPrice,
@@ -5717,7 +5739,7 @@ async function changeProductsReceiptLineProduct(lineId = '', productId = '') {
     name: normalizeFoodName(product.canonicalName || product.displayName || product.name || line.name),
     unit: normalizeProductUnit(product.unit || line.unit || 'ud'),
     estimatedPrice: normalizeProductPositiveNumber(line.estimatedPrice, price || 0),
-    actualPrice: normalizeProductPositiveNumber(price, normalizeProductPositiveNumber(line.actualPrice, line.estimatedPrice || 0)),
+    actualPrice: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(price, line.estimatedPrice || 0)),
     store: normalizeFoodName(product.preferredStore || product.place || draft.store || line.store || ''),
     updatedAt: nowTs(),
   };
@@ -5768,7 +5790,7 @@ async function createProductFromReceiptRow() {
   }
   const storeSelect = document.querySelector('[data-products-store-select]');
   const defaultStore = normalizeFoodName((storeSelect?.value === '__new__' ? document.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || state.productsHub?.settings?.defaultStore || '');
-  const unitPrice = Math.max(0, Number(document.querySelector('[data-products-receipt-add-unit]')?.value || 0));
+  const unitPrice = parseProductsReceiptMoney(document.querySelector('[data-products-receipt-add-unit]')?.value || '', 0);
   const normalizedName = normalizeProductItemKey(name);
   const existing = Object.values(state.food.itemsById || {}).find((item) => normalizeProductItemKey(item?.name || item?.displayName || '') === normalizedName);
   if (existing?.id) {
@@ -6194,11 +6216,8 @@ function setProductsReceiptError(message = '') {
 function validateProductsTicketForConfirm(list = {}, activeTicketId = '', activeTicketMeta = {}) {
   const normalizedLines = Object.values(list.lines || {})
     .map((line) => ({
-      ...line,
+      ...normalizeProductsReceiptLinePrices(line),
       name: normalizeFoodName(line?.name || ''),
-      qty: Math.max(0.01, Number(line?.qty || 1)),
-      estimatedPrice: normalizeProductPositiveNumber(line?.estimatedPrice, 0),
-      actualPrice: normalizeProductPositiveNumber(line?.actualPrice, normalizeProductPositiveNumber(line?.estimatedPrice, 0)),
     }))
     .filter((line) => line.name);
   if (!normalizedLines.length) {
@@ -6366,12 +6385,9 @@ async function syncReceiptCatalogAfterWrite(items = [], {
 }
 
 async function saveProductsPurchaseTransaction(list = {}, options = {}) {
-  const lines = Object.values(list.lines || {}).map((line) => ({
-    ...line,
-    qty: Math.max(0.01, Number(line.qty || 1)),
-    estimatedPrice: normalizeProductPositiveNumber(line.estimatedPrice, 0),
-    actualPrice: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(line.estimatedPrice, 0)),
-  })).filter((line) => line.name);
+  const lines = Object.values(list.lines || {})
+    .map((line) => normalizeProductsReceiptLinePrices(line))
+    .filter((line) => line.name);
   if (!lines.length) {
     throw new Error('receipt-empty-lines');
   }
@@ -6559,13 +6575,17 @@ async function confirmProductsTicketFromDom() {
       Object.entries(draft.lines || {}).filter(([, line]) => String(line?.ticketId || draft.primaryTicketId || '').trim() === activeTicketId),
     );
     const draftLineCount = Object.keys(activeTicketLines || {}).length;
-    const actualTotalOriginal = Object.values(activeTicketLines || {}).reduce((sum, line) => sum + Number(line?.finalPriceOriginal ?? line?.priceOriginal ?? line?.actualPrice ?? 0), 0);
+    const actualTotalOriginal = Object.values(activeTicketLines || {}).reduce((sum, line) => {
+      const normalizedLine = normalizeProductsReceiptLinePrices(line);
+      return sum + (Number(normalizedLine.actualPrice || 0) * Math.max(0.01, Number(normalizedLine.qty || 1)));
+    }, 0);
     const receiptCurrency = String(activeTicketMeta.ticketCurrency || getDefaultCurrency()).toUpperCase();
-    const ticketRate = Number(activeTicketMeta.exchangeRateToEUR || getCurrencyRates()[receiptCurrency] || 1);
+    const ticketRate = receiptCurrency === 'EUR' ? 1 : Number(activeTicketMeta.exchangeRateToEUR || getCurrencyRates()[receiptCurrency] || 1);
     const receiptCurrencyPayload = normalizeMovementCurrencyPayload({ amount: actualTotalOriginal, currency: receiptCurrency, exchangeRateToEUR: ticketRate });
     console.info('[finance:currency] ticket:state-before-add', { ticketCurrency: receiptCurrency, exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1) });
     Object.values(activeTicketLines || {}).forEach((line) => {
-      const lineTotalOriginal = Number(line?.priceOriginal ?? line?.actualPrice ?? 0);
+      const normalizedLine = normalizeProductsReceiptLinePrices(line);
+      const lineTotalOriginal = Number(normalizedLine.actualPrice || 0) * Math.max(0.01, Number(normalizedLine.qty || 1));
       const lineEUR = Number(line?.priceEUR ?? normalizeMovementCurrencyPayload({ amount: lineTotalOriginal, currency: receiptCurrency, exchangeRateToEUR: receiptCurrencyPayload.exchangeRateToEUR }).amountEUR);
       console.info('[finance:currency] item:converted', { item: line?.name || '', original: lineTotalOriginal, currency: receiptCurrency, eur: lineEUR });
     });
@@ -6855,18 +6875,19 @@ function normalizeProductsHubLineMap(lines = {}) {
     const safeId = String(lineId || line?.id || createFinanceRecordId('line')).trim();
     const payload = line && typeof line === 'object' ? line : {};
     const itemCurrency = String(payload?.currency || payload?.ticketCurrency || 'EUR').toUpperCase();
-    const priceOriginal = normalizeProductPositiveNumber(payload?.priceOriginal ?? payload?.actualPrice ?? payload?.finalPrice ?? payload?.estimatedPrice ?? payload?.unitPrice ?? payload?.price, 0);
-    const exchangeRateToEUR = Number(payload?.exchangeRateToEUR || getCurrencyRates()[itemCurrency] || 1);
-    const priceEUR = normalizeProductPositiveNumber(payload?.priceEUR ?? payload?.convertedAmountEUR ?? normalizeMovementCurrencyPayload({ amount: priceOriginal, currency: itemCurrency, exchangeRateToEUR }).amountEUR, 0);
+    const normalizedLinePrices = normalizeProductsReceiptLinePrices(payload);
+    const priceOriginal = parseProductsReceiptMoney(payload?.priceOriginal ?? normalizedLinePrices.actualPrice, normalizedLinePrices.actualPrice);
+    const exchangeRateToEUR = itemCurrency === 'EUR' ? 1 : Number(payload?.exchangeRateToEUR || getCurrencyRates()[itemCurrency] || 1);
+    const priceEUR = parseProductsReceiptMoney(payload?.priceEUR ?? payload?.convertedAmountEUR, normalizeMovementCurrencyPayload({ amount: priceOriginal, currency: itemCurrency, exchangeRateToEUR }).amountEUR);
     const name = normalizeFoodName(payload?.name || payload?.productName || '');
     acc[safeId] = {
       id: safeId,
       productId: String(payload?.productId || payload?.foodId || '').trim(),
       name: name || normalizeFoodName(payload?.productId || safeId),
-      qty: Math.max(0.01, Number(payload?.qty || 1)),
+      qty: normalizedLinePrices.qty,
       unit: normalizeProductUnit(payload?.unit || 'ud'),
-      estimatedPrice: normalizeProductPositiveNumber(payload?.estimatedPrice ?? payload?.plannedPrice ?? payload?.unitPrice ?? payload?.price, 0),
-      actualPrice: normalizeProductPositiveNumber(payload?.actualPrice ?? payload?.finalPrice ?? payload?.estimatedPrice ?? payload?.unitPrice ?? payload?.price, 0),
+      estimatedPrice: normalizedLinePrices.estimatedPrice,
+      actualPrice: normalizedLinePrices.actualPrice,
       currency: itemCurrency,
       priceOriginal,
       priceEUR,
@@ -9624,7 +9645,7 @@ financeStatsDonutChart.setOption({
 function categoriesList(txRows = balanceTxList()) {
   const cache = financeDerivedCache.categories;
   const categoryKey = Object.entries(state.balance.categories || {})
-    .map(([name, row]) => `${name}:${String(row?.emoji || '')}`)
+    .map(([name, row]) => `${name}:${String(row?.id || '')}:${String(row?.emoji || '')}:${String(row?.color || '')}:${String(row?.icon || '')}`)
     .sort((a, b) => a.localeCompare(b, 'es'))
     .join('|');
   if (cache.categoriesKey === categoryKey && cache.txRowsRef === txRows) {
@@ -9662,6 +9683,49 @@ const CATEGORY_EMOJI_FALLBACK = {
   impuestos: '🧾',
   otros: '🧩',
 };
+function normalizeCategoryRecord(name = '', payload = {}, previous = {}) {
+  const safeName = normalizeFoodName(payload?.name || name || previous?.name || '');
+  if (!safeName) return null;
+  return {
+    ...(previous && typeof previous === 'object' ? previous : {}),
+    ...(payload && typeof payload === 'object' ? payload : {}),
+    id: String(payload?.id || previous?.id || firebaseSafeKey(safeName) || safeName).trim(),
+    name: safeName,
+    emoji: String(payload?.emoji ?? previous?.emoji ?? '').trim(),
+    color: String(payload?.color ?? previous?.color ?? '').trim(),
+    icon: String(payload?.icon ?? previous?.icon ?? '').trim(),
+    lastUsedAt: Number(payload?.lastUsedAt ?? previous?.lastUsedAt ?? 0),
+    updatedAt: Number(payload?.updatedAt ?? previous?.updatedAt ?? 0),
+    createdAt: Number(payload?.createdAt ?? previous?.createdAt ?? 0),
+  };
+}
+function normalizeCategoryMap(map = {}, previousMap = {}) {
+  return Object.entries(map || {}).reduce((acc, [key, value]) => {
+    const previous = previousMap?.[key] || previousMap?.[value?.name] || {};
+    const normalized = normalizeCategoryRecord(key, value, previous);
+    if (normalized?.name) acc[normalized.name] = normalized;
+    return acc;
+  }, {});
+}
+function buildCategoryCatalogPayload(category = '', patch = {}) {
+  const name = normalizeFoodName(category || patch?.name || '');
+  if (!name) return null;
+  const previous = state.balance?.categories?.[name] || {};
+  return normalizeCategoryRecord(name, {
+    ...previous,
+    ...patch,
+    name,
+    lastUsedAt: patch?.lastUsedAt ?? previous?.lastUsedAt ?? nowTs(),
+    updatedAt: patch?.updatedAt ?? nowTs(),
+  }, previous);
+}
+function rememberCategoryLocally(category = '', patch = {}) {
+  const payload = buildCategoryCatalogPayload(category, patch);
+  if (!payload) return null;
+  state.balance = state.balance || {};
+  state.balance.categories = { ...(state.balance.categories || {}), [payload.name]: payload };
+  return payload;
+}
 
 function normalizeTxWizardStep(value) {
   const v = String(value || '').trim().toLowerCase();
@@ -13921,7 +13985,7 @@ function applyRemoteData(val = {}, replace = false) {
     tx: root.balance?.tx || root.tx || (replace ? {} : state.balance.tx),
     movements: root.movements || root.balance?.movements || root.balance?.movement || (replace ? {} : state.balance.movements),
     transactions: root.transactions || root.balance?.transactions || root.balance?.tx2 || (replace ? {} : state.balance.transactions),
-    categories: root.catalog?.categories || root.balance?.categories || (replace ? {} : state.balance.categories),
+    categories: normalizeCategoryMap(root.catalog?.categories || root.balance?.categories || {}, replace ? {} : state.balance.categories),
     budgets: root.budgets || root.balance?.budgets || (replace ? {} : state.balance.budgets),
     snapshots: root.balance?.snapshots || root.snapshots || (replace ? {} : state.balance.snapshots),
     recurring: root.recurring || root.balance?.recurring || (replace ? {} : state.balance.recurring),
@@ -15177,8 +15241,8 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       const name = normalizeFoodName(String(nameRaw || ''));
       const emoji = String(emojiRaw || '').trim();
       if (!name) { toast('Nombre obligatorio'); return; }
-      await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${name}`), { name, emoji, lastUsedAt: nowTs() }));
-      state.balance.categories[name] = { ...(state.balance.categories[name] || {}), name, emoji, lastUsedAt: nowTs() };
+      const payload = rememberCategoryLocally(name, { emoji, lastUsedAt: nowTs(), updatedAt: nowTs(), createdAt: nowTs() });
+      await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${name}`), payload));
       toast('Categoría añadida');
       triggerRender();
       return;
@@ -15891,8 +15955,8 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
       const categorySelect = form?.querySelector('select[name="category"]');
       const category = normalizeFoodName(String(categoryInput?.value || ''));
       if (!category) return;
-      await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), { name: category, lastUsedAt: nowTs() }));
-      state.balance.categories[category] = { name: category, lastUsedAt: nowTs() };
+      const payload = rememberCategoryLocally(category, { lastUsedAt: nowTs(), updatedAt: nowTs() });
+      await safeFirebase(() => set(ref(db, `${state.financePath}/catalog/categories/${category}`), payload));
       if (categorySelect && ![...categorySelect.options].some((opt) => opt.value === category)) {
         categorySelect.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`);
       }
@@ -16184,7 +16248,7 @@ view.addEventListener('focusout', async (event) => {
   if (event.target.matches('[data-products-receipt-qty]')) {
     const lineId = String(event.target.dataset.productsReceiptQty || '').trim();
     if (lineId) {
-      const qtyValue = Math.max(0.01, Number(event.target.value || 1));
+      const qtyValue = Math.max(0.01, parseProductsReceiptQuantity(event.target.value, 1));
       await commitReceiptLineEdit(lineId, { qty: qtyValue }, { root: view });
     } else {
       syncProductsTicketComposerDom(view);
@@ -16431,7 +16495,7 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-products-receipt-qty], [data-products-receipt-unit], [data-products-receipt-total]')) {
       const lineId = String(event.target.dataset.productsReceiptQty || event.target.dataset.productsReceiptUnit || event.target.dataset.productsReceiptTotal || '').trim();
       const patch = {};
-      if (event.target.matches('[data-products-receipt-qty]')) patch.qty = Math.max(0.01, Number(event.target.value || 1));
+      if (event.target.matches('[data-products-receipt-qty]')) patch.qty = Math.max(0.01, parseProductsReceiptQuantity(event.target.value, 1));
       if (event.target.matches('[data-products-receipt-unit]')) patch.estimatedPrice = parseProductsReceiptMoney(event.target.value, 0);
       if (event.target.matches('[data-products-receipt-total]')) patch.actualPrice = parseProductsReceiptMoney(event.target.value, 0);
       await updateReceiptLine('', lineId, patch, { root: view, persist: false });
@@ -16734,8 +16798,8 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         const name = String(input.dataset.categoryEmoji || '').trim();
         if (!name) return;
         const emoji = String(input.value || '').trim();
-        updatesMap[`${state.financePath}/catalog/categories/${name}/emoji`] = emoji || null;
-        state.balance.categories[name] = { ...(state.balance.categories[name] || {}), name, emoji: emoji || '' };
+        const payload = rememberCategoryLocally(name, { emoji: emoji || '', updatedAt: nowTs() });
+        updatesMap[`${state.financePath}/catalog/categories/${name}`] = payload;
       });
       await safeFirebase(() => update(ref(db), updatesMap));
       toast('Categorías guardadas');
@@ -16913,9 +16977,9 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         try { return JSON.parse(String(form.get('foodItems') || '[]')); } catch { return []; }
       })();
       const foodItems = Array.isArray(foodItemsRaw) ? foodItemsRaw.map((row) => {
-        const qty = Math.max(1, Number(row?.qty || 1));
-        const totalPrice = Number((row?.totalPrice ?? row?.amount ?? row?.price) || 0);
-        const unitPrice = Number((row?.unitPrice ?? row?.unit_price) || computeUnitPrice(totalPrice, qty));
+        const qty = Math.max(1, parseProductsReceiptQuantity(row?.qty, 1));
+        const totalPrice = parseProductsReceiptMoney(row?.totalPrice ?? row?.amount ?? row?.price, 0);
+        const unitPrice = parseProductsReceiptMoney(row?.unitPrice ?? row?.unit_price, computeUnitPrice(totalPrice, qty));
         return {
           foodId: String(row?.foodId || foodIdFromForm || ''),
           productKey: String(row?.productKey || ''),
@@ -17016,7 +17080,13 @@ if (event.target.matches('[data-fixed-expense-form]')) {
           recurringDueDateISO: scheduledRecurringDateISO,
         } : {}),
         extras: extras || null,
-        status: String(prev?.status || 'synced').trim() || 'synced',
+        status: 'synced',
+        pending: false,
+        draft: false,
+        disabled: false,
+        excluded: false,
+        deleted: false,
+        confirmed: true,
         updatedAt: writeTs,
         createdAt: Number(prev?.createdAt || 0) || writeTs
       };
@@ -17069,7 +17139,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       const rootUpdates = {
         [canonicalTxPath]: payload,
         ...(legacySourcePath ? { [legacySourcePath]: null } : {}),
-        ...(type !== 'transfer' ? { [`${state.financePath}/catalog/categories/${category}`]: { name: category, lastUsedAt: writeTs } } : {}),
+        ...(type !== 'transfer' ? { [`${state.financePath}/catalog/categories/${category}`]: buildCategoryCatalogPayload(category, { lastUsedAt: writeTs, updatedAt: writeTs }) } : {}),
         ...(recurringPayload && effectiveRecurringId ? { [`${state.financePath}/recurring/${effectiveRecurringId}`]: recurringPayload } : {})
       };
       setMovementFormBusy(formEl, true);
@@ -17140,10 +17210,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         };
       }
       if (type !== 'transfer') {
-        state.balance.categories = {
-          ...(state.balance.categories || {}),
-          [category]: { name: category, lastUsedAt: writeTs }
-        };
+        rememberCategoryLocally(category, { lastUsedAt: writeTs, updatedAt: writeTs });
       }
       pruneLocalLegacyTxRows(saveId);
       clearFinanceDerivedCaches();

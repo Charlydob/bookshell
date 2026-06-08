@@ -916,6 +916,30 @@ function removeLocalTxEverywhere(txId) {
   if (state.balance.transactions?.[safeId]) delete state.balance.transactions[safeId];
   pruneLocalLegacyTxRows(safeId);
 }
+function findLocalTxEverywhere(txId) {
+  const safeId = String(txId || '').trim();
+  if (!safeId) return null;
+  const direct = state.balance?.transactions?.[safeId] || state.balance?.tx?.[safeId] || null;
+  if (direct) return direct;
+  for (const rows of Object.values(state.balance?.movements || {})) {
+    if (rows?.[safeId]) return rows[safeId];
+  }
+  return null;
+}
+
+function collectLocalTxMonthKeys(txId, txRecord = null) {
+  const safeId = String(txId || '').trim();
+  const keys = new Set();
+  const addDate = (dateValue) => {
+    const monthKey = String(dateValue || '').trim().slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(monthKey)) keys.add(monthKey);
+  };
+  addDate(txRecord?.date);
+  Object.entries(state.balance?.movements || {}).forEach(([monthKey, rows]) => {
+    if (rows?.[safeId]) keys.add(monthKey);
+  });
+  return [...keys];
+}
 function isFoodCategory(category = '') {
   const normalized = String(category || '').trim().toLowerCase();
   return normalized === 'comida' || normalized === 'food';
@@ -2366,6 +2390,7 @@ function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
     label: normalizeProductText(payload?.label || ''),
     store: normalizeFoodName(payload?.store || ''),
     accountId: normalizeProductText(payload?.accountId || ''),
+    accountNameSnapshot: normalizeProductText(payload?.accountNameSnapshot || ''),
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
     ticketCategoryId: normalizeProductText(payload?.ticketCategoryId || ''),
     plannedFor: toIsoDay(String(payload?.plannedFor || '')) || dayKeyFromTs(nowTs()),
@@ -2460,10 +2485,37 @@ function buildProductsTicketDisplayLabelMap(tickets = [], fallback = 'Sin asigna
   }, {});
 }
 
+
+function findFinanceAccountById(accountId = '') {
+  const safeId = String(accountId || '').trim();
+  if (!safeId) return null;
+  return (state.accounts || []).find((account) => String(account.id || '').trim() === safeId) || null;
+}
+
+function isValidFinanceAccountId(accountId = '') {
+  return !!findFinanceAccountById(accountId);
+}
+
+function resolveInitialProductsAccountId(seed = {}, activeList = null) {
+  const candidates = [
+    seed?.accountId,
+    activeList?.accountId,
+    state.lastMovementAccountId,
+    state.productsHub?.settings?.defaultAccountId,
+    state.balance?.defaultAccountId,
+  ];
+  return String(candidates.find((candidate) => isValidFinanceAccountId(candidate)) || '').trim();
+}
+
+function accountNameSnapshot(accountId = '') {
+  const account = findFinanceAccountById(accountId);
+  return normalizeProductText(account?.name || accountId || '');
+}
+
 function createEmptyProductsList(seed = {}, { temporary = false } = {}) {
   const now = nowTs();
   const fallbackStore = normalizeFoodName(seed?.store || state.productsHub?.settings?.defaultStore || '');
-  const fallbackAccountId = String(seed?.accountId || state.productsHub?.settings?.defaultAccountId || '').trim();
+  const fallbackAccountId = resolveInitialProductsAccountId(seed);
   const fallbackPaymentMethod = String(seed?.paymentMethod || state.productsHub?.settings?.defaultPaymentMethod || 'Tarjeta').trim() || 'Tarjeta';
   const list = normalizeProductsHubList(
     temporary ? '__draft__' : String(seed?.id || createFinanceRecordId('list')).trim(),
@@ -3523,7 +3575,7 @@ function renderProductsStoreSelect(model = null) {
 
 function renderProductsAccountSelect(model = null) {
   const activeList = model?.activeList || resolveActiveProductsList();
-  const current = String(model?.activeTicket?.accountId || activeList.accountId || '').trim();
+  const current = resolveInitialProductsAccountId(model?.activeTicket || {}, activeList);
   return `
     <select class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--payment" name="accountId" data-products-receipt-payment aria-label="Cuenta">
       <option value="">Sin cuenta</option>
@@ -4271,7 +4323,7 @@ function renderProductsTicketRegistry(model) {
         .sort((a, b) => Number(b._ticketDateTs || 0) - Number(a._ticketDateTs || 0))
         .map((ticket) => {
           const accountNameValue = ticket.accountId
-            ? (state.accounts.find((account) => account.id === ticket.accountId)?.name || ticket.accountId)
+            ? (state.accounts.find((account) => account.id === ticket.accountId)?.name || ticket.accountNameSnapshot || ticket.accountId)
             : 'Sin cuenta';
           const ticketDate = formatProductsShortDate(ticket._ticketDateTs || parseDayKey(ticket.dateISO || ''));
           const ticketStatus = ticket.txId ? 'Contabilizado' : 'Sin asiento';
@@ -5119,7 +5171,7 @@ async function deleteProductsHistoryTicket(ticketId = '') {
     return;
   }
 
-  const txId = String(ticket.txId || ticket.accountedTxId || '').trim();
+  const txId = String(ticket.movementId || ticket.txId || ticket.accountedTxId || '').trim();
   const msg = txId
     ? '¿Eliminar este ticket y también su movimiento en balance?'
     : '¿Eliminar este ticket del registro?';
@@ -5159,10 +5211,13 @@ async function deleteProductsHistoryTicket(ticketId = '') {
     updatesMap[productsHubPath(`lists/${listId}`)] = list;
   });
 
+  const txRecord = txId ? findLocalTxEverywhere(txId) : null;
+
   if (txId) {
     updatesMap[`${state.financePath}/transactions/${txId}`] = null;
-    const monthKey = String(ticket?.dateISO || '').slice(0,7);
-    if (monthKey) updatesMap[`${state.financePath}/movements/${monthKey}/${txId}`] = null;
+    collectLocalTxMonthKeys(txId, { ...txRecord, date: txRecord?.date || ticket?.dateISO }).forEach((monthKey) => {
+      updatesMap[`${state.financePath}/movements/${monthKey}/${txId}`] = null;
+    });
     updatesMap[`${state.financePath}/tx/${txId}`] = null;
   }
 
@@ -5183,8 +5238,9 @@ async function deleteProductsHistoryTicket(ticketId = '') {
       patchFinanceCacheRoot(primaryCacheKey, `shoppingHub/tickets/${safeTicketId}`, null);
     }
 
-    if (ticket.accountId && typeof persistRecomputedFinanceAccountEntries === 'function') {
-      await persistRecomputedFinanceAccountEntries([ticket.accountId], ticket.dateISO || dayKeyFromTs(nowTs()), 'receipt-delete');
+    const movementAccountId = String(txRecord?.accountId || ticket.accountId || '').trim();
+    if (movementAccountId && typeof persistRecomputedFinanceAccountEntries === 'function') {
+      await persistRecomputedFinanceAccountEntries([movementAccountId], ticket.dateISO || dayKeyFromTs(nowTs()), 'receipt-delete');
     }
 
     if (typeof applyPatchedFinanceCaches === 'function') applyPatchedFinanceCaches('receipt-delete');
@@ -5285,7 +5341,8 @@ function readProductsListDraftFromDom(root = document) {
   const newStoreValue = scope.querySelector('[data-products-new-store-input]')?.value || '';
   nextList.store = normalizeFoodName((storeSelect?.value === '__new__' ? newStoreValue : storeSelect?.value) || nextList.store || '');
   nextList.plannedFor = toIsoDay(String(scope.querySelector('[name="plannedFor"]')?.value || nextList.plannedFor || '')) || dayKeyFromTs(nowTs());
-  nextList.accountId = String(scope.querySelector('[name="accountId"]')?.value || nextList.accountId || '').trim();
+  const accountSelectValue = scope.querySelector('[name="accountId"]')?.value;
+  nextList.accountId = String(accountSelectValue != null ? accountSelectValue : (nextList.accountId || '')).trim();
   nextList.paymentMethod = normalizeProductText(scope.querySelector('[name="paymentMethod"]')?.value || nextList.paymentMethod || 'Tarjeta') || 'Tarjeta';
   nextList.ticketCategoryId = String(scope.querySelector('[name="ticketCategoryId"]')?.value || nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '').trim();
   nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
@@ -6229,15 +6286,12 @@ function validateProductsTicketForConfirm(list = {}, activeTicketId = '', active
     return { ok: false, reason: 'invalid-total', message: 'El ticket debe tener total > 0' };
   }
 
-  const accountId = String(
-    activeTicketMeta.accountId
-    || list.accountId
-    || state.productsHub?.settings?.defaultAccountId
-    || state.balance?.defaultAccountId
-    || '',
-  ).trim();
+  const accountId = String(activeTicketMeta.accountId || list.accountId || '').trim();
   if (!accountId) {
-    return { ok: false, reason: 'missing-account', message: 'Selecciona una cuenta antes de confirmar' };
+    return { ok: false, reason: 'missing-account', message: 'Selecciona una cuenta válida antes de confirmar' };
+  }
+  if (!isValidFinanceAccountId(accountId)) {
+    return { ok: false, reason: 'invalid-account', message: 'La cuenta seleccionada ya no existe. Selecciona otra.' };
   }
 
   const store = normalizeFoodName(
@@ -6391,9 +6445,12 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
   if (!lines.length) {
     throw new Error('receipt-empty-lines');
   }
-  const accountId = String(list.accountId || state.productsHub?.settings?.defaultAccountId || state.balance?.defaultAccountId || '').trim();
+  const accountId = String(list.accountId || '').trim();
   if (!accountId) {
     throw new Error('receipt-missing-account');
+  }
+  if (!isValidFinanceAccountId(accountId)) {
+    throw new Error('receipt-invalid-account');
   }
   const confirmedAt = Number(list.confirmedAt || list.registeredAt || 0);
   const confirmedDateISO = confirmedAt > 0 ? dayKeyFromTs(confirmedAt) : '';
@@ -6448,6 +6505,9 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
       ticketRef: ticketReference,
       confirmedAt: confirmedAt || nowTs(),
       paymentMethod: list.paymentMethod || 'Tarjeta',
+      accountId,
+      accountNameSnapshot: accountNameSnapshot(accountId),
+      movementId: saveId,
       estimatedTotal: lines.reduce((sum, line) => sum + (Number(line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1))), 0),
       actualTotal: totalAmount,
       inputCurrency,
@@ -6482,6 +6542,7 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     exchangeRateToEUR: Number(options.exchangeRateToEUR || list.exchangeRateToEUR || 1),
     exchangeRateFromEUR: Number(options.exchangeRateFromEUR || list.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(options.exchangeRateToEUR || list.exchangeRateToEUR || 1)))),
     source: 'ticket',
+    ticketId: receiptId,
     receiptId,
     store,
     supermarket: store,
@@ -6552,7 +6613,8 @@ function resolveProductsTicketConfirmErrorMessage(error) {
   const raw = String(error?.message || error || '').trim();
   if (!raw) return 'No se pudo confirmar la compra';
   if (raw === 'receipt-empty-lines') return 'El ticket no tiene líneas para confirmar';
-  if (raw === 'receipt-missing-account') return 'Selecciona una cuenta antes de confirmar';
+  if (raw === 'receipt-missing-account') return 'Selecciona una cuenta válida antes de confirmar';
+  if (raw === 'receipt-invalid-account') return 'La cuenta seleccionada ya no existe. Selecciona otra.';
   if (raw === 'receipt-missing-ticket-category') return 'Selecciona una categoría vinculada antes de confirmar';
   if (raw === 'receipt-invalid-total') return 'El ticket debe tener un total válido antes de confirmar';
   if (raw === 'receipt-missing-movement-id') return 'No se pudo preparar el movimiento contable del ticket';
@@ -6589,13 +6651,7 @@ async function confirmProductsTicketFromDom() {
       const lineEUR = Number(line?.priceEUR ?? normalizeMovementCurrencyPayload({ amount: lineTotalOriginal, currency: receiptCurrency, exchangeRateToEUR: receiptCurrencyPayload.exchangeRateToEUR }).amountEUR);
       console.info('[finance:currency] item:converted', { item: line?.name || '', original: lineTotalOriginal, currency: receiptCurrency, eur: lineEUR });
     });
-    const draftAccountId = String(
-      activeTicketMeta.accountId
-      || draft.accountId
-      || state.productsHub?.settings?.defaultAccountId
-      || state.balance?.defaultAccountId
-      || ''
-    ).trim();
+    const draftAccountId = String(activeTicketMeta.accountId || draft.accountId || '').trim();
     const draftCategoryId = String(
       activeTicketMeta.ticketCategoryId
       || draft.ticketCategoryId
@@ -6640,7 +6696,7 @@ async function confirmProductsTicketFromDom() {
     const ticketPayload = normalizeProductsHubList(persistedList.id, {
       ...persistedList,
       store: activeTicketMeta.store || persistedList.store,
-      accountId: activeTicketMeta.accountId || persistedList.accountId,
+      accountId: String(activeTicketMeta.accountId || persistedList.accountId || '').trim(),
       ticketCategoryId: activeTicketMeta.ticketCategoryId || persistedList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '',
       paymentMethod: activeTicketMeta.paymentMethod || persistedList.paymentMethod,
       plannedFor: activeTicketMeta.plannedFor || persistedList.plannedFor,
@@ -6718,6 +6774,7 @@ async function confirmProductsTicketFromDom() {
       categoryId: validation.ticketCategoryId,
       store: validation.store,
       accountId: validation.accountId,
+      accountNameSnapshot: accountNameSnapshot(validation.accountId),
       paymentMethod: ticketPayload.paymentMethod,
       note: ticketPayload.notes,
       dateISO: confirmedDateISO,
@@ -6734,6 +6791,10 @@ async function confirmProductsTicketFromDom() {
       exchangeRateUpdatedAt: String(activeTicketMeta.exchangeRateUpdatedAt || ''),
       exchangeRateSource: String(activeTicketMeta.exchangeRateSource || ''),
       lines: persistedActiveTicketLines,
+      total: Number(actualTotalOriginal || 0),
+      currency: receiptCurrency,
+      counted: true,
+      movementId,
       createdAt: confirmedAtTs,
       updatedAt: confirmedAtTs,
     });
@@ -6912,6 +6973,7 @@ function normalizeProductsHubList(id = '', payload = {}) {
     status: ['draft', 'converted', 'archived'].includes(String(payload?.status || '')) ? String(payload.status) : 'draft',
     store: normalizeFoodName(payload?.store || ''),
     accountId: normalizeProductText(payload?.accountId || ''),
+    accountNameSnapshot: normalizeProductText(payload?.accountNameSnapshot || ''),
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
     ticketCategoryId: normalizeProductText(payload?.ticketCategoryId || ''),
     plannedFor: toIsoDay(String(payload?.plannedFor || '')) || dayKeyFromTs(nowTs()),
@@ -6940,17 +7002,22 @@ function normalizeProductsHubTicket(id = '', payload = {}) {
   return {
     id: safeId,
     listId: normalizeProductText(payload?.listId || ''),
-    txId: normalizeProductText(payload?.txId || ''),
+    txId: normalizeProductText(payload?.txId || payload?.movementId || ''),
+    movementId: normalizeProductText(payload?.movementId || payload?.txId || ''),
     categoryId: normalizeProductText(payload?.categoryId || payload?.ticketCategoryId || ''),
     store: normalizeFoodName(payload?.store || ''),
     accountId: normalizeProductText(payload?.accountId || ''),
+    accountNameSnapshot: normalizeProductText(payload?.accountNameSnapshot || ''),
     paymentMethod: normalizeProductText(payload?.paymentMethod || 'Tarjeta') || 'Tarjeta',
     note: normalizeProductText(payload?.note || ''),
     dateISO: toIsoDay(String(payload?.dateISO || payload?.date || '')) || dayKeyFromTs(nowTs()),
     confirmedAt: normalizedConfirmedAt,
     estimatedTotal: normalizeProductPositiveNumber(payload?.estimatedTotal, 0),
-    actualTotal: normalizeProductPositiveNumber(payload?.actualTotal, 0),
-    totalOriginal: normalizeProductPositiveNumber(payload?.totalOriginal ?? payload?.originalAmount, normalizeProductPositiveNumber(payload?.actualTotal, 0)),
+    actualTotal: normalizeProductPositiveNumber(payload?.actualTotal ?? payload?.total, 0),
+    total: normalizeProductPositiveNumber(payload?.total ?? payload?.actualTotal, 0),
+    currency: normalizeCurrencyCode(payload?.currency || payload?.ticketCurrency || payload?.inputCurrency || getDefaultCurrency()),
+    counted: payload?.counted !== false && Boolean(payload?.counted || payload?.txId || payload?.movementId),
+    totalOriginal: normalizeProductPositiveNumber(payload?.totalOriginal ?? payload?.originalAmount ?? payload?.total, normalizeProductPositiveNumber(payload?.actualTotal, 0)),
     totalEUR: normalizeProductPositiveNumber(payload?.totalEUR ?? payload?.convertedAmountEUR, 0),
     inputCurrency: normalizeCurrencyCode(payload?.inputCurrency || payload?.ticketCurrency || payload?.currency || getDefaultCurrency()),
     ticketCurrency: normalizeCurrencyCode(payload?.ticketCurrency || payload?.inputCurrency || payload?.currency || getDefaultCurrency()),
@@ -15444,7 +15511,10 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       await exportActiveProductsTicketNamesFromDom();
       return;
     }
-    if (target.closest('[data-products-confirm-ticket]')) {
+    const confirmTicketButton = target.closest('[data-products-confirm-ticket]');
+    if (confirmTicketButton) {
+      confirmTicketButton.disabled = true;
+      confirmTicketButton.dataset.busy = '1';
       await confirmProductsTicketFromDom();
       return;
     }

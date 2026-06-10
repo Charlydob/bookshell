@@ -226,3 +226,15 @@
 #view-world .world-stays-entry-top{min-height:0;gap:6px}
 #view-world .world-stays-entry-main{font-size:13px!important;line-height:1.15!important;font-weight:500!important;opacity:.82;color:rgba(238,240,255,.86)}
 #view-world .world-stays-entry-actions button{padding:1px 5px!important;font-size:12px!important;min-width:24px!important}
+#view-world .world-current-location-kpi{width:100%;min-width:0;border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:12px 14px;margin-top:2px;text-align:left;color:#eef0ff;display:flex;flex-direction:column;align-items:flex-start;gap:4px;background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.055));box-shadow:0 12px 32px rgba(0,0,0,.18);cursor:pointer}
+#view-world .world-current-location-kpi strong{font-size:15px;line-height:1.25;overflow-wrap:anywhere}
+#view-world .world-current-location-kpi small{font-size:11px;opacity:.76}
+#view-world .world-current-location-title{font-size:12px;opacity:.9}
+#view-world .world-current-location-kpi:active{transform:translateY(1px);background:rgba(255,255,255,.12)}
+#view-world .world-stays-order-label{font-size:11px;opacity:.7;margin-left:4px}
+#view-world .world-stays-city-actions{display:flex;justify-content:flex-start;margin:2px 0 4px}
+#view-world .world-stays-city-actions button{border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(255,255,255,.07);color:#eef0ff;padding:4px 8px;font-size:11px;line-height:1.1}
+@media (max-width:460px){
+  #view-world .world-current-location-kpi{padding:11px 12px;border-radius:16px}
+  #view-world .world-current-location-kpi strong{font-size:14px}
+}

@@ -18,7 +18,7 @@ let memoStats = { key:"", value:null };
 
 const DAY_MS = 86400000;
 const STAY_VIEW_STORAGE_KEY = "worldStayViewOptions";
-const defaultStayViewOptions = () => ({ scope:"life", year:new Date().getFullYear(), showDays:true, showLifePct:true, showYearPct:false, view:"countryCities" });
+const defaultStayViewOptions = () => ({ scope:"life", year:new Date().getFullYear(), showDays:true, showLifePct:true, showYearPct:false, view:"countryCities", sort:"days" });
 let stayViewOptions = readStayViewOptions();
 const toId = () => `stay_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 const $ = (sel) => ctx.root?.querySelector(sel);
@@ -50,7 +50,8 @@ function readStayViewOptions() {
       showDays:saved.showDays !== false,
       showLifePct:saved.showLifePct !== false,
       showYearPct:Boolean(saved.showYearPct),
-      view:saved.view === "countriesOnly" ? "countriesOnly" : defaults.view
+      view:saved.view === "countriesOnly" ? "countriesOnly" : defaults.view,
+      sort:saved.sort === "lastDate" ? "lastDate" : defaults.sort
     };
   } catch (_error) {
     return defaultStayViewOptions();
@@ -114,6 +115,42 @@ function formatLocationLine(city = "", region = "", country = "") {
   return [city || "Sin ciudad", region, country || "Sin país"].map((part) => String(part || "").trim()).filter(Boolean).join(", ");
 }
 
+function stayRecordDate(stay = {}) {
+  return String(stay.endDate || stay.startDate || stay.date || "").trim();
+}
+
+function getLatestStayRecord() {
+  return [...stays].filter((stay) => stayRecordDate(stay)).sort((a, b) => stayRecordDate(b).localeCompare(stayRecordDate(a)) || Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0))[0] || null;
+}
+
+function isValidStayDate(date = "") {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(date || ""));
+}
+
+function compareIsoDate(a = "", b = "") {
+  return String(a || "").localeCompare(String(b || ""));
+}
+
+function expandStayDates(stay, options = stayViewOptions) {
+  if (!isValidStayDate(stay?.startDate) || !isValidStayDate(stay?.endDate) || compareIsoDate(stay.endDate, stay.startDate) < 0) return [];
+  let start = stay.startDate;
+  let end = stay.endDate;
+  const viewYear = options.scope === "life" ? null : (options.scope === "currentYear" ? new Date().getFullYear() : Number(options.year || new Date().getFullYear()));
+  if (viewYear) {
+    start = start < `${viewYear}-01-01` ? `${viewYear}-01-01` : start;
+    end = end > `${viewYear}-12-31` ? `${viewYear}-12-31` : end;
+    if (compareIsoDate(end, start) < 0) return [];
+  }
+  const dates = [];
+  for (let date = start; compareIsoDate(date, end) <= 0; date = addDaysIso(date, 1)) dates.push(date);
+  return dates;
+}
+
+function sortStayGroups(a, b) {
+  if (stayViewOptions.sort === "lastDate") return String(b.lastDate || "").localeCompare(String(a.lastDate || "")) || b.days - a.days || String(a.country || a.city || "").localeCompare(String(b.country || b.city || ""), "es");
+  return b.days - a.days || String(b.country || b.city || "").localeCompare(String(a.country || a.city || ""), "es");
+}
+
 function calcInclusiveDays(startDate, endDate, manualDays) {
   if (startDate && endDate) {
     const s = new Date(`${startDate}T00:00:00Z`);
@@ -161,25 +198,39 @@ function computeStaySummaries(options = stayViewOptions) {
     const regionName = s.region || "";
     const cityName = String(s.city || "Sin ciudad").trim() || "Sin ciudad";
     const countryKey = `${normalizeGroupText(countryName)}__${countryCode}`;
-    const country = countriesMap.get(countryKey) || { key:countryKey, country:countryName, countryCode, days:0, cities:new Map() };
-    country.days += stayDays;
+    const country = countriesMap.get(countryKey) || { key:countryKey, country:countryName, countryCode, days:0, lastDate:"", dateSet:new Set(), cities:new Map() };
+    country.lastDate = [country.lastDate, stayRecordDate(s)].filter(Boolean).sort().pop() || "";
 
     const cityKey = `${normalizeGroupText(cityName)}__${normalizeGroupText(regionName)}__${normalizeGroupText(countryName)}__${countryCode}`;
-    const city = country.cities.get(cityKey) || { key:cityKey, city:cityName, region:regionName, country:countryName, countryCode, days:0, rangos:[] };
-    city.days += stayDays;
+    const city = country.cities.get(cityKey) || { key:cityKey, city:cityName, region:regionName, country:countryName, countryCode, days:0, lastDate:"", dateSet:new Set(), rangos:[] };
+    city.lastDate = [city.lastDate, stayRecordDate(s)].filter(Boolean).sort().pop() || "";
+    const dates = expandStayDates(s, options);
+    if (dates.length) {
+      dates.forEach((date) => { country.dateSet.add(date); city.dateSet.add(date); });
+    } else {
+      country.days += stayDays;
+      city.days += stayDays;
+    }
     city.rangos.push({ ...s, displayDays:stayDays });
     country.cities.set(cityKey, city);
     citiesSet.add(cityKey);
     countriesMap.set(countryKey, country);
   }
 
-  const byCountry = Array.from(countriesMap.values()).map((country) => ({
-    ...country,
-    cities: Array.from(country.cities.values()).map((city) => ({
-      ...city,
-      rangos: [...city.rangos].sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")) || a.createdAt - b.createdAt)
-    })).sort((a, b) => b.days - a.days || a.city.localeCompare(b.city, "es"))
-  })).sort((a, b) => b.days - a.days || a.country.localeCompare(b.country, "es"));
+  const byCountry = Array.from(countriesMap.values()).map((country) => {
+    const countryDays = country.dateSet.size ? country.days + country.dateSet.size : country.days;
+    return {
+      ...country,
+      days:countryDays,
+      dateSet:undefined,
+      cities: Array.from(country.cities.values()).map((city) => ({
+        ...city,
+        days:city.dateSet.size ? city.days + city.dateSet.size : city.days,
+        dateSet:undefined,
+        rangos: [...city.rangos].sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")) || a.createdAt - b.createdAt)
+      })).sort(sortStayGroups)
+    };
+  }).sort(sortStayGroups);
 
   const totalDays = byCountry.reduce((sum, country) => sum + Number(country.days || 0), 0);
   memoStats = { key, value:{ totalDays, countriesCount:byCountry.length, citiesCount:citiesSet.size, dominant:byCountry[0] || null, byCountry, viewYear, yearDays:viewYear ? daysInYear(viewYear) : null } };
@@ -210,6 +261,103 @@ async function mergeStayRecord(payload) {
   await update(ref(db, `v2/users/${uid}/world/stays`), { [payload.id]: payload });
 }
 
+function isStayCoveringDate(stay, date) {
+  return isValidStayDate(stay?.startDate) && isValidStayDate(stay?.endDate) && compareIsoDate(stay.startDate, date) <= 0 && compareIsoDate(stay.endDate, date) >= 0;
+}
+
+function buildContiguousRanges(dates = []) {
+  const sorted = [...new Set(dates)].filter(isValidStayDate).sort();
+  const ranges = [];
+  for (const date of sorted) {
+    const last = ranges[ranges.length - 1];
+    if (last && addDaysIso(last.endDate, 1) === date) last.endDate = date;
+    else ranges.push({ startDate:date, endDate:date });
+  }
+  return ranges;
+}
+
+function buildDatedUnionRecords(records = [], target = {}) {
+  const dated = records.filter((stay) => isValidStayDate(stay.startDate) && isValidStayDate(stay.endDate) && compareIsoDate(stay.endDate, stay.startDate) >= 0);
+  const undated = records.filter((stay) => !dated.includes(stay));
+  const dates = dated.flatMap((stay) => expandStayDates(stay, { ...stayViewOptions, scope:"life" }));
+  const ranges = buildContiguousRanges(dates);
+  const now = Date.now();
+  const usedIds = new Set();
+  const updates = {};
+  ranges.forEach((range, index) => {
+    const base = dated[index] || dated[0] || {};
+    const id = base.id && !usedIds.has(base.id) ? base.id : toId();
+    usedIds.add(id);
+    updates[id] = normalizeStay({ ...base, ...target, id, startDate:range.startDate, endDate:range.endDate, daysTotal:calcInclusiveDays(range.startDate, range.endDate), updatedAt:now, createdAt:base.createdAt || now });
+  });
+  dated.forEach((stay) => { if (stay.id && !usedIds.has(stay.id)) updates[stay.id] = null; });
+  undated.forEach((stay) => { if (stay.id) updates[stay.id] = normalizeStay({ ...stay, ...target, updatedAt:now }); });
+  return updates;
+}
+
+async function overwriteStayDayWithPlace(place, date) {
+  const uid = getCurrentUserDataRootKey() || auth.currentUser?.uid;
+  if (!uid) return null;
+  const now = Date.now();
+  const updates = {};
+  let replacementId = null;
+  stays.filter((stay) => isStayCoveringDate(stay, date)).forEach((stay) => {
+    if (stay.startDate === date && stay.endDate === date && !replacementId) {
+      replacementId = stay.id;
+      return;
+    }
+    if (stay.startDate === date && stay.endDate === date) {
+      updates[stay.id] = null;
+      return;
+    }
+    if (stay.startDate === date) {
+      const nextStart = addDaysIso(date, 1);
+      updates[stay.id] = normalizeStay({ ...stay, startDate:nextStart, daysTotal:calcInclusiveDays(nextStart, stay.endDate, stay.daysTotal), updatedAt:now });
+      return;
+    }
+    if (stay.endDate === date) {
+      const prevEnd = addDaysIso(date, -1);
+      updates[stay.id] = normalizeStay({ ...stay, endDate:prevEnd, daysTotal:calcInclusiveDays(stay.startDate, prevEnd, stay.daysTotal), updatedAt:now });
+      return;
+    }
+    const prevEnd = addDaysIso(date, -1);
+    const nextStart = addDaysIso(date, 1);
+    updates[stay.id] = normalizeStay({ ...stay, endDate:prevEnd, daysTotal:calcInclusiveDays(stay.startDate, prevEnd, stay.daysTotal), updatedAt:now });
+    const rightId = toId();
+    updates[rightId] = normalizeStay({ ...stay, id:rightId, startDate:nextStart, endDate:stay.endDate, daysTotal:calcInclusiveDays(nextStart, stay.endDate, stay.daysTotal), createdAt:now, updatedAt:now });
+  });
+  const id = replacementId || toId();
+  const payload = normalizeStay({ id, source:"auto-location", autoTracking:true, city:place.city, region:place.region, country:place.country, countryCode:place.countryCode, flagEmoji:flagFromCountryCode(place.countryCode), startDate:date, endDate:date, createdAt:stays.find((stay) => stay.id === replacementId)?.createdAt || now, updatedAt:now });
+  updates[id] = payload;
+  await update(ref(db, `v2/users/${uid}/world/stays`), updates);
+  return payload;
+}
+
+async function combineCityInto(sourceKey, countryKey) {
+  const uid = getCurrentUserDataRootKey() || auth.currentUser?.uid;
+  if (!uid) return;
+  const country = computeStaySummaries().byCountry.find((item) => item.key === countryKey);
+  const sourceCity = country?.cities.find((city) => city.key === sourceKey);
+  if (!country || !sourceCity) return;
+  const destinations = country.cities.filter((city) => city.key !== sourceKey);
+  if (!destinations.length) {
+    window.alert("No hay otra ciudad en este país para combinar.");
+    return;
+  }
+  const destinationLines = destinations.map((city, index) => `${index + 1}. ${formatLocationLine(city.city, city.region, city.country)}`).join("\n");
+  const choice = window.prompt(`Elige ciudad destino:\n${destinationLines}`);
+  if (!choice) return;
+  const target = destinations[Number(choice) - 1];
+  if (!target) return window.alert("Selección no válida.");
+  if (!window.confirm(`¿Combinar ${sourceCity.city} con ${target.city}? Esta acción unirá sus registros.`)) return;
+  const targetFields = { city:target.city, region:target.region, country:target.country, countryCode:target.countryCode, flagEmoji:flagFromCountryCode(target.countryCode) };
+  const records = [...sourceCity.rangos, ...target.rangos].map((stay) => normalizeStay({ ...stay, ...targetFields }));
+  const updates = buildDatedUnionRecords(records, targetFields);
+  await update(ref(db, `v2/users/${uid}/world/stays`), updates);
+  memoStats = { key:"", value:null };
+  render();
+}
+
 function renderStayViewControls(stats) {
   const currentYear = new Date().getFullYear();
   const selectedYear = Number(stayViewOptions.year || currentYear);
@@ -225,9 +373,12 @@ function renderStayViewControls(stats) {
       <button type="button" class="world-stays-filter ${stayViewOptions.showLifePct ? "active" : ""}" data-world-stay-toggle="showLifePct">% vida</button>
       <button type="button" class="world-stays-filter ${stayViewOptions.showYearPct ? "active" : ""}" data-world-stay-toggle="showYearPct">% del año</button>
     </div>
-    <div class="world-stays-filter-group" role="group" aria-label="Tipo de vista">
+    <div class="world-stays-filter-group" role="group" aria-label="Tipo de vista y orden">
       <button type="button" class="world-stays-filter ${stayViewOptions.view === "countryCities" ? "active" : ""}" data-world-stay-view="countryCities">País → ciudades</button>
       <button type="button" class="world-stays-filter ${stayViewOptions.view === "countriesOnly" ? "active" : ""}" data-world-stay-view="countriesOnly">Solo países</button>
+      <span class="world-stays-order-label">Orden</span>
+      <button type="button" class="world-stays-filter ${stayViewOptions.sort === "days" ? "active" : ""}" data-world-stay-sort="days">Días</button>
+      <button type="button" class="world-stays-filter ${stayViewOptions.sort === "lastDate" ? "active" : ""}" data-world-stay-sort="lastDate">Última fecha</button>
     </div>
     ${stats.viewYear ? `<small class="world-stays-scope-note">Mostrando días dentro de ${stats.viewYear} (${stats.yearDays} días).</small>` : ""}
   </div>`;
@@ -237,6 +388,9 @@ function render() {
   const mount = $("[data-world-stays-summary]");
   if (!mount) return;
   const stats = computeStaySummaries();
+  const latestStay = getLatestStayRecord();
+  const latestPlace = latestStay ? formatLocationLine(latestStay.city, latestStay.region, latestStay.country) : "Sin registros todavía";
+  const latestDate = latestStay ? stayRecordDate(latestStay) : "—";
   const born = getBirthDate();
   const alive = daysAlive(born);
   const dominant = stats.dominant;
@@ -253,11 +407,11 @@ function render() {
         const dateLine = stay.startDate && stay.endDate ? `${fmtDate(stay.startDate)} → ${fmtDate(stay.endDate)}` : "Sin fechas exactas";
         return `<li class="world-stays-entry"><div class="world-stays-entry-top"><span class="world-stays-entry-main">${esc(dateLine)}${rangeMetrics.length ? ` · ${esc(rangeMetrics.join(" · "))}` : ""}</span><div class="world-stays-entry-actions"><button type="button" data-world-stay-edit="${esc(stay.id)}" aria-label="Editar rango">✏️</button><button type="button" data-world-stay-delete="${esc(stay.id)}" aria-label="Eliminar rango">🗑️</button></div></div></li>`;
       }).join("");
-      return `<li class="world-stays-city-item"><details class="world-stays-city-card" ${expandedCities.has(cityKey) ? "open" : ""} data-city-key="${esc(cityKey)}"><summary class="world-stays-city-summary"><div class="world-stays-city-main">${esc(city.city)}${cityMetrics.length ? ` · ${esc(cityMetrics.join(" · "))}` : ""}</div><small class="world-stays-city-location">${esc(formatLocationLine(city.city, city.region, city.country))}</small></summary><ul class="world-stays-entry-list">${rows}</ul></details></li>`;
+      return `<li class="world-stays-city-item"><details class="world-stays-city-card" ${expandedCities.has(cityKey) ? "open" : ""} data-city-key="${esc(cityKey)}"><summary class="world-stays-city-summary"><div class="world-stays-city-main">${esc(city.city)}${cityMetrics.length ? ` · ${esc(cityMetrics.join(" · "))}` : ""}</div><small class="world-stays-city-location">${esc(formatLocationLine(city.city, city.region, city.country))}</small></summary><div class="world-stays-city-actions"><button type="button" data-world-city-combine="${esc(city.key)}" data-world-country-key="${esc(country.key)}">Combinar</button></div><ul class="world-stays-entry-list">${rows}</ul></details></li>`;
     }).join("");
     return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)}${countryMetrics.length ? ` · ${esc(countryMetrics.join(" · "))}` : ""} ▾</span></summary>${stayViewOptions.view === "countriesOnly" ? "" : `<ul class="world-stays-city-list">${cities || '<li class="world-stays-city-item">Sin ciudad registrada.</li>'}</ul>`}</details>`;
   }).join("");
-  mount.innerHTML = `<div class="world-stays-head"><h3>Estancias</h3><button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button></div><div class="world-stays-warning" data-world-stays-warning aria-live="polite"></div><div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div>${renderStayViewControls(stats)}<div class="world-kpis world-kpis-compact"><div class="world-pill"><span>📅 ${formatDayLabel(stats.totalDays)}</span></div><div class="world-pill"><span>🌍 ${stats.countriesCount} país${stats.countriesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>🏙️ ${stats.citiesCount} ciudad${stats.citiesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>👑 ${dominant ? `${flagFromCountryCode(dominant.countryCode)} ${esc(dominant.country)}` : "-"}</span></div></div>${renderDistribution(stats.byCountry, stats.totalDays)}<div class="world-stays-countries">${countries || '<div class="world-stays-empty">Sin estancias para este filtro.</div>'}</div>`;
+  mount.innerHTML = `<div class="world-stays-head"><h3>Estancias</h3><button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button></div><div class="world-stays-warning" data-world-stays-warning aria-live="polite"></div><div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div>${renderStayViewControls(stats)}<button type="button" class="world-pill world-current-location-kpi" data-world-force-auto-stay><span class="world-current-location-title">📍 Lugar actual</span><strong>${esc(latestPlace)}</strong><small>Último registro: ${esc(latestDate)}</small></button><div class="world-kpis world-kpis-compact"><div class="world-pill"><span>📅 ${formatDayLabel(stats.totalDays)}</span></div><div class="world-pill"><span>🌍 ${stats.countriesCount} país${stats.countriesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>🏙️ ${stats.citiesCount} ciudad${stats.citiesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>👑 ${dominant ? `${flagFromCountryCode(dominant.countryCode)} ${esc(dominant.country)}` : "-"}</span></div></div>${renderDistribution(stats.byCountry, stats.totalDays)}<div class="world-stays-countries">${countries || '<div class="world-stays-empty">Sin estancias para este filtro.</div>'}</div>`;
   const btn = mount.querySelector("[data-world-stay-action='open-modal']");
   if (btn) btn.onclick = () => openWorldStayModal();
 }
@@ -338,6 +492,14 @@ async function ensureAutoStayToday({ force = false } = {}) {
     if (!place.country) throw new Error("No se pudo detectar el país de la ubicación actual");
     const now = Date.now();
     const todayStay = todayIso();
+    if (force) {
+      const payload = await overwriteStayDayWithPlace(place, todayStay);
+      console.debug("[world:stays:auto:force-overwrite]", { stayId:payload?.id || null, date:todayStay, city:place.city, country:place.country });
+      localStorage.setItem(checkPath, today);
+      lastAutoStayError = null;
+      renderAutoStayWarning("");
+      return;
+    }
     const autos = stays.filter((s) => s.source === "auto-location").sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0) || String(b.endDate || "").localeCompare(String(a.endDate || "")));
     const last = autos[0] || null;
     console.debug("[world:stays:auto:last]", { stayId:last?.id || null, city:last?.city || "", countryCode:last?.countryCode || "", endDate:last?.endDate || "" });
@@ -395,6 +557,8 @@ function handleWorldRootClick(e) {
   if (btn.dataset.worldStayScope) { stayViewOptions = { ...stayViewOptions, scope:btn.dataset.worldStayScope }; persistStayViewOptions(); memoStats = { key:"", value:null }; render(); return; }
   if (btn.dataset.worldStayToggle) { const key = btn.dataset.worldStayToggle; stayViewOptions = { ...stayViewOptions, [key]:!stayViewOptions[key] }; persistStayViewOptions(); memoStats = { key:"", value:null }; render(); return; }
   if (btn.dataset.worldStayView) { stayViewOptions = { ...stayViewOptions, view:btn.dataset.worldStayView }; persistStayViewOptions(); render(); return; }
+  if (btn.dataset.worldStaySort) { stayViewOptions = { ...stayViewOptions, sort:btn.dataset.worldStaySort === "lastDate" ? "lastDate" : "days" }; persistStayViewOptions(); memoStats = { key:"", value:null }; render(); return; }
+  if (btn.dataset.worldCityCombine) { e.preventDefault(); combineCityInto(btn.dataset.worldCityCombine, btn.dataset.worldCountryKey); return; }
   if (btn.dataset.worldStayEdit) { const stay = stays.find((s) => s.id === btn.dataset.worldStayEdit); if (stay) openWorldStayModal(stay); return; }
   if (btn.dataset.worldStayDelete) { const uid2 = getCurrentUserDataRootKey() || auth.currentUser?.uid; if (!uid2 || !window.confirm("¿Eliminar esta estancia?")) return; remove(ref(db, `v2/users/${uid2}/world/stays/${btn.dataset.worldStayDelete}`)); return; }
   if (btn.dataset.worldSetBirthdate !== undefined) { const val = window.prompt("Fecha de nacimiento (YYYY-MM-DD)", getBirthDate()); if (val) { persistBirthDate(val.trim()); render(); } return; }

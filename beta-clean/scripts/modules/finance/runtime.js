@@ -14011,8 +14011,13 @@ function csvSafe(value) {
   const text = value == null ? '' : String(value);
   return `"${text.replace(/"/g, '""')}"`;
 }
+function csvMoney(value, decimals = 2) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  return num.toFixed(decimals).replace(".", ",");
+}
 function downloadCsv(filename, rows) {
-  const csv = rows.map((row) => row.map(csvSafe).join(',')).join('\n');
+  const csv = rows.map((row) => row.map(csvSafe).join(';')).join('\n');
   const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -14035,46 +14040,349 @@ function financeCsvAccountName(accountId = '') {
   const account = findFinanceAccountById(accountId);
   return String(account?.name || '').trim() || 'Sin cuenta';
 }
+function financeCsvText(value = '', fallback = '') {
+  const text = value == null ? '' : String(value).trim();
+  return text || fallback;
+}
+function financeCsvTimestampValue(value = '') {
+  const numeric = Number(value || 0);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    try { return new Date(numeric).toISOString(); } catch (_) {}
+  }
+  return financeCsvText(value, '');
+}
+function financeCsvNumber(value, fallback = '') {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? String(numeric) : fallback;
+}
+function financeCsvMoneyDecimals(currency = '') {
+  return String(currency || '').trim().toUpperCase() === 'BTC' ? 8 : 2;
+}
+function financeCsvMoney(value, currency = '', fallback = '') {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return csvMoney(numeric, financeCsvMoneyDecimals(currency));
+}
+function financeCsvRate(value, fallback = '') {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return csvMoney(numeric, 8);
+}
+function financeCsvFilename(prefix = 'bookshell-finanzas', day = dayKeyFromTs(Date.now())) {
+  return `${prefix}-${day}.csv`;
+}
+function buildFinanceMovementCsvRows(txRows = balanceTxList()) {
+  return txRows
+    .slice()
+    .sort((a, b) => Number(txTs(b) || 0) - Number(txTs(a) || 0))
+    .map((row) => {
+      const type = normalizeTxType(row?.type || '');
+      const accountLabel = type === 'transfer'
+        ? `${financeCsvAccountName(row?.fromAccountId)} -> ${financeCsvAccountName(row?.toAccountId)}`
+        : financeCsvAccountName(row?.accountId);
+      const originalCurrency = financeCsvText(row?.accountCurrency || row?.currency || row?.originalCurrency || 'EUR', 'EUR');
+      const originalAmountRaw = Number(row?.amount ?? 0);
+      const baseCurrency = Number.isFinite(Number(row?.convertedAmountEUR ?? row?.totalEUR)) ? 'EUR' : financeCsvText(getDefaultCurrency(), originalCurrency || 'EUR');
+      const sameBaseCurrency = String(originalCurrency).toUpperCase() === String(baseCurrency).toUpperCase();
+      const baseAmountRaw = Number(
+        row?.convertedAmountEUR
+        ?? row?.totalEUR
+        ?? (sameBaseCurrency ? originalAmountRaw : row?.originalAmount)
+        ?? originalAmountRaw
+      );
+      const exchangeRateRaw = row?.exchangeRateToEUR
+        ?? row?.rateUsed
+        ?? (sameBaseCurrency ? 1 : '');
+      return [
+        type || 'movement',
+        financeCsvText(row?.id, ''),
+        financeCsvDateValue(row),
+        accountLabel,
+        resolveMovementCategoryValue(type, row?.category || ''),
+        financeCsvText(row?.title, ''),
+        financeCsvText(row?.note, ''),
+        financeCsvMoney(originalAmountRaw, originalCurrency, ''),
+        originalCurrency,
+        financeCsvRate(exchangeRateRaw, ''),
+        financeCsvMoney(baseAmountRaw, baseCurrency, ''),
+        baseCurrency,
+        financeCsvTimestampValue(row?.createdAt),
+        financeCsvTimestampValue(row?.updatedAt),
+      ];
+    });
+}
+function buildFinanceAccountsCsvRows(accounts = buildAccountModels()) {
+  return accounts.map((account) => [
+    financeCsvText(account?.id, ''),
+    financeCsvText(account?.name, 'Sin cuenta'),
+    financeCsvText(account?.type || account?.assetType || 'cuenta', 'cuenta'),
+    financeCsvText(accountCurrency(account), 'EUR'),
+    financeCsvMoney(account?.current, accountCurrency(account), ''),
+    financeCsvMoney(account?.initialValue ?? account?.initialBalance, accountCurrency(account), ''),
+    financeCsvMoney(account?.currentReal ?? account?.current, accountCurrency(account), ''),
+    financeCsvTimestampValue(account?.createdAt),
+    financeCsvTimestampValue(account?.updatedAt),
+  ]);
+}
+function financeExportProductCategory(line = {}) {
+  const product = state.food.itemsById?.[String(line?.productId || '').trim()] || null;
+  return financeCsvText(
+    product?.mealType
+    || product?.cuisine
+    || line?.category
+    || line?.categoryProduct
+    || '',
+    ''
+  );
+}
+function financeExportProductStore(line = {}, ticket = {}, list = {}) {
+  return financeCsvText(line?.store || ticket?.store || list?.store || '', 'Sin tienda');
+}
+function collectFinanceExportProductRows() {
+  const rows = [];
+  const tickets = state.productsHub?.tickets || {};
+  const lists = state.productsHub?.lists || {};
+  const seen = new Set();
+
+  Object.values(tickets).forEach((ticket) => {
+    Object.values(ticket?.lines || {}).forEach((line) => {
+      const key = `ticket:${financeCsvText(ticket?.id, '')}:${financeCsvText(line?.id, '')}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const qty = Math.max(0.01, Number(line?.qty || 1));
+      const unitPrice = Number.isFinite(Number(line?.actualPrice)) ? Number(line.actualPrice) : Number(line?.estimatedPrice || 0);
+      const totalPrice = qty * (Number.isFinite(unitPrice) ? unitPrice : 0);
+      rows.push({
+        ticketId: financeCsvText(ticket?.id, ''),
+        movementId: financeCsvText(ticket?.movementId || ticket?.txId, ''),
+        date: financeCsvText(ticket?.dateISO, 'Sin fecha'),
+        account: financeCsvText(ticket?.accountNameSnapshot, '') || financeCsvAccountName(ticket?.accountId),
+        store: financeExportProductStore(line, ticket),
+        product: financeCsvText(line?.name || line?.productId || line?.id, ''),
+        categoryProduct: financeExportProductCategory(line),
+        quantity: financeCsvNumber(qty, '1'),
+        unitPrice: financeCsvMoney(unitPrice, line?.currency || ticket?.currency || ticket?.ticketCurrency || 'EUR', ''),
+        totalPrice: financeCsvMoney(totalPrice, line?.currency || ticket?.currency || ticket?.ticketCurrency || 'EUR', ''),
+        currency: financeCsvText(line?.currency || ticket?.currency || ticket?.ticketCurrency || 'EUR', 'EUR'),
+        note: financeCsvText(line?.note || ticket?.note, ''),
+      });
+    });
+  });
+
+  if (!rows.length) {
+    Object.values(lists).forEach((list) => {
+      Object.values(list?.lines || {}).forEach((line) => {
+        const key = `list:${financeCsvText(list?.id, '')}:${financeCsvText(line?.id, '')}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        const qty = Math.max(0.01, Number(line?.qty || 1));
+        const unitPrice = Number.isFinite(Number(line?.actualPrice)) ? Number(line.actualPrice) : Number(line?.estimatedPrice || 0);
+        const totalPrice = qty * (Number.isFinite(unitPrice) ? unitPrice : 0);
+        rows.push({
+          ticketId: financeCsvText(line?.ticketId || list?.ticketId || list?.primaryTicketId, ''),
+          movementId: '',
+          date: financeCsvText(list?.plannedFor, 'Sin fecha'),
+          account: financeCsvAccountName(list?.accountId),
+          store: financeExportProductStore(line, {}, list),
+          product: financeCsvText(line?.name || line?.productId || line?.id, ''),
+          categoryProduct: financeExportProductCategory(line),
+          quantity: financeCsvNumber(qty, '1'),
+          unitPrice: financeCsvMoney(unitPrice, line?.currency || 'EUR', ''),
+          totalPrice: financeCsvMoney(totalPrice, line?.currency || 'EUR', ''),
+          currency: financeCsvText(line?.currency || 'EUR', 'EUR'),
+          note: financeCsvText(line?.note || list?.notes, ''),
+        });
+      });
+    });
+  }
+
+  if (!rows.length) {
+    balanceTxList().forEach((tx) => {
+      const items = foodItemsFromTx(tx).filter((item) => financeCsvText(item?.name, ''));
+      items.forEach((item, index) => {
+        const qty = Math.max(0.01, Number(item?.qty || 1));
+        const totalPrice = Number.isFinite(Number(item?.totalPrice)) ? Number(item.totalPrice) : Number(item?.amount || item?.price || 0);
+        const unitPriceBase = Number.isFinite(Number(item?.unitPrice)) ? Number(item.unitPrice) : (qty > 0 ? totalPrice / qty : 0);
+        rows.push({
+          ticketId: '',
+          movementId: financeCsvText(tx?.id, ''),
+          date: financeCsvDateValue(tx),
+          account: financeCsvAccountName(tx?.accountId),
+          store: financeCsvText(item?.place, 'Sin tienda'),
+          product: financeCsvText(item?.name, ''),
+          categoryProduct: financeCsvText(item?.mealType || item?.cuisine, ''),
+          quantity: financeCsvNumber(qty, '1'),
+          unitPrice: financeCsvMoney(unitPriceBase, tx?.accountCurrency || tx?.currency || 'EUR', ''),
+          totalPrice: financeCsvMoney(totalPrice, tx?.accountCurrency || tx?.currency || 'EUR', ''),
+          currency: financeCsvText(tx?.accountCurrency || tx?.currency || 'EUR', 'EUR'),
+          note: financeCsvText(item?.note || tx?.note || '', ''),
+        });
+      });
+    });
+  }
+
+  if (!rows.length) {
+    console.warn('[FINANCE_EXPORT_PRODUCTS] no products source found');
+  }
+
+  return rows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+}
+function buildFinanceProductsCsvRows(productRows = collectFinanceExportProductRows()) {
+  return productRows.map((row) => [
+    financeCsvText(row.ticketId, ''),
+    financeCsvText(row.movementId, ''),
+    financeCsvText(row.date, 'Sin fecha'),
+    financeCsvText(row.account, 'Sin cuenta'),
+    financeCsvText(row.store, 'Sin tienda'),
+    financeCsvText(row.product, ''),
+    financeCsvText(row.categoryProduct, ''),
+    financeCsvText(row.quantity, ''),
+    financeCsvText(row.unitPrice, ''),
+    financeCsvText(row.totalPrice, ''),
+    financeCsvText(row.currency, 'EUR'),
+    financeCsvText(row.note, ''),
+  ]);
+}
+function buildFinanceProductSummaryCsvRows(productRows = collectFinanceExportProductRows()) {
+  const grouped = new Map();
+  productRows.forEach((row) => {
+    const productLabel = financeCsvText(row.product, '');
+    if (!productLabel) return;
+    const key = normalizeFoodCompareKey(productLabel) || productLabel.toLowerCase();
+    const current = grouped.get(key) || {
+      product: productLabel,
+      count: 0,
+      qty: 0,
+      total: 0,
+      prices: [],
+      lastDate: '',
+      lastPrice: '',
+      stores: new Set(),
+      byStore: new Map(),
+    };
+    const qty = Number(String(row.quantity || '').replace(',', '.'));
+    const unitPrice = Number(String(row.unitPrice || '').replace(',', '.'));
+    const totalPrice = Number(String(row.totalPrice || '').replace(',', '.'));
+    current.count += 1;
+    current.qty += Number.isFinite(qty) ? qty : 0;
+    current.total += Number.isFinite(totalPrice) ? totalPrice : 0;
+    if (Number.isFinite(unitPrice)) current.prices.push(unitPrice);
+    const safeStore = financeCsvText(row.store, 'Sin tienda');
+    current.stores.add(safeStore);
+    const storeMeta = current.byStore.get(safeStore) || { total: 0, count: 0 };
+    storeMeta.total += Number.isFinite(unitPrice) ? unitPrice : 0;
+    storeMeta.count += Number.isFinite(unitPrice) ? 1 : 0;
+    current.byStore.set(safeStore, storeMeta);
+    if (String(row.date || '') >= String(current.lastDate || '')) {
+      current.lastDate = String(row.date || '');
+      current.lastPrice = financeCsvText(row.unitPrice, '');
+      current.product = productLabel;
+    }
+    grouped.set(key, current);
+  });
+  return [...grouped.values()]
+    .map((row) => {
+      const average = row.prices.length ? (row.prices.reduce((sum, value) => sum + value, 0) / row.prices.length) : 0;
+      const storeAverages = [...row.byStore.entries()].map(([store, meta]) => ({
+        store,
+        avg: meta.count ? (meta.total / meta.count) : Number.POSITIVE_INFINITY,
+      })).filter((entry) => Number.isFinite(entry.avg));
+      storeAverages.sort((a, b) => a.avg - b.avg);
+      return [
+        financeCsvText(row.product, ''),
+        financeCsvNumber(row.count, '0'),
+        financeCsvNumber(row.qty, '0'),
+        financeCsvMoney(row.total, 'EUR', '0,00'),
+        financeCsvMoney(average, 'EUR', '0,00'),
+        financeCsvMoney(row.prices.length ? Math.min(...row.prices) : 0, 'EUR', '0,00'),
+        financeCsvMoney(row.prices.length ? Math.max(...row.prices) : 0, 'EUR', '0,00'),
+        financeCsvText(row.lastPrice, ''),
+        financeCsvText(row.lastDate, 'Sin fecha'),
+        financeCsvNumber(row.stores.size, '0'),
+        financeCsvText(storeAverages[0]?.store, ''),
+        financeCsvText(storeAverages.at(-1)?.store, ''),
+      ];
+    })
+    .sort((a, b) => String(a[0] || '').localeCompare(String(b[0] || ''), 'es', { sensitivity: 'base' }));
+}
+function buildFinanceCategorySummaryCsvRows(txRows = balanceTxList()) {
+  const grouped = new Map();
+  txRows.forEach((row) => {
+    const type = normalizeTxType(row?.type || '');
+    const category = resolveMovementCategoryValue(type, row?.category || '');
+    const current = grouped.get(category) || {
+      category,
+      count: 0,
+      expenseCount: 0,
+      income: 0,
+      expense: 0,
+      lastDate: '',
+    };
+    const amount = Math.abs(Number(row?.amount || 0));
+    current.count += 1;
+    if (type === 'income') current.income += amount;
+    else if (type === 'expense') {
+      current.expense += amount;
+      current.expenseCount += 1;
+    }
+    const date = financeCsvDateValue(row);
+    if (date >= current.lastDate) current.lastDate = date;
+    grouped.set(category, current);
+  });
+  return [...grouped.values()]
+    .map((row) => {
+      const expenseAvg = row.expense > 0 ? row.expense / Math.max(1, row.expenseCount) : 0;
+      return [
+        financeCsvText(row.category, 'Otros'),
+        financeCsvNumber(row.count, '0'),
+        financeCsvMoney(row.income, 'EUR', '0,00'),
+        financeCsvMoney(row.expense, 'EUR', '0,00'),
+        financeCsvMoney(row.income - row.expense, 'EUR', '0,00'),
+        financeCsvMoney(expenseAvg, 'EUR', '0,00'),
+        financeCsvText(row.lastDate, 'Sin fecha'),
+      ];
+    })
+    .sort((a, b) => String(a[0] || '').localeCompare(String(b[0] || ''), 'es', { sensitivity: 'base' }));
+}
 function exportFinanceCsv() {
   console.warn("[FINANCE_EXPORT_CSV] click recibido");
-  const header = ['tipo', 'id', 'fecha', 'cuenta', 'categoria', 'titulo', 'nota', 'importe', 'moneda', 'createdAt', 'updatedAt'];
-  const txRows = balanceTxList()
-    .slice()
-    .sort((a, b) => Number(txTs(b) || 0) - Number(txTs(a) || 0));
-  const dataRows = txRows.map((row) => {
-    const type = normalizeTxType(row?.type || '');
-    const accountLabel = type === 'transfer'
-      ? `${financeCsvAccountName(row?.fromAccountId)} -> ${financeCsvAccountName(row?.toAccountId)}`
-      : financeCsvAccountName(row?.accountId);
-    return [
-      type || 'movement',
-      String(row?.id || '').trim(),
-      financeCsvDateValue(row),
-      accountLabel,
-      resolveMovementCategoryValue(type, row?.category || ''),
-      String(row?.title || '').trim(),
-      String(row?.note || '').trim(),
-      Number.isFinite(Number(row?.amount)) ? String(Number(row.amount)) : '',
-      String(row?.accountCurrency || row?.currency || row?.originalCurrency || 'EUR').trim() || 'EUR',
-      String(row?.createdAt || '').trim(),
-      String(row?.updatedAt || '').trim(),
-    ];
-  });
-  const accountsRows = (state.accounts || []).map((account) => ([
-    'account',
-    String(account?.id || '').trim(),
-    'Sin fecha',
-    String(account?.name || '').trim() || 'Sin cuenta',
-    'Otros',
-    String(account?.type || account?.assetType || 'cuenta').trim(),
-    '',
-    Number.isFinite(Number(account?.current)) ? String(Number(account.current)) : '',
-    accountCurrency(account),
-    String(account?.createdAt || '').trim(),
-    String(account?.updatedAt || '').trim(),
-  ]));
-  const filename = `bookshell-finanzas-${dayKeyFromTs(Date.now())}.csv`;
-  downloadCsv(filename, [header, ...dataRows, ...accountsRows]);
+  const day = dayKeyFromTs(Date.now());
+  const movementRows = buildFinanceMovementCsvRows();
+  const accountRows = buildFinanceAccountsCsvRows();
+  const productRows = collectFinanceExportProductRows();
+  const productSummaryRows = buildFinanceProductSummaryCsvRows(productRows);
+  const categorySummaryRows = buildFinanceCategorySummaryCsvRows();
+
+  console.warn(`[FINANCE_EXPORT_CSV] movimientos rows: ${movementRows.length}`);
+  console.warn(`[FINANCE_EXPORT_CSV] cuentas rows: ${accountRows.length}`);
+  console.warn(`[FINANCE_EXPORT_CSV] productos rows: ${productRows.length}`);
+  console.warn(`[FINANCE_EXPORT_CSV] resumen productos rows: ${productSummaryRows.length}`);
+  console.warn(`[FINANCE_EXPORT_CSV] resumen categorias rows: ${categorySummaryRows.length}`);
+  const sampleMovement = balanceTxList()?.[0] || null;
+  console.warn("[FINANCE_EXPORT_SAMPLE_MOVEMENT]", sampleMovement);
+  console.warn(`[FINANCE_EXPORT_CSV] sample amount before: ${sampleMovement?.amount ?? sampleMovement?.originalAmount ?? ''}`);
+  console.warn(`[FINANCE_EXPORT_CSV] sample amount exported: ${movementRows?.[0]?.[7] ?? ''}`);
+
+  downloadCsv(
+    financeCsvFilename('bookshell-finanzas-movimientos', day),
+    [['tipo', 'id', 'fecha', 'cuenta', 'categoria', 'titulo', 'nota', 'importeOriginal', 'monedaOriginal', 'tipoCambio', 'importeBase', 'monedaBase', 'createdAt', 'updatedAt'], ...movementRows]
+  );
+  downloadCsv(
+    financeCsvFilename('bookshell-finanzas-cuentas', day),
+    [['id', 'nombre', 'tipo', 'moneda', 'saldo', 'saldoInicial', 'saldoActual', 'createdAt', 'updatedAt'], ...accountRows]
+  );
+  downloadCsv(
+    financeCsvFilename('bookshell-finanzas-productos', day),
+    [['ticketId', 'movimientoId', 'fecha', 'cuenta', 'supermercado/comercio', 'producto', 'categoriaProducto', 'cantidad', 'precioUnitario', 'precioTotal', 'moneda', 'nota'], ...buildFinanceProductsCsvRows(productRows)]
+  );
+  downloadCsv(
+    financeCsvFilename('bookshell-finanzas-resumen-productos', day),
+    [['producto', 'vecesComprado', 'cantidadTotal', 'gastoTotal', 'precioMedio', 'precioMinimo', 'precioMaximo', 'ultimoPrecio', 'ultimaFecha', 'supermercadosDistintos', 'supermercadoMasBarato', 'supermercadoMasCaro'], ...productSummaryRows]
+  );
+  downloadCsv(
+    financeCsvFilename('bookshell-finanzas-resumen-categorias', day),
+    [['categoria', 'numeroMovimientos', 'totalIngresos', 'totalGastos', 'balanceNeto', 'gastoMedio', 'ultimaFecha'], ...categorySummaryRows]
+  );
 }
 function exportFinanceData() {
   console.info("[FINANCE_EXPORT] clicked");

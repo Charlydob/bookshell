@@ -129,6 +129,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
     value: Number(e.value) || 0,
     label: e.label || e.code,
     rawCode: (e.code || "").toUpperCase(),
+    rawValue: Number(e.rawValue ?? e.days ?? e.value) || 0,
   }));
   const maxVal = Math.max(...data.map((d) => Number(d.value) || 0), 1);
   const showTooltip = options.showTooltip !== false;
@@ -156,7 +157,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
       formatter: (params = {}) => {
         const raw = params?.data || {};
         const label = raw.label || params?.name || "País";
-        const value = Number(raw.value || 0);
+        const value = Number(raw.rawValue ?? raw.value ?? 0);
         const suffix = value === 1 ? tooltipNoun.replace(/s$/u, "") : tooltipNoun;
         return `${label}<br/>${value} ${suffix}`;
       },
@@ -169,10 +170,10 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
       bottom: 0,
       seriesIndex: [0],
       inRange: {
-        color: [
-          "rgba(245,230,166,0.08)",
-          "rgba(226,184,66,0.65)",
-          "rgba(209,140,29,0.95)",
+        color: options.palette || [
+          "rgba(56,147,255,0.42)",
+          "rgba(80,196,255,0.72)",
+          "rgba(255,229,92,0.96)",
         ],
       },
       outOfRange: { color: "rgba(255,255,255,0.04)" },
@@ -221,7 +222,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
           formatter: (p) => {
             const r = p?.data?.raw || {};
             const name = r.label || r.name || "—";
-            const val = Number(r.value) || 0;
+            const val = Number(r.rawValue ?? r.value) || 0;
             return `${name}\n${val}`;
           },
           color: "rgba(255,247,209,0.95)",
@@ -240,6 +241,17 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
 
   chart.setOption(option);
   host.__geoChart = chart;
+
+  if (host.__geoClickHandler) chart.off("click", host.__geoClickHandler);
+  host.__geoClickHandler = null;
+  if (typeof options.onCountryClick === "function") {
+    host.__geoClickHandler = (params = {}) => {
+      const raw = params?.data || {};
+      if (!raw.rawCode && !raw.label) return;
+      options.onCountryClick({ code: raw.rawCode || "", label: raw.label || params.name || "", value: raw.rawValue ?? raw.value ?? 0, name: params.name || raw.name || "" });
+    };
+    chart.on("click", host.__geoClickHandler);
+  }
   requestAnimationFrame(() => chart.resize());
 
   if (!host.__geoResizeObserver) {
@@ -273,7 +285,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
           const center = CENTER_OVERRIDES[d.rawCode] || featureCenterByName(echartsLib, d.name);
           if (!center) continue;
           const cont = continentFromLonLat(center[0], center[1]);
-          agg.set(cont, (agg.get(cont) || 0) + d.value);
+          agg.set(cont, (agg.get(cont) || 0) + (Number(d.rawValue ?? d.value) || 0));
         }
 
         for (const [cont, value] of agg.entries()) {
@@ -315,7 +327,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
           lines.push({ coords: [fromGeo, toGeo] });
           points.push({
             value: [toGeo[0], toGeo[1], d.value],
-            raw: { name: d.name, label: d.label || d.name, value: d.value },
+            raw: { name: d.name, label: d.label || d.name, value: d.value, rawValue: d.rawValue },
           });
         }
       }
@@ -345,6 +357,10 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
     if (host.__geoUpdateCallouts) {
       chart.off("georoam", host.__geoUpdateCallouts);
       delete host.__geoUpdateCallouts;
+    }
+    if (host.__geoClickHandler) {
+      chart.off("click", host.__geoClickHandler);
+      delete host.__geoClickHandler;
     }
     try { chart.dispose(); } catch (_) {}
     delete host.__geoChart;

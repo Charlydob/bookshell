@@ -1,6 +1,8 @@
 import { auth, db, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
 import { ref, onValue, update, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
+import { renderCountryHeatmap } from "./world-heatmap.js";
+import { normalizeCountryInput } from "./countries.js";
 
 let ctx = { root:null };
 let stays = [];
@@ -15,6 +17,7 @@ let searchAbortController = null;
 let searchDebounceTimer = null;
 let searchResults = [];
 let memoStats = { key:"", value:null };
+let activeStayHeatmapCountry = null;
 
 const DAY_MS = 86400000;
 const STAY_VIEW_STORAGE_KEY = "worldStayViewOptions";
@@ -242,6 +245,87 @@ function persistBirthDate(date) { localStorage.setItem("worldBirthDate", date); 
 function daysAlive(birthDate) { if (!birthDate) return null; const born = new Date(`${birthDate}T00:00:00Z`); const value = Math.floor((new Date() - born) / DAY_MS) + 1; return Number.isFinite(value) && value > 0 ? value : null; }
 function pct(numerator, denominator) { if (!denominator) return 0; const value = (numerator / denominator) * 100; return Number.isFinite(value) ? value : 0; }
 
+function resolveStayCountryCode(stay = {}) {
+  const direct = String(stay.countryCode || "").trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(direct)) return direct;
+  return normalizeCountryInput(stay.country || "")?.code || "";
+}
+
+function scaleStayHeatmapValue(days, maxDays) {
+  const d = Math.max(0, Number(days) || 0);
+  const max = Math.max(1, Number(maxDays) || 1);
+  return d ? Math.max(0.08, Math.log1p(d) / Math.log1p(max)) : 0;
+}
+
+function colorForStayHeatmap(days, maxDays) {
+  const t = scaleStayHeatmapValue(days, maxDays);
+  if (!t) return "rgba(255,255,255,.06)";
+  const a = [56, 147, 255];
+  const b = [255, 229, 92];
+  const mix = a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  return `rgba(${mix[0]},${mix[1]},${mix[2]},${0.42 + t * 0.48})`;
+}
+
+function groupStayDaysByCountry(sourceStays = stays, options = stayViewOptions) {
+  const grouped = new Map();
+  for (const stay of sourceStays) {
+    const days = metricDaysForStay(stay, options);
+    if (!days) continue;
+    const code = resolveStayCountryCode(stay);
+    const label = String(stay.country || normalizeCountryInput(code)?.name || code || "Sin país").trim();
+    const key = code || normalizeGroupText(label);
+    const item = grouped.get(key) || { key, code, label, days:0, lastDate:"" };
+    item.days += days;
+    item.lastDate = [item.lastDate, stayRecordDate(stay)].filter(Boolean).sort().pop() || "";
+    grouped.set(key, item);
+  }
+  return [...grouped.values()].sort((a, b) => b.days - a.days || a.label.localeCompare(b.label, "es"));
+}
+
+function groupStayDaysByRegion(countryCode, sourceStays = stays, options = stayViewOptions) {
+  const targetCode = String(countryCode || "").toUpperCase();
+  const grouped = new Map();
+  for (const stay of sourceStays) {
+    if (resolveStayCountryCode(stay) !== targetCode) continue;
+    const region = String(stay.region || "").trim();
+    if (!region) continue;
+    const days = metricDaysForStay(stay, options);
+    if (!days) continue;
+    const key = normalizeGroupText(region);
+    const item = grouped.get(key) || { key, region, days:0, lastDate:"" };
+    item.days += days;
+    item.lastDate = [item.lastDate, stayRecordDate(stay)].filter(Boolean).sort().pop() || "";
+    grouped.set(key, item);
+  }
+  return [...grouped.values()].sort((a, b) => b.days - a.days || a.region.localeCompare(b.region, "es"));
+}
+
+function renderRegionalStayHeatmap(container, country) {
+  const regions = groupStayDaysByRegion(country.code);
+  const maxDays = Math.max(...regions.map((r) => r.days), 1);
+  const regionalNames = { ES:"comunidades autónomas", CH:"cantones", BR:"estados", US:"estados" };
+  const cards = regions.map((region) => `<div class="world-stay-region-cell" style="--stay-region-color:${colorForStayHeatmap(region.days, maxDays)}"><strong>${esc(region.region)}</strong><span>${formatDayLabel(region.days)}</span></div>`).join("");
+  container.innerHTML = `<div class="world-stay-heatmap-top"><div><span>🗺️ Mapa regional</span><strong>${flagFromCountryCode(country.code)} ${esc(country.label)}</strong></div><button type="button" data-world-stay-heatmap-back>← Mundo</button></div><div class="world-stay-region-map" role="img" aria-label="Estancias por región en ${esc(country.label)}">${cards || `<div class="world-stays-empty">Aún no hay regiones registradas para este país. Las estancias sin región cuentan solo en el mapa mundial.</div>`}</div><small class="world-stay-heatmap-note">${regionalNames[country.code] ? `Vista interna por ${regionalNames[country.code]}.` : "No hay GeoJSON administrativo local para este país; se muestra fallback por regiones registradas."} Para un mapa con límites reales añade el GeoJSON administrativo en <code>beta-clean/assets/geo/regions/${country.code}.json</code>.</small>`;
+}
+
+async function renderWorldStayHeatmap(stats = computeStaySummaries()) {
+  const container = $("[data-world-stays-heatmap]");
+  if (!container) return;
+  if (activeStayHeatmapCountry) {
+    renderRegionalStayHeatmap(container, activeStayHeatmapCountry);
+    return;
+  }
+  const countries = groupStayDaysByCountry(stays, stayViewOptions);
+  const maxDays = Math.max(...countries.map((c) => c.days), 1);
+  container.innerHTML = `<div class="world-stay-heatmap-top"><div><span>🗺️ Heatmap de estancias</span><strong>${stats.countriesCount} país${stats.countriesCount === 1 ? "" : "es"}</strong></div></div><div class="world-stay-heatmap-chart" data-world-stay-map></div><small class="world-stay-heatmap-note">Escala logarítmica: incluso 1 día queda visible; amarillo indica más días.</small>`;
+  await renderCountryHeatmap(container.querySelector("[data-world-stay-map]"), countries.map((c) => ({ code:c.code, label:c.label, value:scaleStayHeatmapValue(c.days, maxDays), rawValue:c.days })), { tooltipNoun:"días", onCountryClick:(country) => {
+    const code = String(country.code || "").toUpperCase();
+    if (!code) return;
+    activeStayHeatmapCountry = { code, label:country.label || normalizeCountryInput(code)?.name || code };
+    renderWorldStayHeatmap(stats);
+  } });
+}
+
 function renderDistribution(byCountry = [], totalDays = 0) {
   const segs = byCountry.map((country, idx) => {
     const colorClass = `world-dist-color-${(idx % 8) + 1}`;
@@ -411,7 +495,9 @@ function render() {
     }).join("");
     return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)}${countryMetrics.length ? ` · ${esc(countryMetrics.join(" · "))}` : ""} ▾</span></summary>${stayViewOptions.view === "countriesOnly" ? "" : `<ul class="world-stays-city-list">${cities || '<li class="world-stays-city-item">Sin ciudad registrada.</li>'}</ul>`}</details>`;
   }).join("");
-  mount.innerHTML = `<div class="world-stays-head"><h3>Estancias</h3><button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button></div><div class="world-stays-warning" data-world-stays-warning aria-live="polite"></div><div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div>${renderStayViewControls(stats)}<button type="button" class="world-pill world-current-location-kpi" data-world-force-auto-stay><span class="world-current-location-title">📍 Lugar actual</span><strong>${esc(latestPlace)}</strong><small>Último registro: ${esc(latestDate)}</small></button><div class="world-kpis world-kpis-compact"><div class="world-pill"><span>📅 ${formatDayLabel(stats.totalDays)}</span></div><div class="world-pill"><span>🌍 ${stats.countriesCount} país${stats.countriesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>🏙️ ${stats.citiesCount} ciudad${stats.citiesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>👑 ${dominant ? `${flagFromCountryCode(dominant.countryCode)} ${esc(dominant.country)}` : "-"}</span></div></div>${renderDistribution(stats.byCountry, stats.totalDays)}<div class="world-stays-countries">${countries || '<div class="world-stays-empty">Sin estancias para este filtro.</div>'}</div>`;
+  mount.innerHTML = `<div class="world-stays-head"><h3>Estancias</h3><button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button></div><div class="world-stays-warning" data-world-stays-warning aria-live="polite"></div><div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div>${renderStayViewControls(stats)}<button type="button" class="world-pill world-current-location-kpi" data-world-force-auto-stay><span class="world-current-location-title">📍 Lugar actual</span><strong>${esc(latestPlace)}</strong><small>Último registro: ${esc(latestDate)}</small></button><section class="world-stay-heatmap-card" data-world-stays-heatmap aria-label="Heatmap de estancias"></section><div class="world-kpis world-kpis-compact"><div class="world-pill"><span>📅 ${formatDayLabel(stats.totalDays)}</span></div><div class="world-pill"><span>🌍 ${stats.countriesCount} país${stats.countriesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>🏙️ ${stats.citiesCount} ciudad${stats.citiesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>👑 ${dominant ? `${flagFromCountryCode(dominant.countryCode)} ${esc(dominant.country)}` : "-"}</span></div></div>${renderDistribution(stats.byCountry, stats.totalDays)}<div class="world-stays-countries">${countries || '<div class="world-stays-empty">Sin estancias para este filtro.</div>'}</div>`;
+  renderAutoStayWarning();
+  renderWorldStayHeatmap(stats).catch((error) => console.error("[world:stays:heatmap:error]", error));
   const btn = mount.querySelector("[data-world-stay-action='open-modal']");
   if (btn) btn.onclick = () => openWorldStayModal();
 }
@@ -559,6 +645,7 @@ function handleWorldRootClick(e) {
   if (btn.dataset.worldStayView) { stayViewOptions = { ...stayViewOptions, view:btn.dataset.worldStayView }; persistStayViewOptions(); render(); return; }
   if (btn.dataset.worldStaySort) { stayViewOptions = { ...stayViewOptions, sort:btn.dataset.worldStaySort === "lastDate" ? "lastDate" : "days" }; persistStayViewOptions(); memoStats = { key:"", value:null }; render(); return; }
   if (btn.dataset.worldCityCombine) { e.preventDefault(); combineCityInto(btn.dataset.worldCityCombine, btn.dataset.worldCountryKey); return; }
+  if (btn.dataset.worldStayHeatmapBack !== undefined) { activeStayHeatmapCountry = null; render(); return; }
   if (btn.dataset.worldStayEdit) { const stay = stays.find((s) => s.id === btn.dataset.worldStayEdit); if (stay) openWorldStayModal(stay); return; }
   if (btn.dataset.worldStayDelete) { const uid2 = getCurrentUserDataRootKey() || auth.currentUser?.uid; if (!uid2 || !window.confirm("¿Eliminar esta estancia?")) return; remove(ref(db, `v2/users/${uid2}/world/stays/${btn.dataset.worldStayDelete}`)); return; }
   if (btn.dataset.worldSetBirthdate !== undefined) { const val = window.prompt("Fecha de nacimiento (YYYY-MM-DD)", getBirthDate()); if (val) { persistBirthDate(val.trim()); render(); } return; }

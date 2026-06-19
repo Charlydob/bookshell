@@ -1,7 +1,7 @@
 import { auth, db, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
 import { ref, onValue, update, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
-import { renderCountryHeatmap } from "./world-heatmap.js";
+import { renderCountryHeatmap, renderRegionHeatmap } from "./world-heatmap.js";
 import { normalizeCountryInput } from "./countries.js";
 
 let ctx = { root:null };
@@ -282,6 +282,22 @@ function groupStayDaysByCountry(sourceStays = stays, options = stayViewOptions) 
   return [...grouped.values()].sort((a, b) => b.days - a.days || a.label.localeCompare(b.label, "es"));
 }
 
+const REGIONAL_LABELS = { ES:"comunidades autónomas", CH:"cantones", BR:"estados", US:"estados" };
+const REGION_CODE_ALIASES = {
+  CH:{ "berna":"CH-BE", "bern":"CH-BE", "zurich":"CH-ZH", "zürich":"CH-ZH", "ginebra":"CH-GE", "geneve":"CH-GE", "genève":"CH-GE", "ticino":"CH-TI", "tesino":"CH-TI", "vaud":"CH-VD" },
+  ES:{ "galicia":"ES-GA", "comunidad valenciana":"ES-VC", "valencia":"ES-VC", "cataluna":"ES-CT", "cataluña":"ES-CT", "andalucia":"ES-AN", "andalucía":"ES-AN", "madrid":"ES-MD", "comunidad de madrid":"ES-MD", "pais vasco":"ES-PV", "país vasco":"ES-PV", "canarias":"ES-CN", "islas canarias":"ES-CN" },
+  BR:{ "sao paulo":"BR-SP", "são paulo":"BR-SP", "rio de janeiro":"BR-RJ", "bahia":"BR-BA", "minas gerais":"BR-MG", "parana":"BR-PR", "paraná":"BR-PR" },
+  US:{ "california":"US-CA", "new york":"US-NY", "nueva york":"US-NY", "florida":"US-FL", "texas":"US-TX", "illinois":"US-IL", "washington":"US-WA" }
+};
+
+function normalizeRegionCode(countryCode, region = "") {
+  const code = String(countryCode || "").toUpperCase();
+  const raw = String(region || "").trim();
+  const upper = raw.toUpperCase();
+  if (/^[A-Z]{2}-[A-Z0-9]{1,3}$/.test(upper)) return upper;
+  return REGION_CODE_ALIASES[code]?.[normalizeGroupText(raw)] || "";
+}
+
 function groupStayDaysByRegion(countryCode, sourceStays = stays, options = stayViewOptions) {
   const targetCode = String(countryCode || "").toUpperCase();
   const grouped = new Map();
@@ -291,8 +307,9 @@ function groupStayDaysByRegion(countryCode, sourceStays = stays, options = stayV
     if (!region) continue;
     const days = metricDaysForStay(stay, options);
     if (!days) continue;
-    const key = normalizeGroupText(region);
-    const item = grouped.get(key) || { key, region, days:0, lastDate:"" };
+    const regionCode = normalizeRegionCode(targetCode, region);
+    const key = regionCode || normalizeGroupText(region);
+    const item = grouped.get(key) || { key, code:regionCode, region, days:0, lastDate:"" };
     item.days += days;
     item.lastDate = [item.lastDate, stayRecordDate(stay)].filter(Boolean).sort().pop() || "";
     grouped.set(key, item);
@@ -300,25 +317,31 @@ function groupStayDaysByRegion(countryCode, sourceStays = stays, options = stayV
   return [...grouped.values()].sort((a, b) => b.days - a.days || a.region.localeCompare(b.region, "es"));
 }
 
-function renderRegionalStayHeatmap(container, country) {
+async function renderRegionalMap(country) {
+  const container = $("[data-world-stays-heatmap]");
+  if (!container) return;
+  const label = REGIONAL_LABELS[country.code] || "regiones";
   const regions = groupStayDaysByRegion(country.code);
   const maxDays = Math.max(...regions.map((r) => r.days), 1);
-  const regionalNames = { ES:"comunidades autónomas", CH:"cantones", BR:"estados", US:"estados" };
-  const cards = regions.map((region) => `<div class="world-stay-region-cell" style="--stay-region-color:${colorForStayHeatmap(region.days, maxDays)}"><strong>${esc(region.region)}</strong><span>${formatDayLabel(region.days)}</span></div>`).join("");
-  container.innerHTML = `<div class="world-stay-heatmap-top"><div><span>🗺️ Mapa regional</span><strong>${flagFromCountryCode(country.code)} ${esc(country.label)}</strong></div><button type="button" data-world-stay-heatmap-back>← Mundo</button></div><div class="world-stay-region-map" role="img" aria-label="Estancias por región en ${esc(country.label)}">${cards || `<div class="world-stays-empty">Aún no hay regiones registradas para este país. Las estancias sin región cuentan solo en el mapa mundial.</div>`}</div><small class="world-stay-heatmap-note">${regionalNames[country.code] ? `Vista interna por ${regionalNames[country.code]}.` : "No hay GeoJSON administrativo local para este país; se muestra fallback por regiones registradas."} Para un mapa con límites reales añade el GeoJSON administrativo en <code>beta-clean/assets/geo/regions/${country.code}.json</code>.</small>`;
+  container.innerHTML = `<div class="world-stay-heatmap-top world-stay-heatmap-top--regional"><div><span>🗺️ ${esc(country.label)} · ${esc(label)}</span><strong>${flagFromCountryCode(country.code)} ${esc(country.label)} · ${esc(label)}</strong></div><button type="button" data-world-stay-heatmap-back>← Mundo</button></div><div class="world-stay-heatmap-chart world-stay-heatmap-chart--regional" data-world-stay-region-map></div><small class="world-stay-heatmap-note">Escala logarítmica azul → amarillo según días registrados.</small>`;
+  const host = container.querySelector("[data-world-stay-region-map]");
+  const rendered = await renderRegionHeatmap(host, country.code, regions.map((r) => ({ code:r.code || r.key, label:r.region, value:scaleStayHeatmapValue(r.days, maxDays), rawValue:r.days })));
+  if (!rendered) {
+    host.innerHTML = `<div class="world-stay-regional-fallback"><p>Mapa regional no disponible para este país</p><button type="button" data-world-stay-heatmap-back>← Mundo</button></div>`;
+  }
 }
 
 async function renderWorldStayHeatmap(stats = computeStaySummaries()) {
   const container = $("[data-world-stays-heatmap]");
   if (!container) return;
   if (activeStayHeatmapCountry) {
-    renderRegionalStayHeatmap(container, activeStayHeatmapCountry);
+    await renderRegionalMap(activeStayHeatmapCountry);
     return;
   }
   const countries = groupStayDaysByCountry(stays, stayViewOptions);
   const maxDays = Math.max(...countries.map((c) => c.days), 1);
   container.innerHTML = `<div class="world-stay-heatmap-top"><div><span>🗺️ Heatmap de estancias</span><strong>${stats.countriesCount} país${stats.countriesCount === 1 ? "" : "es"}</strong></div></div><div class="world-stay-heatmap-chart" data-world-stay-map></div><small class="world-stay-heatmap-note">Escala logarítmica: incluso 1 día queda visible; amarillo indica más días.</small>`;
-  await renderCountryHeatmap(container.querySelector("[data-world-stay-map]"), countries.map((c) => ({ code:c.code, label:c.label, value:scaleStayHeatmapValue(c.days, maxDays), rawValue:c.days })), { tooltipNoun:"días", onCountryClick:(country) => {
+  await renderCountryHeatmap(container.querySelector("[data-world-stay-map]"), countries.map((c) => ({ code:c.code, label:c.label, value:scaleStayHeatmapValue(c.days, maxDays), rawValue:c.days })), { showTooltip:false, showCallouts:false, tooltipNoun:"días", onCountryClick:(country) => {
     const code = String(country.code || "").toUpperCase();
     if (!code) return;
     activeStayHeatmapCountry = { code, label:country.label || normalizeCountryInput(code)?.name || code };

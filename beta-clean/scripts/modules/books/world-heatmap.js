@@ -4,7 +4,15 @@ import { ensureEcharts } from "../../shared/vendors/echarts.js";
 
 const LOCAL_WORLD_GEO_URL = new URL("../../../assets/geo/world.json", import.meta.url);
 
+export const REGIONAL_MAP_ASSETS = {
+  ES: new URL("../../../assets/geo/regions/ES.json", import.meta.url).href,
+  CH: new URL("../../../assets/geo/regions/CH.json", import.meta.url).href,
+  BR: new URL("../../../assets/geo/regions/BR.json", import.meta.url).href,
+  US: new URL("../../../assets/geo/regions/US.json", import.meta.url).href,
+};
+
 let worldGeoPromise = null;
+const regionalGeoPromises = new Map();
 
 async function fetchJson(url) {
   const res = await fetch(url, { cache: "force-cache" });
@@ -22,6 +30,30 @@ function loadWorldGeoJson() {
   });
 
   return worldGeoPromise;
+}
+
+function loadRegionalGeoJson(countryCode) {
+  const code = String(countryCode || "").trim().toUpperCase();
+  const url = REGIONAL_MAP_ASSETS[code];
+  if (!url) return Promise.resolve(null);
+  if (regionalGeoPromises.has(code)) return regionalGeoPromises.get(code);
+  const promise = fetchJson(url).catch((err) => {
+    console.info(`Mapa regional no disponible para ${code}`, err);
+    regionalGeoPromises.delete(code);
+    return null;
+  });
+  regionalGeoPromises.set(code, promise);
+  return promise;
+}
+
+function featureRegionId(feature = {}) {
+  const p = feature.properties || {};
+  return String(p.id || p.ID || p.iso_3166_2 || p["ISO3166-2"] || p.ISO_3166_2 || p.HASC_1 || p.code || p.CODE || p.name || p.NAME || "").trim();
+}
+
+function featureRegionName(feature = {}) {
+  const p = feature.properties || {};
+  return String(p.name || p.NAME || p.Name || p.nom || p.NOM || p.region || p.REGION || featureRegionId(feature)).trim();
 }
 
 const CENTER_OVERRIDES = {
@@ -146,7 +178,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
     tooltip: showTooltip ? {
       trigger: "item",
       confine: true,
-      appendToBody: true,
+      appendToBody: false,
       backgroundColor: "rgba(8, 12, 20, 0.94)",
       borderColor: "rgba(255,255,255,0.12)",
       borderWidth: 1,
@@ -207,7 +239,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
         coordinateSystem: "geo",
         silent: true,
         symbol: ["none", "none"],
-        lineStyle: { color: "rgba(245,230,166,0.95)", width: 1, height: 3},
+        lineStyle: { color: "rgba(245,230,166,0.34)", width: 0.6 },
         data: [],
         z: 10,
       },
@@ -226,11 +258,11 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
             return `${name}\n${val}`;
           },
           color: "rgba(255,247,209,0.95)",
-          fontSize: 8,
-          fontWeight: 700,
-          padding: [4, 7],
+          fontSize: 7,
+          fontWeight: 600,
+          padding: [2, 4],
           borderRadius: 10,
-          backgroundColor: "rgba(10, 12, 18, 0.26)",
+          backgroundColor: "rgba(10, 12, 18, 0.10)",
         },
         labelLayout: { hideOverlap: true, moveOverlap: "shiftY" },
         data: [],
@@ -240,6 +272,7 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
   };
 
   chart.setOption(option);
+  if (showTooltip === false) chart.dispatchAction?.({ type:"hideTip" });
   host.__geoChart = chart;
 
   if (host.__geoClickHandler) chart.off("click", host.__geoClickHandler);
@@ -341,9 +374,13 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
   if (host.__geoUpdateCallouts) {
     chart.off("georoam", host.__geoUpdateCallouts);
   }
-  updateCallouts();
-  host.__geoUpdateCallouts = updateCallouts;
-  chart.on("georoam", updateCallouts);
+  if (options.showCallouts === true) {
+    updateCallouts();
+    host.__geoUpdateCallouts = updateCallouts;
+    chart.on("georoam", updateCallouts);
+  } else {
+    chart.setOption({ series: [{}, { data: [] }, { data: [] }] });
+  }
 
   host.__geoCleanup = () => {
     if (host.__geoWindowResize) {
@@ -365,6 +402,54 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
     try { chart.dispose(); } catch (_) {}
     delete host.__geoChart;
   };
+}
+
+export async function renderRegionHeatmap(host, countryCode, entries = [], options = {}) {
+  if (!host) return false;
+  const code = String(countryCode || "").trim().toUpperCase();
+  const echartsLib = await ensureEcharts();
+  const geo = echartsLib ? await loadRegionalGeoJson(code) : null;
+  if (!echartsLib || !geo?.features?.length) {
+    if (typeof host.__geoCleanup === "function") {
+      host.__geoCleanup();
+      delete host.__geoCleanup;
+    }
+    host.innerHTML = `<div class="world-stay-regional-fallback"><p>Mapa regional no disponible para este país</p></div>`;
+    return false;
+  }
+
+  const mapName = `regions-${code}`;
+  if (!echartsLib.getMap(mapName)) echartsLib.registerMap(mapName, geo);
+  const byId = new Map((entries || []).map((e) => [String(e.code || e.key || "").toUpperCase(), e]));
+  const byName = new Map((entries || []).map((e) => [String(e.label || e.region || "").toLocaleLowerCase("es"), e]));
+  const data = geo.features.map((feature) => {
+    const id = featureRegionId(feature);
+    const name = featureRegionName(feature);
+    const entry = byId.get(id.toUpperCase()) || byName.get(name.toLocaleLowerCase("es")) || {};
+    return { name, value:Number(entry.value) || 0, rawValue:Number(entry.rawValue ?? entry.days ?? 0) || 0, label:entry.label || name };
+  });
+  const maxVal = Math.max(...data.map((d) => d.value), 1);
+  let chart = host.__geoChart;
+  if (!chart || chart.isDisposed?.()) {
+    host.innerHTML = "";
+    chart = echartsLib.getInstanceByDom(host) || echartsLib.init(host, null, { renderer:"canvas" });
+  }
+  chart.setOption({
+    backgroundColor:"transparent",
+    tooltip:{ show:false },
+    visualMap:{ min:0, max:maxVal, show:false, inRange:{ color:options.palette || ["rgba(56,147,255,0.42)", "rgba(80,196,255,0.72)", "rgba(255,229,92,0.96)"] }, outOfRange:{ color:"rgba(255,255,255,0.05)" } },
+    series:[{ type:"map", map:mapName, roam:true, nameProperty:"name", selectedMode:false, select:{ disabled:true }, emphasis:{ label:{ show:false }, itemStyle:{ areaColor:"rgba(226,184,66,0.32)" } }, itemStyle:{ borderColor:"rgba(255,255,255,0.22)", borderWidth:.7 }, data }]
+  }, true);
+  chart.dispatchAction?.({ type:"hideTip" });
+  host.__geoChart = chart;
+  requestAnimationFrame(() => chart.resize());
+  if (!host.__geoResizeObserver) {
+    const ro = new ResizeObserver(() => host.__geoChart?.resize?.());
+    ro.observe(host);
+    host.__geoResizeObserver = ro;
+  }
+  host.__geoCleanup = () => { host.__geoResizeObserver?.disconnect?.(); chart.dispose?.(); delete host.__geoChart; delete host.__geoResizeObserver; };
+  return true;
 }
 
 export function renderCountryList(container, stats = [], noun = "elemento") {

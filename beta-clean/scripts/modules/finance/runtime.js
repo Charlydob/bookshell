@@ -9,6 +9,9 @@ let set;
 let update;
 let db;
 
+window.__FINANCE_RUNTIME_VERSION = "FASE2_VISIBLE_REAL";
+console.warn("FINANCE REAL LOADED", window.__FINANCE_RUNTIME_VERSION);
+
 async function ensureFinanceLoaded() {
   if (db && get && onValue && ref && auth && onUserChange) return;
   const dbMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
@@ -961,6 +964,19 @@ function normalizeProductItemLabel(value = '') {
 
 function normalizeProductItemKey(value = '') {
   return normalizeFoodCompareKey(value);
+}
+function normalizeFinanceCategoryName(value = '') {
+  const safe = normalizeFoodName(value);
+  if (!safe) return '';
+  const key = normalizeFoodCompareKey(safe);
+  if (!key) return '';
+  if (key === 'sin categoria' || key === 'sin-categoria' || key === 'uncategorized' || key === 'no category') return 'Otros';
+  if (key === 'otros') return 'Otros';
+  return safe;
+}
+function resolveMovementCategoryValue(type = '', value = '') {
+  if (normalizeTxType(type) === 'transfer') return 'transfer';
+  return normalizeFinanceCategoryName(value) || 'Otros';
 }
 function ticketCategoryToTxCategory(category = '') {
   const safe = String(category || '').trim().toLowerCase();
@@ -3598,7 +3614,7 @@ function renderProductsTicketCategorySelect(model = null) {
   const options = [
     '<option value="">Categoría vinculada</option>',
     ...(!hasCurrent ? [`<option value="${escapeHtml(current)}" selected>${escapeHtml(current)} (no disponible)</option>`] : []),
-    ...categories.map((row) => `<option value="${escapeHtml(row.name)}" ${current === row.name ? 'selected' : ''}>${escapeHtml(row.emoji ? `${row.emoji} ${row.name}` : row.name)}</option>`),
+    ...categories.map((row) => `<option value="${escapeHtml(row.name)}" ${current === row.name ? 'selected' : ''}>${escapeHtml(row.name)}</option>`),
   ].join('');
   return `
     <select class="food-control productsWorkbench__receiptMetaControl" name="ticketCategoryId" data-products-ticket-category aria-label="Categoría vinculada">
@@ -7387,7 +7403,7 @@ function buildRecurringInstancePayload(recurringId = '', recurringData = {}, mon
     accountId: type === 'transfer' ? '' : String(recurringData?.accountId || '').trim(),
     fromAccountId: type === 'transfer' ? String(recurringData?.fromAccountId || '').trim() : '',
     toAccountId: type === 'transfer' ? String(recurringData?.toAccountId || '').trim() : '',
-    category: type === 'transfer' ? 'transfer' : (String(recurringData?.category || '').trim() || 'Sin categoría'),
+    category: resolveMovementCategoryValue(type, recurringData?.category || ''),
     note: String(recurringData?.note || '').trim(),
     ...(Number.isFinite(Number(recurringData?.personalRatio)) ? { personalRatio: clamp01(recurringData.personalRatio, 1) } : {}),
     linkedHabitId: String(recurringData?.linkedHabitId || '').trim() || null,
@@ -10915,7 +10931,7 @@ function getBalanceTrendSeries(accountsById = {}, txRows = balanceTxList(), tren
       seriesMap[key] = {
         key,
         name: category,
-        emoji: categoryEmojiForName(category),
+        emoji: '',
         values: {},
         type: trendMode
       };
@@ -10931,7 +10947,7 @@ function getBalanceTrendSeries(accountsById = {}, txRows = balanceTxList(), tren
     seriesMap[key] = {
       key,
       name: trendCategory,
-      emoji: categoryEmojiForName(trendCategory),
+      emoji: '',
       values: {},
       type: trendMode
     };
@@ -11251,7 +11267,7 @@ function renderBalanceTrendChart(data = { monthKeys: [], series: [], tone: 'is-n
         <div data-fin-trend-tooltip style="position: absolute; top: 4px; left: 50%; transform: translateX(-50%); background: rgba(8, 14, 28, 0.9); border: 1px solid rgba(173, 197, 255, 0.3); border-radius: 8px; padding: 6px 10px; font-size: 11px; color: var(--fin-text); pointer-events: none; opacity: 0; transition: opacity 0.1s ease; white-space: nowrap; z-index: 10; backdrop-filter: blur(8px);"></div>
       </div>
       <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 11px;">
-        ${data.series.map((serie) => `<span style="display: inline-flex; align-items: center; gap: 4px; color: ${serie.color};"><span style="width: 5px; height: 5px; border-radius: 50%; background: ${serie.color}; display: inline-block; flex-shrink: 0;"></span><span>${escapeHtml(serie.emoji || '')} ${escapeHtml(serie.name)}</span></span>`).join('')}
+        ${data.series.map((serie) => `<span style="display: inline-flex; align-items: center; gap: 4px; color: ${serie.color};"><span style="width: 5px; height: 5px; border-radius: 50%; background: ${serie.color}; display: inline-block; flex-shrink: 0;"></span><span>${escapeHtml(serie.name)}</span></span>`).join('')}
       </div>
     </div>
   `;
@@ -11268,7 +11284,7 @@ function renderBalanceTrendControls(categories = categoriesList(), mode = 'expen
       </select>
       <select class="finance-pill-grafica" data-balance-trend-category style="flex: 1; min-width: 120px;">
         <option value="all" ${category === 'all' ? 'selected' : ''}>Todas las categorías</option>
-        ${categories.map((cat) => `<option value="${escapeHtml(cat)}" ${category === cat ? 'selected' : ''}>${escapeHtml(categoryEmojiForName(cat) || '')} ${escapeHtml(cat)}</option>`).join('')}
+        ${categories.map((cat) => `<option value="${escapeHtml(cat)}" ${category === cat ? 'selected' : ''}>${escapeHtml(cat)}</option>`).join('')}
       </select>
     </div>
   `;
@@ -11384,15 +11400,27 @@ function renderFinanceHome(accounts, totalSeries) {
       ? renderFinanceTicketPreview()
       : renderFinanceHeroPanel({ total, totalReal, totalRange, chart }, { withToggle: true });
   if (homePanelView === 'calendar' || homePanelView === 'tickets') {
+    console.warn("[FINANCE_EXPORT_BUTTON] renderizado");
     return `
       <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
+        <div style="margin:0 0 12px 0;padding:12px 14px;border:2px solid #ff3b30;border-radius:14px;background:#fff3cd;color:#7a1c00;font-weight:800;text-align:center;letter-spacing:.04em;">DEBUG FINANCE FASE2 CARGADO</div>
         ${primaryPanel}
-        <article class="finance__accounts"><div class="finance__sectionHeader"><h2></h2><div class="finance-row-cuenta"><button class="finance-pill" data-new-account>+ Cuenta</button></div></div>
+        <article class="finance__accounts">
+        <div class="finance__sectionHeader">
+        <h2></h2>
+        
+        <div class="finance-row-cuenta">
+        
+        <button id="export-finance" class="finance-pill finance-pill--mini" data-finance-export-csv>Exportar CSV</button>
+        
+        <button class="finance-pill" data-new-account>+ Cuenta TEST FASE2</button></div></div>
         <div id="finance-accountsList">${accounts.map((account) => renderFinanceAccountCard(account, { deleteLabel: '⋯' })).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
       </section>`;
   }
+  console.warn("[FINANCE_EXPORT_BUTTON] renderizado");
   return `
     <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
+      <div style="margin:0 0 12px 0;padding:12px 14px;border:2px solid #ff3b30;border-radius:14px;background:#fff3cd;color:#7a1c00;font-weight:800;text-align:center;letter-spacing:.04em;">DEBUG FINANCE FASE2 CARGADO</div>
       <article class="finance__hero"><div class="financePanelTopbar"><div class="financePanelHeading"><p class="finance__eyebrow">TOTAL</p></div><select class="finance-pill financeTotalCurrencySelect" data-finance-total-currency aria-label="Moneda del total">${renderCurrencyOptions(state.financeTotalCurrency || getDefaultCurrency())}</select>${renderFinanceHomePanelToggle('hero')}</div><h2 id="finance-totalValue">${formatFinanceTotal(total)}</h2>
         <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedFinanceTotal(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
         <p>Saldo real: <strong>${formatFinanceTotal(totalReal)}</strong> · Mi parte: <strong>${formatFinanceTotal(total)}</strong></p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
@@ -11402,7 +11430,7 @@ function renderFinanceHome(accounts, totalSeries) {
         <button class="finance-pill" data-history>Historial</button>
         <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select></article>
       <article class="finance__compareRow"><div class="finance-chip ${toneClass(compareCurrent.delta)}">Actual: ${fmtSignedFinanceTotal(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div><div class="finance-chip ${toneClass(comparePrev.delta)}">Anterior: ${fmtSignedFinanceTotal(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div></article>
-      <article class="finance__accounts"><div class="finance__sectionHeader"><h2></h2><div class="finance-row-cuenta"><button class="finance-pill finance-pill--mini" id="fusionar-cuentas" data-account-merge-open>Fusionar</button><button class="finance-pill" data-new-account>+ Cuenta</button></div></div>
+      <article class="finance__accounts"><div class="finance__sectionHeader"><h2></h2><div class="finance-row-cuenta"><button class="finance-pill finance-pill--mini" id="fusionar-cuentas" data-account-merge-open>Fusionar</button><button id="export-finance" class="finance-pill finance-pill--mini" data-finance-export-csv>Exportar CSV</button><button class="finance-pill" data-new-account>+ Cuenta TEST FASE2</button></div></div>
       <div id="finance-accountsList">${accounts.map((account) => renderFinanceAccountCard(account, { deleteLabel: '🗑️' })).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
     </section>`;
 }
@@ -12991,7 +13019,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
   const categoriesMeta = categoriesMetaList();
   backdrop.innerHTML = 
   
-  `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal" role="dialog" aria-modal="true" tabindex="-1" data-tx-step="${escapeHtml(wizardStep)}" data-tx-food="${selectedIsFood ? '1' : '0'}">
+  `<div id="finance-modal" class="finance-modal fm-modal fin-move-modal fin-move-modal--simple" role="dialog" aria-modal="true" tabindex="-1" data-tx-step="${escapeHtml(wizardStep)}" data-tx-food="${selectedIsFood ? '1' : '0'}">
     <header class="fm-modal__header fin-move-header">
       <div class="finWizardHeader">
         <button type="button" class="finance-pill finance-pill--mini finWizardBack" data-tx-step-back ${wizardStep === 'base' ? 'hidden' : ''} aria-label="Volver">←</button>
@@ -13090,33 +13118,22 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
           </div>
         </div>
 
-        <div class="fm-field fm-field--category fin-move-field" data-category-block>
-          <div class="finCatScreenTop">
-            <div class="finCatScreenTitle">Categoría</div>
-            <button type="button" class="finance-pill finance-pill--mini" data-tx-edit-categories>Editar</button>
-          </div>
-
-          <select id="fm-tx-category" class="fm-control fm-control--category fm-control--select fin-move-select" name="category" hidden aria-hidden="true">
-            <option value="">Seleccionar</option>${resolvedCategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
-          </select>
-
-          <div class="finCatPicker" role="listbox" aria-label="Selecciona categoría">
-            ${categoriesMeta.map((row) => `
-              <button type="button" class="finCatTile ${String(defaultCategory || '').toLowerCase() === String(row.name || '').toLowerCase() ? 'is-selected' : ''}" data-tx-category-pick="${escapeHtml(row.name)}" aria-label="${escapeHtml(row.name)}">
-                <span class="finCatTile__emoji" aria-hidden="true">${escapeHtml(row.emoji || '⬜')}</span>
-              </button>
-            `).join('')}
-          </div>
-        </div>
-        
         <div class="fm-field fm-field--title">
-          <label class="fm-label" for="fm-tx-title">Título</label>
-          <input id="fm-tx-title" class="fm-control fm-control--title" name="title" type="text" placeholder="Título (opcional)" value="${escapeHtml(defaultTitle)}" aria-label="Título"/>
+          <input id="fm-tx-title" class="fm-control fm-control--title" name="title" type="text" placeholder="Título" value="${escapeHtml(defaultTitle)}" aria-label="Título"/>
+        </div>
+
+        <div class="fm-field fm-field--category fin-move-field fin-move-categoryField" data-category-block>
+          <div class="finMoveCategoryRow">
+            <select id="fm-tx-category" class="fm-control fm-control--category fm-control--select fin-move-select" name="category" aria-label="Categoría">
+              <option value="">Categoría</option>${resolvedCategories.map((c) => `<option value="${escapeHtml(c)}" ${defaultCategory === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+            </select>
+            <button type="button" class="finance-pill finance-pill--mini finMoveCategoryCreateBtn" data-category-create disabled>+ Añadir</button>
+          </div>
+          <input class="fm-control finMoveCategoryNewInput" type="text" placeholder="Nueva categoría" value="" data-category-new aria-label="Nueva categoría" />
         </div>
 
         <div class="fm-field fm-field--note">
-          <label class="fm-label" for="fm-tx-note">Nota</label>
-          <textarea id="fm-tx-note" class="fm-control fm-control--note" name="note" rows="2" placeholder="Nota (opcional)" aria-label="Nota">${escapeHtml(defaultNote)}</textarea>
+          <textarea id="fm-tx-note" class="fm-control fm-control--note" name="note" rows="2" placeholder="Nota" aria-label="Nota">${escapeHtml(defaultNote)}</textarea>
         </div>
       </div>
 
@@ -13860,7 +13877,7 @@ function maybeToggleCategoryCreate(form) {
   const value = String(input.value || '').trim();
   const exists = categoriesList().some((row) => row.toLowerCase() === value.toLowerCase());
   btn.disabled = !value || exists;
-  btn.textContent = value ? `+ añadir "${value}"` : '+';
+  btn.textContent = value ? `Crear "${value}"` : '+ Añadir';
 }
 
 function ensureTxAdvancedDetails(form) {
@@ -13990,6 +14007,78 @@ function renderToast() {
   el.textContent = state.toast; el.classList.remove('hidden');
 }
 function toast(message) { state.toast = message; renderToast(); clearTimeout(state.toastTimer); state.toastTimer = setTimeout(() => { state.toast = ''; renderToast(); }, 1800); }
+function csvSafe(value) {
+  const text = value == null ? '' : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+function downloadCsv(filename, rows) {
+  const csv = rows.map((row) => row.map(csvSafe).join(',')).join('\n');
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function financeCsvDateValue(row = {}) {
+  return String(
+    row.dateISO
+    || row.date
+    || dayKeyFromTs(txTs(row) || Date.now())
+    || ''
+  ).trim() || 'Sin fecha';
+}
+function financeCsvAccountName(accountId = '') {
+  const account = findFinanceAccountById(accountId);
+  return String(account?.name || '').trim() || 'Sin cuenta';
+}
+function exportFinanceCsv() {
+  console.warn("[FINANCE_EXPORT_CSV] click recibido");
+  const header = ['tipo', 'id', 'fecha', 'cuenta', 'categoria', 'titulo', 'nota', 'importe', 'moneda', 'createdAt', 'updatedAt'];
+  const txRows = balanceTxList()
+    .slice()
+    .sort((a, b) => Number(txTs(b) || 0) - Number(txTs(a) || 0));
+  const dataRows = txRows.map((row) => {
+    const type = normalizeTxType(row?.type || '');
+    const accountLabel = type === 'transfer'
+      ? `${financeCsvAccountName(row?.fromAccountId)} -> ${financeCsvAccountName(row?.toAccountId)}`
+      : financeCsvAccountName(row?.accountId);
+    return [
+      type || 'movement',
+      String(row?.id || '').trim(),
+      financeCsvDateValue(row),
+      accountLabel,
+      resolveMovementCategoryValue(type, row?.category || ''),
+      String(row?.title || '').trim(),
+      String(row?.note || '').trim(),
+      Number.isFinite(Number(row?.amount)) ? String(Number(row.amount)) : '',
+      String(row?.accountCurrency || row?.currency || row?.originalCurrency || 'EUR').trim() || 'EUR',
+      String(row?.createdAt || '').trim(),
+      String(row?.updatedAt || '').trim(),
+    ];
+  });
+  const accountsRows = (state.accounts || []).map((account) => ([
+    'account',
+    String(account?.id || '').trim(),
+    'Sin fecha',
+    String(account?.name || '').trim() || 'Sin cuenta',
+    'Otros',
+    String(account?.type || account?.assetType || 'cuenta').trim(),
+    '',
+    Number.isFinite(Number(account?.current)) ? String(Number(account.current)) : '',
+    accountCurrency(account),
+    String(account?.createdAt || '').trim(),
+    String(account?.updatedAt || '').trim(),
+  ]));
+  const filename = `bookshell-finanzas-${dayKeyFromTs(Date.now())}.csv`;
+  downloadCsv(filename, [header, ...dataRows, ...accountsRows]);
+}
+function exportFinanceData() {
+  console.info("[FINANCE_EXPORT] clicked");
+}
 
 async function migrateLegacy(entriesMap = {}, accounts = []) {
   const updatesMap = {}; let writes = 0;
@@ -14898,7 +14987,7 @@ function bindEvents() {
           if (geometry.seriesData.length === 1) {
             const serie = geometry.seriesData[0];
             const val = serie.values[monthKey] || 0;
-            tooltipText = `${serie.emoji || ''} ${mm}/${yy}: ${fmtCurrency(val)}`;
+            tooltipText = `${serie.name || ''} ${mm}/${yy}: ${fmtCurrency(val)}`;
             color = serie.color;
           } else if (geometry.seriesData.length > 1) {
             tooltipText = `${mm}/${yy}`;
@@ -15151,8 +15240,8 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
           };
         });
         const category = String(state.balanceFormState.category || '').trim().toLowerCase() === 'sin categoría' || !String(state.balanceFormState.category || '').trim()
-          ? resolveTicketMovementCategory(parsed.data)
-          : (state.balanceFormState.category || importResult.updatedDraft.category || 'Sin categoría');
+          ? resolveMovementCategoryValue('expense', resolveTicketMovementCategory(parsed.data))
+          : resolveMovementCategoryValue('expense', state.balanceFormState.category || importResult.updatedDraft.category || '');
         state.balanceFormState = {
           ...state.balanceFormState,
           type: 'expense',
@@ -15239,7 +15328,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       const accountId = String(fd.get('accountId') || '').trim();
       const fromAccountId = String(fd.get('fromAccountId') || '').trim();
       const toAccountId = String(fd.get('toAccountId') || '').trim();
-      const category = String(fd.get('category') || '').trim();
+      const category = resolveMovementCategoryValue(type, String(fd.get('category') || '').trim());
 
       const step = normalizeTxWizardStep(state.balanceFormState.txWizardStep);
       if (step === 'base') {
@@ -15256,7 +15345,6 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       }
 
       if (step === 'category') {
-        if (!category) { toast('Selecciona una categoría'); return; }
         if (isFoodCategoryName(category)) {
           state.balanceFormState = { ...state.balanceFormState, txWizardStep: 'food' };
           triggerRender();
@@ -16030,7 +16118,10 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
       if (categorySelect && ![...categorySelect.options].some((opt) => opt.value === category)) {
         categorySelect.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`);
       }
-      if (categorySelect) categorySelect.value = category;
+      if (categorySelect) {
+        categorySelect.value = category;
+        categorySelect.dispatchEvent(new Event('change', { bubbles: true }));
+      }
       if (categoryInput) categoryInput.value = '';
       maybeToggleCategoryCreate(form);
       await toggleFoodExtras(form);
@@ -16059,6 +16150,8 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
       return;
     }
     if (target.closest('[data-history]')) { state.modal = { type: 'history' }; triggerRender(); return; }
+    if (target.closest('[data-finance-export-csv]')) { exportFinanceCsv(); return; }
+    if (target.closest('[data-finance-export]')) { exportFinanceData(); return; }
     if (target.closest('[data-new-account]')) { state.modal = { type: 'new-account' }; triggerRender(); return; }
     const openAccount = target.closest('[data-open-detail]')?.dataset.openDetail; if (openAccount && !target.closest('[data-account-input]') && !target.closest('[data-account-save]') && !target.closest('[data-delete-account]')) { openAccountDetail(openAccount); return; }
     const delAcc = target.closest('[data-delete-account]')?.dataset.deleteAccount; if (delAcc && window.confirm('¿Eliminar esta cuenta y todos sus registros?')) { await deleteAccount(delAcc); return; }
@@ -16998,7 +17091,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       if (targetAccountForMovement && !Number.isFinite(accountAmount)) { toast('No hay tasa para convertir a la moneda de la cuenta'); return; }
       const dateISO = toIsoDay(String(form.get('dateISO') || dayKeyFromTs(Date.now()))) || dayKeyFromTs(Date.now());
       const pickedCategory = String(form.get('category') || '').trim();
-      const category = type === 'transfer' ? 'transfer' : pickedCategory;
+      const category = resolveMovementCategoryValue(type, pickedCategory);
       const title = String(form.get('title') || '').trim();
       const note = String(form.get('note') || '').trim();
       const fromAccountId = String(form.get('fromAccountId') || '');
@@ -17036,7 +17129,6 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         return;
       }
       if ((type === 'income' || type === 'expense') && !accountId) { toast('Selecciona una cuenta'); return; }
-      if ((type === 'income' || type === 'expense') && !category) { toast('Selecciona una categoría'); return; }
       if (type === 'transfer' && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) { toast('Transferencia inválida: elige dos cuentas distintas'); return; }
       const mealType = normalizeFoodName(String(form.get('foodMealType') || ''));
       const cuisine = normalizeFoodName(String(form.get('foodCuisine') || ''));

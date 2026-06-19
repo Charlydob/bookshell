@@ -1,8 +1,9 @@
+const FINANCE_RUNTIME_VERSION = "2026-06-19-phase2-visible";
 let runtimeModule = null;
 
 export async function init() {
   if (runtimeModule) return;
-  runtimeModule = await import("./runtime.js");
+  runtimeModule = await import(`./runtime.js?v=${FINANCE_RUNTIME_VERSION}`);
   if (typeof runtimeModule.init === "function") {
     await runtimeModule.init();
   }

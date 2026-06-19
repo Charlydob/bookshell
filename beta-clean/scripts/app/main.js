@@ -98,6 +98,20 @@ const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
 
 registerPublicCatalogMigrationDebugApi();
 const __originalConsole = { ...console };
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.getRegistrations().then((regs) => {
+    regs.forEach((reg) => reg.unregister());
+    console.warn("Service workers eliminados:", regs.length);
+  }).catch(() => {});
+}
+
+if (window.caches) {
+  caches.keys().then((keys) => {
+    keys.forEach((key) => caches.delete(key));
+    console.warn("Caches eliminadas:", keys);
+  }).catch(() => {});
+}
+
 if (!window.appConsole) {
   const entries = [];
   let currentView = "";

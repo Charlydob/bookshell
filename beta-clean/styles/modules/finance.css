@@ -2738,6 +2738,44 @@ header.food-sheet-header h3{
   justify-content: flex-end;
 }
 
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple .finWizardBack,
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple .finWizardStep,
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple .finWizardNext{
+  display: none !important;
+}
+
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple[data-tx-step="base"] [data-category-block]{
+  display: flex !important;
+}
+
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple[data-tx-step="base"] .finWizardSubmit{
+  display: inline-flex !important;
+}
+
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple[data-tx-step="base"] details[data-section="food-extras"]:not([hidden]){
+  display: block !important;
+}
+
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple .finMoveCategoryRow{
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple .finMoveCategoryRow .fm-control--category{
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple .finMoveCategoryCreateBtn{
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple .finMoveCategoryNewInput{
+  width: 100%;
+}
+
 /* Wizard: pantallas */
 .financeTab #finance-modal.fin-move-modal[data-tx-step="base"] [data-category-block]{ display: none; }
 .financeTab #finance-modal.fin-move-modal[data-tx-step="base"] details[data-section="food-extras"]{ display: none; }
@@ -3012,6 +3050,7 @@ margin-bottom: 50px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+
 }
 
 .financeTab #finance-modal.finance-modal--account-merge {
@@ -9117,6 +9156,11 @@ grid-template-columns: 1fr auto;
   line-height: 1.35;
 }
 
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple .fm-field--title .fm-label,
+.financeTab #finance-modal.fin-move-modal.fin-move-modal--simple .fm-field--note .fm-label{
+  display: none;
+}
+
 .financeTab #finance-modal.fin-move-modal[data-tx-step="category"] .fm-field--title,
 .financeTab #finance-modal.fin-move-modal[data-tx-step="food"] .fm-field--title,
 .financeTab #finance-modal.fin-move-modal[data-tx-step="food"] .fm-field--note{
@@ -9138,4 +9182,19 @@ grid-template-columns: 1fr auto;
 .financeTab #finance-modalOverlay #finance-modal {
   position: relative;
   z-index: 30001;
+}
+#export-finance{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  gap: 6px;
+  padding: 0;
+  border-radius: 999px;
+  border: 0px solid rgba(171, 197, 255, .22);
+  background: none;
+}
+.finance-row-cuenta{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
 }

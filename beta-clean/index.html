@@ -150,6 +150,7 @@
       var done = false;
       var events = [];
       var pendingEvents = [];
+      var lastTechnicalError = null;
       var startedAt = Date.now();
       var watchdogSlowTimer = null;
       var watchdogFailTimer = null;
@@ -195,6 +196,20 @@
             });
           });
         }
+        var copyBtn = splash.querySelector('[data-role="boot-copy-error"]');
+        if (copyBtn && !copyBtn.dataset.bound) {
+          copyBtn.dataset.bound = '1';
+          copyBtn.addEventListener('click', function () {
+            var originalLabel = copyBtn.textContent;
+            Promise.resolve(copyTechnicalErrorPayload()).then(function () {
+              copyBtn.textContent = 'Error copiado';
+              window.setTimeout(function () { copyBtn.textContent = originalLabel; }, 1800);
+            }).catch(function () {
+              copyBtn.textContent = 'No se pudo copiar';
+              window.setTimeout(function () { copyBtn.textContent = originalLabel; }, 1800);
+            });
+          });
+        }
         flushPending();
         return true;
       }
@@ -216,7 +231,11 @@
         if (event.detailsText) details.push('Detalles: ' + event.detailsText);
         if (event.file) details.push('Archivo: ' + event.file);
         if (event.line) details.push('Línea: ' + event.line + (event.column ? ':' + event.column : ''));
+        if (event.moduleUrl) details.push('moduleUrl: ' + event.moduleUrl);
+        if (event.lastDynamicImport) details.push('lastDynamicImport: ' + event.lastDynamicImport);
+        if (event.phase) details.push('Fase: ' + event.phase);
         if (event.message) details.push('Motivo: ' + event.message);
+        if (event.stack) details.push('Stack: ' + event.stack);
         if (event.human) details.push('Explicación: ' + event.human);
         return [base].concat(details).join('\n');
       }
@@ -246,15 +265,69 @@
         if (!details) return '';
         try { return typeof details === 'string' ? details : JSON.stringify(details); } catch (_) { return String(details); }
       }
+      function extractStackLocation(stackValue) {
+        var match = String(stackValue || '').match(/((?:https?:\/\/|file:\/\/\/|\/)[^)\s]+?):(\d+):(\d+)/);
+        if (!match) return { filename: '', lineno: 0, colno: 0 };
+        return { filename: String(match[1] || ''), lineno: Number(match[2] || 0) || 0, colno: Number(match[3] || 0) || 0 };
+      }
+      function setTechnicalPayload(payload) {
+        lastTechnicalError = payload && typeof payload === 'object' ? payload : null;
+        window.__BOOKSHELL_LAST_ERROR_DETAILS__ = lastTechnicalError;
+        return lastTechnicalError;
+      }
+      function buildTechnicalPayload(error, details) {
+        var stack = String((details && details.stack) || (error && error.stack) || '');
+        var stackLocation = extractStackLocation(stack);
+        var payload = {
+          message: String((details && details.message) || (error && error.message) || error || ''),
+          filename: String((details && (details.filename || details.file || details.source)) || (error && (error.filename || error.fileName)) || stackLocation.filename || ''),
+          lineno: Number((details && (details.lineno || details.line)) || (error && (error.lineno || error.lineNumber)) || stackLocation.lineno || 0) || 0,
+          colno: Number((details && (details.colno || details.column)) || (error && (error.colno || error.columnNumber)) || stackLocation.colno || 0) || 0,
+          stack: stack,
+          name: String((details && (details.name || details.errorName)) || (error && error.name) || ''),
+          moduleUrl: String((details && details.moduleUrl) || (error && error.__bookshellModuleUrl) || ''),
+          lastDynamicImport: String((details && details.lastDynamicImport) || window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ || ''),
+          phase: String((details && details.phase) || (error && error.__bookshellPhase) || window.__BOOKSHELL_LAST_BOOT_PHASE__ || ''),
+          userAgent: navigator.userAgent,
+          locationHref: window.location.href,
+          serviceWorkerController: !!(navigator.serviceWorker && navigator.serviceWorker.controller),
+        };
+        if (!payload.moduleUrl && payload.lastDynamicImport) payload.moduleUrl = payload.lastDynamicImport;
+        return payload;
+      }
+      function copyTechnicalErrorPayload() {
+        var payload = lastTechnicalError || window.__BOOKSHELL_LAST_ERROR_DETAILS__ || buildTechnicalPayload(null, {});
+        var json = JSON.stringify(payload, null, 2);
+        return navigator.clipboard && navigator.clipboard.writeText
+          ? navigator.clipboard.writeText(json).then(function () { return json; })
+          : Promise.resolve(json);
+      }
       function record(level, label, error, details) {
+        var technicalPayload = buildTechnicalPayload(error, details);
+        setTechnicalPayload(technicalPayload);
         var icon = level === 'error' ? '❌' : (level === 'warn' ? '⚠️' : (level === 'ok' ? '✅' : '⏳'));
-        var message = String(error && (error.message || error.reason?.message || error.reason || error) || '');
-        var source = error && (error.filename || error.fileName || '') || '';
-        var lineNo = error && (error.lineno || error.lineNumber || 0);
-        var colNo = error && (error.colno || error.columnNumber || 0);
+        var message = technicalPayload.message;
+        var source = technicalPayload.filename;
+        var lineNo = technicalPayload.lineno;
+        var colNo = technicalPayload.colno;
         var detailsText = stringifyDetails(details);
         var human = toHumanError(message || String(error?.name || ''));
-        var event = { level: level, icon: icon, label: label, message: message, file: source, line: lineNo, column: colNo, detailsText: detailsText, human: human, ts: relativeTs() };
+        var event = {
+          level: level,
+          icon: icon,
+          label: label,
+          message: message,
+          file: source,
+          line: lineNo,
+          column: colNo,
+          moduleUrl: technicalPayload.moduleUrl,
+          lastDynamicImport: technicalPayload.lastDynamicImport,
+          phase: technicalPayload.phase,
+          stack: technicalPayload.stack,
+          detailsText: detailsText,
+          human: human,
+          ts: relativeTs()
+        };
         appendEvent(event);
         if (bootDebugStatusEl) {
           bootDebugStatusEl.textContent = 'Paso actual: ' + label + ' · Último completado: ' + (window.__bookshellLastOkStep || '—');
@@ -308,6 +381,8 @@
       }
 
       window.__bookshellBootSplash = { setPhase: setPhase, done: finish, markSlow: markSlow };
+      window.__bookshellSetTechnicalError = function (payload) { return setTechnicalPayload(payload || {}); };
+      window.__bookshellCopyTechnicalError = copyTechnicalErrorPayload;
       window.bootDebug = {
         step: function (label, details) { console.debug('[boot:step]', label, details || ''); record('step', String(label || 'Paso'), null, details); },
         ok: function (label, details) { console.debug('[boot:ok]', label, details || ''); record('ok', String(label || 'OK'), null, details); },
@@ -317,14 +392,26 @@
       };
       window.addEventListener('error', function (event) {
         window.bootDebug.error('Error global capturado', event.error || event, {
-          source: event.filename, line: event.lineno, column: event.colno, stack: event.error && event.error.stack ? String(event.error.stack).slice(0, 400) : ''
+          source: event.filename,
+          filename: event.filename,
+          line: event.lineno,
+          lineno: event.lineno,
+          column: event.colno,
+          colno: event.colno,
+          stack: event.error && event.error.stack ? String(event.error.stack) : '',
+          lastDynamicImport: window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ || '',
+          moduleUrl: window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ || '',
+          phase: window.__BOOKSHELL_LAST_BOOT_PHASE__ || ''
         });
       });
       window.addEventListener('unhandledrejection', function (event) {
         window.bootDebug.error('Promesa rechazada sin catch', event.reason || event, {
           reason: String(event.reason && (event.reason.message || event.reason) || ''),
           promise: String(event.promise || ''),
-          stack: event.reason && event.reason.stack ? String(event.reason.stack).slice(0, 400) : ''
+          stack: event.reason && event.reason.stack ? String(event.reason.stack) : '',
+          lastDynamicImport: window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ || '',
+          moduleUrl: event.reason && event.reason.__bookshellModuleUrl ? String(event.reason.__bookshellModuleUrl) : (window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ || ''),
+          phase: event.reason && event.reason.__bookshellPhase ? String(event.reason.__bookshellPhase) : (window.__BOOKSHELL_LAST_BOOT_PHASE__ || '')
         });
       });
 
@@ -364,6 +451,7 @@
         <div class="boot-debug-actions">
           <button type="button" data-role="boot-retry">Reintentar</button>
           <button type="button" data-role="boot-clear-cache">Limpiar caché y recargar</button>
+          <button type="button" data-role="boot-copy-error">Copiar error técnico</button>
         </div>
       </div>
     </div>

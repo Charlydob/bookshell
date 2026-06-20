@@ -1,0 +1,13 @@
+<!doctype html>
+<html><body><div id="status">PENDING</div><script type="module">
+import('/beta-clean/scripts/modules/finance/index.js').then(async (mod) => {
+  try {
+    await mod.init();
+    document.getElementById('status').textContent = 'INIT_OK';
+  } catch (e) {
+    document.getElementById('status').textContent = 'INIT_ERR::' + (e && (e.stack || e.message || String(e)));
+  }
+}).catch((e) => {
+  document.getElementById('status').textContent = 'IMPORT_ERR::' + (e && (e.stack || e.message || String(e)));
+});
+</script></body></html>

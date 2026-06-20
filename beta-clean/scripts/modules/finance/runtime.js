@@ -12,11 +12,23 @@ let db;
 window.__FINANCE_RUNTIME_VERSION = "FASE2_VISIBLE_REAL";
 console.warn("FINANCE REAL LOADED", window.__FINANCE_RUNTIME_VERSION);
 
+async function importFinanceDependency(modulePath) {
+  console.info("[finance import start]", modulePath);
+  try {
+    const moduleNamespace = await import(modulePath);
+    console.info("[finance import ok]", modulePath);
+    return moduleNamespace;
+  } catch (error) {
+    console.error("[finance import failed]", modulePath, error);
+    throw error;
+  }
+}
+
 async function ensureFinanceLoaded() {
   if (db && get && onValue && ref && auth && onUserChange) return;
-  const dbMod = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
+  const dbMod = await importFinanceDependency('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
   ({ get, onValue, push, ref, remove, set, update } = dbMod);
-  ({ db, auth, onUserChange } = await import('../../shared/firebase/index.js'));
+  ({ db, auth, onUserChange } = await importFinanceDependency('../../shared/firebase/index.js'));
 }
 
 import { DEVICE_KEY, HOME_PANEL_VIEW_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
@@ -30,6 +42,17 @@ import { logFirebaseRead, logFirebaseWrite, registerViewListener, trackedGet, tr
 import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
 import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, normalizeCurrencyCode } from './finance/currency-utils.js';
+import {
+  syncAccountDeleteToGoogleSheets,
+  syncAccountUpsertToGoogleSheets,
+  syncMovementCreateToGoogleSheets,
+  syncMovementDeleteToGoogleSheets,
+  syncMovementUpdateToGoogleSheets,
+  syncProductSummaryDeleteToGoogleSheets,
+  syncProductDeleteToGoogleSheets,
+  syncProductSummaryUpsertToGoogleSheets,
+  syncProductUpsertToGoogleSheets,
+} from './infrastructure/googleSheetsSync.js?v=2026-06-20-finance-syntax-fix';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -42,6 +65,7 @@ let financeRemoteApplyTimer = 0;
 let financeSubscriptionsStarted = false;
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
+const GOOGLE_SHEETS_PRODUCT_SUMMARY_KEYS_KEY = 'bookshell_finance_gs_product_summary_keys_v1';
 const FINANCE_OFFLINE_SNAPSHOT_MODULE = 'finance';
 const FINANCE_OFFLINE_SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const GLOBAL_PRODUCTS_PATH = PUBLIC_PATHS.foodItems;
@@ -1605,6 +1629,8 @@ function normalizeFoodEntityMap(map = {}) {
       healthy: normalizeFoodName(payload?.healthy || payload?.cuisine || ''),
       place: normalizeFoodName(payload?.place || payload?.foodPlace || ''),
       defaultPrice: Number(payload?.defaultPrice || 0),
+      lastCurrency: normalizeCurrencyCode(payload?.lastCurrency || payload?.currency || getDefaultCurrency()),
+      lastPriceEur: normalizeProductPositiveNumber(payload?.lastPriceEur, 0),
       ...normalizeFinanceProductMeta(payload, payload),
       priceHistory: normalizeFoodPriceHistory(payload?.priceHistory || {}),
       countUsed: Number(payload?.countUsed || payload?.count || 0),
@@ -1818,13 +1844,23 @@ async function recordFoodPricePoint(foodId, priceInput, source = "expense", opti
 
   const qty = Math.max(1, Number(options?.qty ?? 1));
   const unit = String(options?.unit ?? "ud").trim() || "ud";
+  const currency = normalizeCurrencyCode(options?.currency || food?.lastCurrency || getDefaultCurrency());
 
   const totalPrice = Number(options?.totalPrice ?? options?.linePrice ?? price);
   const unitPrice = Number(options?.unitPrice ?? computeUnitPrice(totalPrice, qty) ?? price);
+  const priceEur = Number.isFinite(Number(options?.priceEur))
+    ? Number(options.priceEur || 0)
+    : Number(normalizeMovementCurrencyPayload({
+      amount: unitPrice,
+      currency,
+      exchangeRateToEUR: Number(options?.exchangeRateToEUR || getCurrencyRates()[currency] || 1),
+    }).amountEUR || 0);
 
   const payload = {
     price: unitPrice,
     unitPrice,
+    currency,
+    priceEur,
     qty,
     unit,
     totalPrice,
@@ -1853,6 +1889,7 @@ async function recordFoodPricePoint(foodId, priceInput, source = "expense", opti
       [entryId]: payload
     }
   };
+  queueProductGoogleSheetsUpsert(safeFoodId);
 }
 
 async function deleteFoodPricePoint(foodId, vendor, entryId) {
@@ -5247,6 +5284,8 @@ async function deleteProductsHistoryTicket(ticketId = '') {
 
   if (txId) {
     removeLocalTxEverywhere(txId);
+    queueMovementGoogleSheetsDelete(txId);
+    collectProductIdsForGoogleSheets(ticket).forEach((productId) => queueProductGoogleSheetsUpsert(productId));
 
     const primaryCacheKey = getPrimaryFinanceCacheKey?.();
     if (primaryCacheKey && typeof patchFinanceCacheRoot === 'function') {
@@ -5257,11 +5296,14 @@ async function deleteProductsHistoryTicket(ticketId = '') {
     const movementAccountId = String(txRecord?.accountId || ticket.accountId || '').trim();
     if (movementAccountId && typeof persistRecomputedFinanceAccountEntries === 'function') {
       await persistRecomputedFinanceAccountEntries([movementAccountId], ticket.dateISO || dayKeyFromTs(nowTs()), 'receipt-delete');
+      queueAccountGoogleSheetsUpsert(movementAccountId);
     }
 
     if (typeof applyPatchedFinanceCaches === 'function') applyPatchedFinanceCaches('receipt-delete');
     if (typeof scheduleAggregateRebuild === 'function') scheduleAggregateRebuild();
   }
+
+  queueProductSummaryGoogleSheetsRefresh();
 
   toast(txId ? 'Ticket y movimiento eliminados' : 'Ticket eliminado del registro');
   triggerRender();
@@ -5641,6 +5683,10 @@ async function persistProductsHubSettings(patch = {}) {
     defaultPaymentMethod: normalizeProductText(patch.defaultPaymentMethod ?? state.productsHub?.settings?.defaultPaymentMethod ?? 'Tarjeta') || 'Tarjeta',
     ticketCategoryId: normalizeProductText(patch.ticketCategoryId ?? state.productsHub?.settings?.ticketCategoryId ?? ''),
     activeListId: String(patch.activeListId ?? state.productsHub?.settings?.activeListId ?? '').trim(),
+    storeCurrencies: {
+      ...(state.productsHub?.settings?.storeCurrencies || {}),
+      ...((patch.storeCurrencies && typeof patch.storeCurrencies === 'object') ? patch.storeCurrencies : {}),
+    },
   };
   state.productsHub = {
     ...(state.productsHub || normalizeProductsHub()),
@@ -6349,6 +6395,14 @@ function buildReceiptMovementLines(lines = [], list = {}, category = 'Compra') {
     const total = unitPrice * qty;
     const store = normalizeFoodName(line.store || list.store || productSnapshot?.preferredStore || productSnapshot?.place || '');
     const productId = String(line.productId || productSnapshot?.canonicalId || productSnapshot?.id || '').trim();
+    const currency = normalizeCurrencyCode(line.currency || list.ticketCurrency || list.currency || getDefaultCurrency());
+    const priceEur = Number.isFinite(Number(line.priceEUR))
+      ? Number(line.priceEUR || 0) / Math.max(qty, 0.01)
+      : Number(normalizeMovementCurrencyPayload({
+        amount: unitPrice,
+        currency,
+        exchangeRateToEUR: Number(line.exchangeRateToEUR || list.exchangeRateToEUR || 1),
+      }).amountEUR || 0);
     return {
       foodId: productId,
       productId,
@@ -6358,6 +6412,8 @@ function buildReceiptMovementLines(lines = [], list = {}, category = 'Compra') {
       qty,
       unit: normalizeProductUnit(line.unit || productSnapshot?.unit || 'ud'),
       unitPrice,
+      currency,
+      priceEur,
       amount: total,
       total,
       totalPrice: total,
@@ -6409,6 +6465,8 @@ async function syncReceiptCatalogAfterWrite(items = [], {
           preferredStore: item.place || store || '',
           defaultPrice: Number(item.unitPrice || 0),
           lastPrice: Number(item.unitPrice || 0),
+          lastCurrency: normalizeCurrencyCode(item.currency || getStoreDefaultCurrency(item.place || store || '') || getDefaultCurrency()),
+          lastPriceEur: Number(item.priceEur || 0),
           unit: item.unit || 'ud',
           lastPurchaseAt: dateISO,
         }, true, {
@@ -6416,6 +6474,8 @@ async function syncReceiptCatalogAfterWrite(items = [], {
           lastAccountId: accountId,
           lastNote: note,
           lastPrice: Number(item.unitPrice || 0),
+          lastCurrency: normalizeCurrencyCode(item.currency || getStoreDefaultCurrency(item.place || store || '') || getDefaultCurrency()),
+          lastPriceEur: Number(item.priceEur || 0),
           lastPurchaseAt: parseDayKey(dateISO),
           unit: item.unit || 'ud',
         });
@@ -6428,6 +6488,8 @@ async function syncReceiptCatalogAfterWrite(items = [], {
           date: dateISO,
           vendor: item.place || store || 'unknown',
           unitPrice: Number(item.unitPrice || 0),
+          currency: normalizeCurrencyCode(item.currency || getStoreDefaultCurrency(item.place || store || '') || getDefaultCurrency()),
+          priceEur: Number(item.priceEur || 0),
           qty: Math.max(1, Number(item.qty || 1)),
           unit: String(item.unit || 'ud'),
           totalPrice: Number(item.totalPrice || item.total || 0),
@@ -6610,6 +6672,8 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     });
     throw error;
   }
+
+  queueMovementGoogleSheetsCreate(payload);
 
   await syncReceiptCatalogAfterWrite(normalizedLines, {
     movementId: saveId,
@@ -6870,6 +6934,10 @@ async function confirmProductsTicketFromDom() {
     });
 
     await persistRecomputedFinanceAccountEntries([validation.accountId], confirmedDateISO, 'receipt-confirm');
+    queueAccountGoogleSheetsUpsert(validation.accountId);
+    void persistStoreDefaultCurrency(validation.store, receiptCurrency);
+    collectProductIdsForGoogleSheets(txResult?.payload || {}).forEach((productId) => queueProductGoogleSheetsUpsert(productId));
+    queueProductSummaryGoogleSheetsRefresh();
     financeReceiptLog('local-update:success', {
       movementId: txResult.txId,
       ticketId: activeTicketId,
@@ -7065,6 +7133,12 @@ function normalizeProductsHub(rawHub = {}) {
     defaultPaymentMethod: normalizeProductText(raw?.settings?.defaultPaymentMethod || 'Tarjeta') || 'Tarjeta',
     ticketCategoryId: normalizeProductText(raw?.settings?.ticketCategoryId || ''),
     activeListId: normalizeProductText(raw?.settings?.activeListId || ''),
+    storeCurrencies: Object.fromEntries(
+      Object.entries(raw?.settings?.storeCurrencies || {}).map(([key, value]) => [
+        firebaseSafeKey(key),
+        normalizeCurrencyCode(value || getDefaultCurrency()),
+      ]).filter(([key]) => key)
+    ),
   };
   return {
     settings,
@@ -7420,6 +7494,7 @@ async function ensureRecurringCurrentMonthInstances() {
   const txRows = balanceTxList();
   const updatesMap = {};
   const localPayloads = {};
+  const syncPayloads = {};
   const touchedAccounts = new Set();
   let recomputeStart = todayKey;
 
@@ -7436,6 +7511,14 @@ async function ensureRecurringCurrentMonthInstances() {
     const payload = buildRecurringInstancePayload(recurringId, recurringData, currentMonthKey, { autoCreated: true });
     updatesMap[`${state.financePath}/transactions/${nextId}`] = payload;
     localPayloads[nextId] = payload;
+    syncPayloads[nextId] = {
+      ...payload,
+      id: nextId,
+      title: String(recurringData?.title || '').trim(),
+      currency: recurringData?.currency || recurringData?.accountCurrency || recurringData?.originalCurrency || getDefaultCurrency(),
+      accountCurrency: recurringData?.accountCurrency || recurringData?.currency || '',
+      originalCurrency: recurringData?.originalCurrency || recurringData?.currency || '',
+    };
     [payload.accountId, payload.fromAccountId, payload.toAccountId].filter(Boolean).forEach((accountId) => touchedAccounts.add(accountId));
     if (scheduledDateISO < recomputeStart) recomputeStart = scheduledDateISO;
   });
@@ -7449,6 +7532,10 @@ async function ensureRecurringCurrentMonthInstances() {
     return [];
   }
 
+  Object.values(syncPayloads).forEach((payload) => {
+    queueMovementGoogleSheetsCreate(payload);
+  });
+
   state.balance = state.balance || {};
   state.balance.transactions = {
     ...(state.balance.transactions || {}),
@@ -7457,6 +7544,7 @@ async function ensureRecurringCurrentMonthInstances() {
   clearFinanceDerivedCaches();
 
   await persistRecomputedFinanceAccountEntries(Array.from(touchedAccounts), recomputeStart, 'recurring-materialize');
+  Array.from(touchedAccounts).forEach((accountId) => queueAccountGoogleSheetsUpsert(accountId));
 
   scheduleAggregateRebuild();
   return Object.keys(localPayloads);
@@ -7487,11 +7575,34 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
     ...prevEntity,
     ...payloadInput,
     unit: payloadInput.unit ?? patch.unit ?? prevEntity.unit,
-    lastPrice: payloadInput.lastPrice ?? patch.lastPrice ?? prevEntity.lastPrice ?? payloadInput.defaultPrice,
+    lastPrice: payloadInput.lastPrice ?? patch.lastPrice ?? payloadInput.defaultPrice ?? prevEntity.lastPrice,
     lastPurchaseAt: payloadInput.lastPurchaseAt ?? patch.lastPurchaseAt ?? prevEntity.lastPurchaseAt,
   }, prevEntity);
   const defaultPrice = normalizeProductPositiveNumber(
     payloadInput.defaultPrice ?? normalizedMeta.estimatedPrice ?? normalizedMeta.usualPrice ?? patch.lastPrice ?? prevEntity.defaultPrice ?? 0,
+    0,
+  );
+  const lastCurrency = normalizeCurrencyCode(
+    payloadInput.lastCurrency
+    ?? patch.lastCurrency
+    ?? prevEntity.lastCurrency
+    ?? payloadInput.currency
+    ?? getStoreDefaultCurrency(payloadInput.preferredStore || payloadInput.place || patch.lastExtras?.place || prevEntity.preferredStore || prevEntity.place || '')
+    ?? getDefaultCurrency(),
+  );
+  const lastPriceResolved = normalizeProductPositiveNumber(
+    payloadInput.lastPrice ?? patch.lastPrice ?? payloadInput.defaultPrice ?? prevEntity.lastPrice ?? defaultPrice,
+    defaultPrice,
+  );
+  const lastPriceEur = normalizeProductPositiveNumber(
+    payloadInput.lastPriceEur
+    ?? patch.lastPriceEur
+    ?? prevEntity.lastPriceEur
+    ?? normalizeMovementCurrencyPayload({
+      amount: lastPriceResolved,
+      currency: lastCurrency,
+      exchangeRateToEUR: lastCurrency === 'EUR' ? 1 : Number(payloadInput.exchangeRateToEUR || patch.exchangeRateToEUR || getCurrencyRates()[lastCurrency] || 1),
+    }).amountEUR,
     0,
   );
   const payload = {
@@ -7507,6 +7618,8 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
     healthy: normalizeFoodName(payloadInput.healthy ?? patch.lastExtras?.healthy ?? prevEntity.healthy ?? ''),
     place: normalizeFoodName(payloadInput.place ?? patch.lastExtras?.place ?? prevEntity.place ?? ''),
     defaultPrice,
+    lastCurrency,
+    lastPriceEur,
     ...normalizedMeta,
     priceHistory: prevEntity.priceHistory || {},
     countUsed: Number(prevEntity.countUsed || 0) + (incrementCount ? 1 : 0),
@@ -7533,6 +7646,7 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
   };
   state.food.items[legacyKey] = legacyPayload;
   await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodItems/${legacyKey}`), legacyPayload));
+  queueProductGoogleSheetsUpsert(foodId);
   if (auth?.currentUser?.uid) {
     const globalItem = {
       name: payload.displayName || payload.name,
@@ -14055,6 +14169,283 @@ function financeCsvNumber(value, fallback = '') {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? String(numeric) : fallback;
 }
+function googleSheetsMovementDateValue(row = {}) {
+  const raw = String(row?.date || row?.dateISO || '').trim();
+  if (!raw) return '';
+  return raw.includes('T') ? raw.slice(0, 10) : raw;
+}
+function roundGoogleSheetsAmount(value, decimals = 2) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  const factor = 10 ** Math.max(0, Number(decimals) || 0);
+  return Math.round(numeric * factor) / factor;
+}
+function mapMovementForGoogleSheets(row = {}) {
+  const type = normalizeTxType(row?.type || '');
+  const firstItem = Array.isArray(row?.items) && row.items.length
+    ? row.items[0]
+    : (Array.isArray(row?.extras?.items) && row.extras.items.length ? row.extras.items[0] : null);
+  const supermarketName = financeCsvText(
+    row?.supermarket
+    || row?.store
+    || row?.extras?.ticketData?.source?.vendor
+    || firstItem?.store
+    || firstItem?.place,
+    '',
+  );
+  const accountName = type === 'transfer'
+    ? `${financeCsvText(row?.fromAccountName || financeCsvAccountName(row?.fromAccountId), 'Sin cuenta')} -> ${financeCsvText(row?.toAccountName || financeCsvAccountName(row?.toAccountId), 'Sin cuenta')}`
+    : financeCsvText(row?.accountName || row?.accountNameSnapshot || financeCsvAccountName(row?.accountId), 'Sin cuenta');
+  const amountOriginal = Number.isFinite(Number(row?.originalAmount))
+    ? Number(row.originalAmount)
+    : Number(row?.totalOriginal ?? row?.amount ?? 0);
+  const amountEurRaw = Number.isFinite(Number(row?.convertedAmountEUR))
+    ? Number(row.convertedAmountEUR)
+    : Number((row?.totalEUR ?? normalizeMovementCurrencyPayload({
+      amount: amountOriginal,
+      currency: row?.originalCurrency || row?.inputCurrency || row?.currency || getDefaultCurrency(),
+      exchangeRateToEUR: Number(row?.exchangeRateToEUR || 1),
+    }).amountEUR) || 0);
+  return {
+    id: financeCsvText(row?.id, ''),
+    date: googleSheetsMovementDateValue(row),
+    accountName,
+    supermarketName,
+    categoryName: financeCsvText(row?.categoryName || resolveMovementCategoryValue(type, row?.category || ''), ''),
+    title: financeCsvText(row?.title, ''),
+    note: financeCsvText(row?.note, ''),
+    amountOriginal: roundGoogleSheetsAmount(amountOriginal),
+    currencyOriginal: financeCsvText(
+      row?.originalCurrency || row?.inputCurrency || row?.currency || getDefaultCurrency(),
+      getDefaultCurrency(),
+    ),
+    amountEur: roundGoogleSheetsAmount(amountEurRaw),
+    type: type || 'movement',
+    productId: financeCsvText(firstItem?.foodId || firstItem?.productId || firstItem?.productKey, ''),
+    ticketId: financeCsvText(row?.ticketId || row?.receiptId || row?.extras?.ticketData?.ticketId, ''),
+  };
+}
+function buildProductGoogleSheetsStatsMap() {
+  const rows = collectFinanceExportProductRows();
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const productId = financeCsvText(row?.productId, '');
+    const productName = financeCsvText(row?.product, '');
+    const key = productId || normalizeFoodCompareKey(productName) || productName.toLowerCase();
+    if (!key) return;
+    const current = grouped.get(key) || {
+      productId,
+      productName,
+      categoryName: financeCsvText(row?.categoryProduct, ''),
+      supermarketName: financeCsvText(row?.store, ''),
+      lastPrice: 0,
+      lastCurrency: financeCsvText(row?.currency, getDefaultCurrency()),
+      lastPriceEur: 0,
+      purchaseKeys: new Set(),
+      totalOriginal: 0,
+      totalEur: 0,
+      lastDate: '',
+    };
+    const purchaseKey = financeCsvText(row?.ticketId || row?.movementId || `${productName}:${row?.date || ''}`, '');
+    if (purchaseKey) current.purchaseKeys.add(purchaseKey);
+    current.totalOriginal += Number(row?.totalPriceValue || 0);
+    current.totalEur += Number(row?.totalPriceEurValue || 0);
+    const rowDate = financeCsvText(row?.date, '');
+    if (rowDate >= current.lastDate) {
+      current.lastDate = rowDate;
+      current.supermarketName = financeCsvText(row?.store, current.supermarketName);
+      current.categoryName = financeCsvText(row?.categoryProduct, current.categoryName);
+      current.lastPrice = Number(row?.unitPriceValue || 0);
+      current.lastCurrency = financeCsvText(row?.currency, current.lastCurrency || getDefaultCurrency());
+      current.lastPriceEur = Number(row?.unitPriceEurValue || 0);
+      if (productId) current.productId = productId;
+      if (productName) current.productName = productName;
+    }
+    grouped.set(key, current);
+  });
+  return grouped;
+}
+function buildProductGoogleSheetsRecord(productId = '') {
+  const safeProductId = String(productId || '').trim();
+  if (!safeProductId) return null;
+  const product = state.food.itemsById?.[safeProductId] || null;
+  if (!product) return null;
+  const statsMap = buildProductGoogleSheetsStatsMap();
+  const stats = statsMap.get(safeProductId)
+    || statsMap.get(normalizeFoodCompareKey(product.name || '') || String(product.name || '').toLowerCase())
+    || null;
+  const currency = financeCsvText(
+    stats?.lastCurrency || product?.lastCurrency || getStoreDefaultCurrency(product?.preferredStore || product?.place || stats?.supermarketName || '') || getDefaultCurrency(),
+    getDefaultCurrency(),
+  );
+  const lastPrice = roundGoogleSheetsAmount(
+    stats?.lastPrice ?? product?.lastPrice ?? product?.defaultPrice ?? 0,
+  );
+  const lastPriceEur = roundGoogleSheetsAmount(
+    stats?.lastPriceEur
+    ?? product?.lastPriceEur
+    ?? normalizeMovementCurrencyPayload({
+      amount: lastPrice,
+      currency,
+      exchangeRateToEUR: currency === 'EUR' ? 1 : Number(getCurrencyRates()[currency] || 1),
+    }).amountEUR
+    ?? 0,
+  );
+  return {
+    id: safeProductId,
+    name: financeCsvText(product?.displayName || product?.name, ''),
+    categoryName: financeCsvText(product?.productCategory || product?.productType || product?.mealType || product?.cuisine || stats?.categoryName, ''),
+    supermarketName: financeCsvText(product?.preferredStore || product?.place || stats?.supermarketName, ''),
+    lastPrice,
+    lastCurrency: currency,
+    lastPriceEur,
+    purchaseCount: Number(stats?.purchaseKeys?.size || product?.countUsed || 0),
+    totalOriginal: roundGoogleSheetsAmount(stats?.totalOriginal || 0),
+    totalEur: roundGoogleSheetsAmount(stats?.totalEur || 0),
+    updatedAt: financeCsvTimestampValue(product?.updatedAt),
+  };
+}
+function buildProductSummaryGoogleSheetsRows() {
+  const rows = collectFinanceExportProductRows();
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const product = financeCsvText(row?.product, '');
+    const supermarketName = financeCsvText(row?.store, '');
+    if (!product || !supermarketName) return;
+    const key = `${normalizeFoodCompareKey(product) || product.toLowerCase()}__${supermarketName.toLowerCase()}`;
+    const current = grouped.get(key) || {
+      product,
+      supermarketName,
+      purchaseKeys: new Set(),
+      lastPrice: 0,
+      lastCurrency: financeCsvText(row?.currency, getDefaultCurrency()),
+      totalOriginal: 0,
+      totalEur: 0,
+      lastDate: '',
+    };
+    const purchaseKey = financeCsvText(row?.ticketId || row?.movementId || `${product}:${row?.date || ''}`, '');
+    if (purchaseKey) current.purchaseKeys.add(purchaseKey);
+    current.totalOriginal += Number(row?.totalPriceValue || 0);
+    current.totalEur += Number(row?.totalPriceEurValue || 0);
+    if (financeCsvText(row?.date, '') >= current.lastDate) {
+      current.lastDate = financeCsvText(row?.date, '');
+      current.lastPrice = Number(row?.unitPriceValue || 0);
+      current.lastCurrency = financeCsvText(row?.currency, current.lastCurrency || getDefaultCurrency());
+    }
+    grouped.set(key, current);
+  });
+  return [...grouped.values()].map((row) => ({
+    product: row.product,
+    supermarketName: row.supermarketName,
+    purchaseCount: Number(row.purchaseKeys.size || 0),
+    lastPrice: roundGoogleSheetsAmount(row.lastPrice),
+    lastCurrency: financeCsvText(row.lastCurrency, getDefaultCurrency()),
+    totalOriginal: roundGoogleSheetsAmount(row.totalOriginal),
+    totalEur: roundGoogleSheetsAmount(row.totalEur),
+  }));
+}
+function buildAccountGoogleSheetsRecord(accountId = '') {
+  const safeAccountId = String(accountId || '').trim();
+  if (!safeAccountId) return null;
+  const account = buildAccountModels().find((row) => String(row?.id || '').trim() === safeAccountId) || null;
+  if (!account) return null;
+  const currency = accountCurrency(account);
+  const balance = Number(account?.currentReal ?? account?.current ?? 0);
+  return {
+    id: safeAccountId,
+    name: financeCsvText(account?.name, ''),
+    type: financeCsvText(account?.assetType, 'cash'),
+    balance: roundGoogleSheetsAmount(balance, currency === 'BTC' ? 8 : 2),
+    currency,
+    balanceEur: roundGoogleSheetsAmount(convertCurrency(balance, currency, 'EUR', getFinanceCurrencyRates()) || 0),
+    updatedAt: financeCsvTimestampValue(account?.updatedAt),
+  };
+}
+function collectProductIdsForGoogleSheets(row = {}) {
+  const ids = new Set();
+  const addId = (value) => {
+    const safeValue = String(value || '').trim();
+    if (safeValue) ids.add(safeValue);
+  };
+  addId(row?.productId);
+  addId(row?.foodId);
+  const items = Array.isArray(row?.items) && row.items.length
+    ? row.items
+    : (Array.isArray(row?.extras?.items) ? row.extras.items : []);
+  items.forEach((item) => {
+    addId(item?.foodId);
+    addId(item?.productId);
+  });
+  const ticketLines = row?.lines && typeof row.lines === 'object' ? Object.values(row.lines) : [];
+  ticketLines.forEach((line) => addId(line?.productId));
+  return [...ids];
+}
+function queueMovementGoogleSheetsCreate(row = {}) {
+  const movement = mapMovementForGoogleSheets(row);
+  if (!movement.id) return;
+  void syncMovementCreateToGoogleSheets(movement);
+}
+function queueMovementGoogleSheetsUpdate(row = {}) {
+  const movement = mapMovementForGoogleSheets(row);
+  if (!movement.id) return;
+  void syncMovementUpdateToGoogleSheets(movement);
+}
+function queueMovementGoogleSheetsDelete(movementId = '') {
+  const safeMovementId = String(movementId || '').trim();
+  if (!safeMovementId) return;
+  void syncMovementDeleteToGoogleSheets(safeMovementId);
+}
+function queueProductGoogleSheetsUpsert(productId = '') {
+  const product = buildProductGoogleSheetsRecord(productId);
+  if (!product?.id) return;
+  void syncProductUpsertToGoogleSheets(product);
+}
+function queueProductGoogleSheetsDelete(productId = '') {
+  const safeProductId = String(productId || '').trim();
+  if (!safeProductId) return;
+  void syncProductDeleteToGoogleSheets(safeProductId);
+}
+function queueAccountGoogleSheetsUpsert(accountId = '') {
+  const account = buildAccountGoogleSheetsRecord(accountId);
+  if (!account?.id) return;
+  void syncAccountUpsertToGoogleSheets(account);
+}
+function queueAccountGoogleSheetsDelete(accountId = '') {
+  const safeAccountId = String(accountId || '').trim();
+  if (!safeAccountId) return;
+  void syncAccountDeleteToGoogleSheets(safeAccountId);
+}
+function productSummaryGoogleSheetsKey(summary = {}) {
+  return `${financeCsvText(summary?.product, '').toLowerCase()}__${financeCsvText(summary?.supermarketName, '').toLowerCase()}`;
+}
+function queueProductSummaryGoogleSheetsRefresh() {
+  const summaries = buildProductSummaryGoogleSheetsRows();
+  const currentRecords = new Map();
+  summaries.forEach((summary) => {
+    if (!summary?.product || !summary?.supermarketName) return;
+    currentRecords.set(productSummaryGoogleSheetsKey(summary), {
+      product: financeCsvText(summary.product, ''),
+      supermarketName: financeCsvText(summary.supermarketName, ''),
+    });
+    void syncProductSummaryUpsertToGoogleSheets(summary);
+  });
+  let previousRecords = [];
+  try {
+    previousRecords = JSON.parse(window?.localStorage?.getItem(GOOGLE_SHEETS_PRODUCT_SUMMARY_KEYS_KEY) || '[]');
+  } catch (_) {
+    previousRecords = [];
+  }
+  previousRecords.forEach((record) => {
+    const safeRecord = record && typeof record === 'object' ? record : {};
+    const safeKey = productSummaryGoogleSheetsKey(safeRecord);
+    if (!safeKey || currentRecords.has(safeKey)) return;
+    if (!safeRecord.product || !safeRecord.supermarketName) return;
+    void syncProductSummaryDeleteToGoogleSheets(safeRecord);
+  });
+  try {
+    window?.localStorage?.setItem(GOOGLE_SHEETS_PRODUCT_SUMMARY_KEYS_KEY, JSON.stringify([...currentRecords.values()]));
+  } catch (_) {}
+}
 function financeCsvMoneyDecimals(currency = '') {
   return String(currency || '').trim().toUpperCase() === 'BTC' ? 8 : 2;
 }
@@ -14152,7 +14543,20 @@ function collectFinanceExportProductRows() {
       const qty = Math.max(0.01, Number(line?.qty || 1));
       const unitPrice = Number.isFinite(Number(line?.actualPrice)) ? Number(line.actualPrice) : Number(line?.estimatedPrice || 0);
       const totalPrice = qty * (Number.isFinite(unitPrice) ? unitPrice : 0);
+      const unitPriceEur = Number.isFinite(Number(line?.priceEUR)) ? (Number(line.priceEUR || 0) / Math.max(qty, 0.01)) : Number(normalizeMovementCurrencyPayload({
+        amount: unitPrice,
+        currency: line?.currency || ticket?.currency || ticket?.ticketCurrency || 'EUR',
+        exchangeRateToEUR: Number(ticket?.exchangeRateToEUR || line?.exchangeRateToEUR || 1),
+      }).amountEUR || 0);
+      const totalPriceEur = Number.isFinite(Number(line?.priceEUR))
+        ? Number(line.priceEUR || 0)
+        : Number(normalizeMovementCurrencyPayload({
+          amount: totalPrice,
+          currency: line?.currency || ticket?.currency || ticket?.ticketCurrency || 'EUR',
+          exchangeRateToEUR: Number(ticket?.exchangeRateToEUR || line?.exchangeRateToEUR || 1),
+        }).amountEUR || 0);
       rows.push({
+        productId: financeCsvText(line?.productId || '', ''),
         ticketId: financeCsvText(ticket?.id, ''),
         movementId: financeCsvText(ticket?.movementId || ticket?.txId, ''),
         date: financeCsvText(ticket?.dateISO, 'Sin fecha'),
@@ -14165,6 +14569,10 @@ function collectFinanceExportProductRows() {
         totalPrice: financeCsvMoney(totalPrice, line?.currency || ticket?.currency || ticket?.ticketCurrency || 'EUR', ''),
         currency: financeCsvText(line?.currency || ticket?.currency || ticket?.ticketCurrency || 'EUR', 'EUR'),
         note: financeCsvText(line?.note || ticket?.note, ''),
+        unitPriceValue: unitPrice,
+        totalPriceValue: totalPrice,
+        unitPriceEurValue: unitPriceEur,
+        totalPriceEurValue: totalPriceEur,
       });
     });
   });
@@ -14178,7 +14586,13 @@ function collectFinanceExportProductRows() {
         const qty = Math.max(0.01, Number(line?.qty || 1));
         const unitPrice = Number.isFinite(Number(line?.actualPrice)) ? Number(line.actualPrice) : Number(line?.estimatedPrice || 0);
         const totalPrice = qty * (Number.isFinite(unitPrice) ? unitPrice : 0);
+        const totalPriceEur = Number(normalizeMovementCurrencyPayload({
+          amount: totalPrice,
+          currency: line?.currency || 'EUR',
+          exchangeRateToEUR: Number(line?.exchangeRateToEUR || 1),
+        }).amountEUR || 0);
         rows.push({
+          productId: financeCsvText(line?.productId || '', ''),
           ticketId: financeCsvText(line?.ticketId || list?.ticketId || list?.primaryTicketId, ''),
           movementId: '',
           date: financeCsvText(list?.plannedFor, 'Sin fecha'),
@@ -14191,6 +14605,10 @@ function collectFinanceExportProductRows() {
           totalPrice: financeCsvMoney(totalPrice, line?.currency || 'EUR', ''),
           currency: financeCsvText(line?.currency || 'EUR', 'EUR'),
           note: financeCsvText(line?.note || list?.notes, ''),
+          unitPriceValue: unitPrice,
+          totalPriceValue: totalPrice,
+          unitPriceEurValue: Number(totalPriceEur / Math.max(qty, 0.01)),
+          totalPriceEurValue: totalPriceEur,
         });
       });
     });
@@ -14203,7 +14621,16 @@ function collectFinanceExportProductRows() {
         const qty = Math.max(0.01, Number(item?.qty || 1));
         const totalPrice = Number.isFinite(Number(item?.totalPrice)) ? Number(item.totalPrice) : Number(item?.amount || item?.price || 0);
         const unitPriceBase = Number.isFinite(Number(item?.unitPrice)) ? Number(item.unitPrice) : (qty > 0 ? totalPrice / qty : 0);
+        const currency = financeCsvText(item?.currency || tx?.originalCurrency || tx?.accountCurrency || tx?.currency || 'EUR', 'EUR');
+        const totalPriceEur = Number.isFinite(Number(item?.priceEur))
+          ? Number(item.priceEur || 0) * qty
+          : Number(normalizeMovementCurrencyPayload({
+            amount: totalPrice,
+            currency,
+            exchangeRateToEUR: Number(tx?.exchangeRateToEUR || 1),
+          }).amountEUR || 0);
         rows.push({
+          productId: financeCsvText(item?.foodId || item?.productId || item?.productKey, ''),
           ticketId: '',
           movementId: financeCsvText(tx?.id, ''),
           date: financeCsvDateValue(tx),
@@ -14212,10 +14639,14 @@ function collectFinanceExportProductRows() {
           product: financeCsvText(item?.name, ''),
           categoryProduct: financeCsvText(item?.mealType || item?.cuisine, ''),
           quantity: financeCsvNumber(qty, '1'),
-          unitPrice: financeCsvMoney(unitPriceBase, tx?.accountCurrency || tx?.currency || 'EUR', ''),
-          totalPrice: financeCsvMoney(totalPrice, tx?.accountCurrency || tx?.currency || 'EUR', ''),
-          currency: financeCsvText(tx?.accountCurrency || tx?.currency || 'EUR', 'EUR'),
+          unitPrice: financeCsvMoney(unitPriceBase, currency, ''),
+          totalPrice: financeCsvMoney(totalPrice, currency, ''),
+          currency,
           note: financeCsvText(item?.note || tx?.note || '', ''),
+          unitPriceValue: unitPriceBase,
+          totalPriceValue: totalPrice,
+          unitPriceEurValue: Number(totalPriceEur / Math.max(qty, 0.01)),
+          totalPriceEurValue: totalPriceEur,
         });
       });
     });
@@ -14848,6 +15279,7 @@ async function addAccount({ name, shared = false, sharedRatio = 0.5, assetType =
     syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
     await recomputeAccountEntries(id, day);
   }
+  queueAccountGoogleSheetsUpsert(id);
 }
 
 function syncNewAccountFormUI(formEl) {
@@ -14882,6 +15314,7 @@ async function updateAccountMeta(accountId, payload = {}) {
   syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
   clearFinanceDerivedCaches();
   scheduleFinanceSnapshotSave('account-meta-update');
+  queueAccountGoogleSheetsUpsert(accountId);
 }
 async function saveSnapshot(accountId, day, value) {
   const parsedValue = parseEuroNumber(value);
@@ -14892,6 +15325,7 @@ async function saveSnapshot(accountId, day, value) {
     await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { btcUnits: parsedValue, currency: 'BTC', assetType: 'crypto', isBitcoin: true, updatedAt: nowTs() }));
   }
   await recomputeAccountEntries(accountId, day);
+  queueAccountGoogleSheetsUpsert(accountId);
   toast('Guardado');
   return true;
 }
@@ -14900,8 +15334,12 @@ async function deleteDay(accountId, day) {
   await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`)));
   await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/entries/${day}`)));
   await recomputeAccountEntries(accountId, day);
+  queueAccountGoogleSheetsUpsert(accountId);
 }
-async function deleteAccount(accountId) { await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}`))); }
+async function deleteAccount(accountId) {
+  await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}`)));
+  queueAccountGoogleSheetsDelete(accountId);
+}
 
 function mergeAccountEntryMaps(destinationAccount = {}, sourceAccounts = [], legacyEntries = {}) {
   const merged = {};
@@ -16408,6 +16846,10 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
   await persistRecomputedFinanceAccountEntries([...new Set(touched)], existing.date || isoToDay(existing.dateISO || ''), 'delete-transaction');
   removeLocalTxEverywhere(txDelete);
   clearFinanceDerivedCaches();
+  queueMovementGoogleSheetsDelete(txDelete);
+  [...new Set(touched)].forEach((accountId) => queueAccountGoogleSheetsUpsert(accountId));
+  collectProductIdsForGoogleSheets(existing).forEach((productId) => queueProductGoogleSheetsUpsert(productId));
+  queueProductSummaryGoogleSheetsRefresh();
 
   toast('Movimiento eliminado');
   scheduleAggregateRebuild();
@@ -16820,8 +17262,6 @@ view.addEventListener('focusout', async (event) => {
     if (event.target.matches('[data-products-store-select], [data-products-receipt-date], [data-products-receipt-payment], [data-products-ticket-category], [data-products-receipt-currency]')) {
       if (event.target.matches('[data-products-receipt-currency]')) {
         const currency = String(event.target.value || '').toUpperCase();
-        const draftForStoreCurrency = readProductsListDraftFromDom(view);
-        if (draftForStoreCurrency.store) await persistStoreDefaultCurrency(draftForStoreCurrency.store, currency);
         console.info('[finance:currency] selected', { currency });
         if (state.productsReceiptError) setProductsReceiptError('');
         await applyTicketCurrencyRateFromApi(view, currency);
@@ -17347,6 +17787,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       if (!touched.length) { toast('Sin cambios'); return; }
       await safeFirebase(() => update(ref(db), updatesMap));
       for (const accountId of touched) await recomputeAccountEntries(accountId, day);
+      touched.forEach((accountId) => queueAccountGoogleSheetsUpsert(accountId));
       state.modal = { type: null };
       toast('Saldos guardados');
       triggerRender();
@@ -17510,6 +17951,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         const duplicate = findRecurringInstanceTx(effectiveRecurringId, recurringMonthKey, balanceTxList(), linkedRecurringTemplate);
         if (duplicate) prev = duplicate;
       }
+      const isNewMovement = !String(txId || '').trim() && !String(prev?.id || '').trim();
       const saveId = txId || prev?.id || push(ref(db, `${state.financePath}/transactions`)).key;
       console.log('[finance:edit:save:start]', { txId, saveId, hasPrev: !!prev });
       const writeTs = nowTs();
@@ -17621,10 +18063,19 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         setMovementFormBusy(formEl, false);
         return;
       }
+      if (isNewMovement) queueMovementGoogleSheetsCreate(payload);
+      else queueMovementGoogleSheetsUpdate(payload);
       if (extras?.items?.length) {
         try {
           await ensureFoodCatalogLoaded();
           for (const foodItem of extras.items) {
+            const foodItemUnitPrice = Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount);
+            const foodItemCurrency = normalizeCurrencyCode(foodItem.currency || movementCurrency || getDefaultCurrency());
+            const foodItemPriceEur = Number(foodItem.priceEur || normalizeMovementCurrencyPayload({
+              amount: foodItemUnitPrice,
+              currency: foodItemCurrency,
+              exchangeRateToEUR: Number(currencyPayload.exchangeRateToEUR || 1),
+            }).amountEUR || 0);
             const savedFoodId = await upsertFoodItem({
               id: foodItem.foodId || '',
               name: foodItem.name,
@@ -17632,14 +18083,26 @@ if (event.target.matches('[data-fixed-expense-form]')) {
               cuisine: foodItem.cuisine || cuisine,
               healthy: foodItem.healthy || foodItem.cuisine || cuisine,
               place: foodItem.place || place,
-              defaultPrice: Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount)
-            }, true, { lastCategory: category, lastAccountId: accountId, lastNote: note });
+              defaultPrice: foodItemUnitPrice,
+              lastPrice: foodItemUnitPrice,
+              lastCurrency: foodItemCurrency,
+              lastPriceEur: foodItemPriceEur,
+            }, true, {
+              lastCategory: category,
+              lastAccountId: accountId,
+              lastNote: note,
+              lastPrice: foodItemUnitPrice,
+              lastCurrency: foodItemCurrency,
+              lastPriceEur: foodItemPriceEur,
+            });
             foodItem.foodId = savedFoodId;
-            await recordFoodPricePoint(savedFoodId, Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount), 'expense', {
+            await recordFoodPricePoint(savedFoodId, foodItemUnitPrice, 'expense', {
               ts: dateISO ? parseDayKey(dateISO) : nowTs(),
               date: dateISO || dayKeyFromTs(nowTs()),
               vendor: foodItem.place || place || 'unknown',
-              unitPrice: Number(foodItem.unitPrice || computeUnitPrice(foodItem.totalPrice || foodItem.amount || foodItem.price, foodItem.qty || 1) || amount),
+              unitPrice: foodItemUnitPrice,
+              currency: foodItemCurrency,
+              priceEur: foodItemPriceEur,
               qty: Math.max(1, Number(foodItem.qty || 1)),
               unit: String(foodItem.unit || 'ud').trim() || 'ud',
               totalPrice: Number(foodItem.totalPrice || foodItem.amount || foodItem.price || amount),
@@ -17662,6 +18125,11 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       } catch (error) {
         log('no se pudieron recalcular los apuntes de cuenta tras guardar el movimiento', error);
         toast('Movimiento guardado; no se pudo recalcular cuentas');
+      }
+      Array.from(touched).forEach((accountId) => queueAccountGoogleSheetsUpsert(accountId));
+      if (extras?.items?.length) {
+        collectProductIdsForGoogleSheets(payload).forEach((productId) => queueProductGoogleSheetsUpsert(productId));
+        queueProductSummaryGoogleSheetsRefresh();
       }
       state.balance = state.balance || {};
       state.balance.transactions = {

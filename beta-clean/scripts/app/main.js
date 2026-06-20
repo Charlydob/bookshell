@@ -88,6 +88,7 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
+const FINANCE_MODULE_VERSION = "2026-06-20-finance-index-hotfix-1";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
@@ -98,6 +99,118 @@ const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
 
 registerPublicCatalogMigrationDebugApi();
 const __originalConsole = { ...console };
+window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ = String(window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ || "");
+window.__BOOKSHELL_LAST_BOOT_PHASE__ = String(window.__BOOKSHELL_LAST_BOOT_PHASE__ || "boot:init");
+window.__BOOKSHELL_LAST_ERROR_DETAILS__ = window.__BOOKSHELL_LAST_ERROR_DETAILS__ && typeof window.__BOOKSHELL_LAST_ERROR_DETAILS__ === "object"
+  ? window.__BOOKSHELL_LAST_ERROR_DETAILS__
+  : null;
+
+function extractErrorLocationFromStack(stackValue = "") {
+  const match = String(stackValue || "").match(/((?:https?:\/\/|file:\/\/\/|\/)[^)\s]+?):(\d+):(\d+)/);
+  if (!match) return { filename: "", lineno: 0, colno: 0 };
+  return {
+    filename: String(match[1] || ""),
+    lineno: Number(match[2] || 0) || 0,
+    colno: Number(match[3] || 0) || 0,
+  };
+}
+
+function buildTechnicalErrorPayload(error = null, extra = {}) {
+  const stack = String(extra.stack ?? error?.stack ?? "");
+  const stackLocation = extractErrorLocationFromStack(stack);
+  const filename = String(
+    extra.filename
+    || extra.file
+    || extra.source
+    || error?.filename
+    || error?.fileName
+    || stackLocation.filename
+    || "",
+  );
+  const lineno = Number(
+    extra.lineno
+    ?? extra.line
+    ?? error?.lineno
+    ?? error?.lineNumber
+    ?? stackLocation.lineno
+    ?? 0
+  ) || 0;
+  const colno = Number(
+    extra.colno
+    ?? extra.column
+    ?? error?.colno
+    ?? error?.columnNumber
+    ?? stackLocation.colno
+    ?? 0
+  ) || 0;
+  const payload = {
+    name: String(extra.name || extra.errorName || error?.name || ""),
+    message: String(extra.message || extra.errorMessage || error?.message || error || ""),
+    filename,
+    lineno,
+    colno,
+    stack,
+    cause: String(extra.cause || error?.cause?.message || error?.cause || ""),
+    moduleUrl: String(extra.moduleUrl || error?.__bookshellModuleUrl || ""),
+    lastDynamicImport: String(extra.lastDynamicImport || window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ || ""),
+    phase: String(extra.phase || error?.__bookshellPhase || window.__BOOKSHELL_LAST_BOOT_PHASE__ || ""),
+    viewId: String(extra.viewId || ""),
+    locationHref: window.location.href,
+    userAgent: navigator.userAgent,
+    serviceWorkerController: !!navigator.serviceWorker?.controller,
+  };
+  if (!payload.moduleUrl && payload.lastDynamicImport) {
+    payload.moduleUrl = payload.lastDynamicImport;
+  }
+  return payload;
+}
+
+function rememberTechnicalError(context, error = null, extra = {}) {
+  const payload = buildTechnicalErrorPayload(error, { ...extra, context });
+  window.__BOOKSHELL_LAST_ERROR_DETAILS__ = payload;
+  if (typeof window.__bookshellSetTechnicalError === "function") {
+    try {
+      window.__bookshellSetTechnicalError(payload);
+    } catch (_) {}
+  }
+  return payload;
+}
+
+async function copyTechnicalErrorReport() {
+  const payload = window.__BOOKSHELL_LAST_ERROR_DETAILS__ || buildTechnicalErrorPayload(null, {});
+  const text = JSON.stringify(payload, null, 2);
+  await navigator.clipboard?.writeText?.(text);
+  return text;
+}
+
+window.__bookshellCopyTechnicalError = copyTechnicalErrorReport;
+
+window.addEventListener("error", (event) => {
+  const payload = rememberTechnicalError("global-error", event?.error || null, {
+    message: event?.message,
+    filename: event?.filename,
+    lineno: event?.lineno,
+    colno: event?.colno,
+    stack: event?.error?.stack || "",
+    phase: window.__BOOKSHELL_LAST_BOOT_PHASE__ || "global-error",
+  });
+  __originalConsole.error?.("[global error detailed]", payload);
+  window.appConsole?.log?.("error", payload.message || "Error global", payload);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event?.reason;
+  const payload = rememberTechnicalError("global-unhandledrejection", reason || null, {
+    name: reason?.name,
+    message: reason?.message || String(reason || "Promesa rechazada"),
+    stack: reason?.stack || "",
+    cause: reason?.cause,
+    phase: window.__BOOKSHELL_LAST_BOOT_PHASE__ || "global-unhandledrejection",
+  });
+  __originalConsole.error?.("[global unhandledrejection detailed]", { ...payload, reason });
+  window.appConsole?.log?.("error", payload.message || "Promesa rechazada", payload);
+});
+
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.getRegistrations().then((regs) => {
     regs.forEach((reg) => reg.unregister());
@@ -137,8 +250,6 @@ if (!window.appConsole) {
       window.appConsole.log(level, summary, { args: args.slice(0, 3) });
     };
   });
-  window.addEventListener("error", (event) => window.appConsole.log("error", event?.error?.message || event.message || "Error global", { file: event.filename, line: event.lineno, col: event.colno, stack: event?.error?.stack || "" }));
-  window.addEventListener("unhandledrejection", (event) => window.appConsole.log("error", event?.reason?.message || String(event?.reason || "Promesa rechazada"), { stack: event?.reason?.stack || "" }));
 }
 
 function getGlobalQuickFabIconMarkup(actionKey) {
@@ -242,16 +353,27 @@ function buildViewInitDebug(viewId, extra = {}) {
 }
 
 function describeViewInitError(error) {
+  const payload = buildTechnicalErrorPayload(error);
   return {
-    errorName: String(error?.name || ""),
-    message: String(error?.message || error || ""),
-    stack: String(error?.stack || ""),
-    cause: error?.cause ? String(error.cause?.message || error.cause || "") : "",
+    errorName: payload.name,
+    message: payload.message,
+    stack: payload.stack,
+    cause: payload.cause,
+    filename: payload.filename,
+    lineno: payload.lineno,
+    colno: payload.colno,
+    moduleUrl: payload.moduleUrl,
+    lastDynamicImport: payload.lastDynamicImport,
+    phase: payload.phase,
+    locationHref: payload.locationHref,
+    userAgent: payload.userAgent,
+    serviceWorkerController: payload.serviceWorkerController,
   };
 }
 
 function logViewInit(viewId, phase, extra = {}, level = "info") {
   const payload = buildViewInitDebug(viewId, { phase, ...extra });
+  window.__BOOKSHELL_LAST_BOOT_PHASE__ = `view:${viewId}:${phase}`;
   const state = getShellState();
   if (!Array.isArray(state.viewInitLog)) {
     state.viewInitLog = [];
@@ -289,13 +411,18 @@ function logNetworkDebug(phase, extra = {}, level = "info") {
 }
 
 function logBootStep(step, extra = {}) {
+  window.__BOOKSHELL_LAST_BOOT_PHASE__ = `boot:${step}`;
   console.debug("[boot:step]", step, extra);
   window.bootDebug?.step?.(step, extra);
 }
 
 function logBootError(error, extra = {}) {
+  const payload = rememberTechnicalError("boot-error", error, {
+    ...extra,
+    phase: window.__BOOKSHELL_LAST_BOOT_PHASE__ || "boot:error",
+  });
   console.error("[boot:error]", error, extra);
-  window.bootDebug?.error?.("Error de arranque", error, extra);
+  window.bootDebug?.error?.("Error de arranque", error, payload);
 }
 
 function logBootMissingModule(viewId, extra = {}) {
@@ -304,6 +431,7 @@ function logBootMissingModule(viewId, extra = {}) {
 }
 
 function bootOk(step, extra = {}) {
+  window.__BOOKSHELL_LAST_BOOT_PHASE__ = `boot:${step}`;
   window.bootDebug?.ok?.(step, extra);
 }
 
@@ -324,6 +452,21 @@ function extractStackSourceLocation(line = "") {
   return match ? match[1] : "";
 }
 
+function formatTechnicalErrorBlock(payload = null) {
+  if (!payload) return "";
+  return [
+    "Error JS (BOOT)",
+    payload.name || "Error",
+    payload.message || "Sin detalles adicionales.",
+    payload.filename ? `filename: ${payload.filename}` : "filename: origen no disponible",
+    payload.lineno ? `line: ${payload.lineno}${payload.colno ? `:${payload.colno}` : ""}` : "line: no disponible",
+    payload.moduleUrl ? `moduleUrl: ${payload.moduleUrl}` : "",
+    payload.lastDynamicImport ? `lastDynamicImport: ${payload.lastDynamicImport}` : "",
+    payload.phase ? `phase: ${payload.phase}` : "",
+    payload.stack ? `stack:\n${payload.stack}` : "stack: no disponible",
+  ].filter(Boolean).join("\n");
+}
+
 function isDebugFallbackEnabled() {
   return Boolean(window.__BOOKSHELL_DEV__)
     || ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
@@ -338,9 +481,14 @@ function renderViewUnavailableFallback(root, viewId, message = "", error = null)
     ? "Esta vista no se pudo inicializar en este momento."
     : "El contenido de esta vista no esta disponible sin conexion en este dispositivo.");
   const errorDebug = error ? describeViewInitError(error) : null;
-  const firstUsefulStackLine = errorDebug ? getFirstUsefulStackLine(errorDebug.stack) : "";
+  const technicalPayload = error
+    ? rememberTechnicalError("view-fallback", error, { viewId, phase: `view:${viewId}:fallback` })
+    : (window.__BOOKSHELL_LAST_ERROR_DETAILS__ || null);
+  const firstUsefulStackLine = technicalPayload
+    ? getFirstUsefulStackLine(technicalPayload.stack)
+    : (errorDebug ? getFirstUsefulStackLine(errorDebug.stack) : "");
   const sourceLocation = firstUsefulStackLine ? extractStackSourceLocation(firstUsefulStackLine) : "";
-  const showDebugBlock = Boolean(errorDebug) || isDebugFallbackEnabled();
+  const showDebugBlock = Boolean(technicalPayload || errorDebug) || isDebugFallbackEnabled();
   logViewInit(viewId, "fallback:rendered", {
     eyebrow,
     message: fallbackDetail,
@@ -348,14 +496,19 @@ function renderViewUnavailableFallback(root, viewId, message = "", error = null)
     errorMessage: errorDebug?.message || "",
     stackLine: firstUsefulStackLine,
     sourceLocation,
+    filename: technicalPayload?.filename || "",
+    lineno: technicalPayload?.lineno || 0,
+    colno: technicalPayload?.colno || 0,
+    moduleUrl: technicalPayload?.moduleUrl || "",
+    lastDynamicImport: technicalPayload?.lastDynamicImport || "",
+    phase: technicalPayload?.phase || "",
   }, isOnline ? "warn" : "info");
 
   const debugHtml = showDebugBlock ? `
-      <pre class="shell-view-fallback-debug"><strong>Error JS (BOOT)</strong>
-${escapeHtml(errorDebug?.errorName || "Error")}
-${escapeHtml(errorDebug?.message || "Sin detalles adicionales.")}
-${escapeHtml(firstUsefulStackLine || "stack no disponible")}
-${escapeHtml(sourceLocation || "origen no disponible")}</pre>
+      <pre class="shell-view-fallback-debug">${escapeHtml(formatTechnicalErrorBlock(technicalPayload || buildTechnicalErrorPayload(error, { viewId })))}</pre>
+      <div class="shell-view-fallback-actions">
+        <button type="button" data-copy-technical-error>Copiar error tecnico</button>
+      </div>
   ` : "";
 
   root.innerHTML = `
@@ -366,6 +519,28 @@ ${escapeHtml(sourceLocation || "origen no disponible")}</pre>
       ${debugHtml}
     </section>
   `;
+  const copyBtn = root.querySelector("[data-copy-technical-error]");
+  if (copyBtn) {
+    copyBtn.addEventListener("click", () => {
+      if (technicalPayload) {
+        window.__BOOKSHELL_LAST_ERROR_DETAILS__ = technicalPayload;
+      }
+      const originalLabel = copyBtn.textContent;
+      Promise.resolve(window.__bookshellCopyTechnicalError?.())
+        .then(() => {
+          copyBtn.textContent = "Error tecnico copiado";
+          window.setTimeout(() => {
+            copyBtn.textContent = originalLabel;
+          }, 1800);
+        })
+        .catch(() => {
+          copyBtn.textContent = "No se pudo copiar";
+          window.setTimeout(() => {
+            copyBtn.textContent = originalLabel;
+          }, 1800);
+        });
+    });
+  }
 }
 
 function formatSyncTimestamp(ts) {
@@ -1237,41 +1412,76 @@ async function registerAppServiceWorker() {
   }
 }
 
+async function importDynamicModule(moduleUrl, context = {}) {
+  const resolvedUrl = new URL(moduleUrl, import.meta.url).href;
+  const phase = String(context.phase || `dynamic-import:${context.viewId || "unknown"}`);
+  const logPrefix = context.viewId === "view-finance" ? "[finance boot]" : "[dynamic import]";
+  window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ = resolvedUrl;
+  window.__BOOKSHELL_LAST_BOOT_PHASE__ = phase;
+  console.info(`${logPrefix} importing`, context.viewId === "view-finance"
+    ? resolvedUrl
+    : { ...context, url: resolvedUrl, phase });
+  try {
+    const mod = await import(resolvedUrl);
+    console.info(`${logPrefix} imported ok`, context.viewId === "view-finance"
+      ? resolvedUrl
+      : { ...context, url: resolvedUrl, phase });
+    return mod;
+  } catch (error) {
+    error.__bookshellModuleUrl = resolvedUrl;
+    error.__bookshellPhase = phase;
+    const payload = rememberTechnicalError("dynamic-import-failed", error, {
+      ...context,
+      moduleUrl: resolvedUrl,
+      phase,
+    });
+    console.error(`${logPrefix} import failed`, payload);
+    throw error;
+  }
+}
+
 const viewModules = {
   "view-books": {
     cssUrl: "../../styles/modules/books.css",
     htmlUrl: "../../views/books.html",
-    moduleLoader: () => import("../modules/books/index.js"),
+    moduleUrl: "../modules/books/index.js",
+    moduleLoader: () => importDynamicModule("../modules/books/index.js", { viewId: "view-books", phase: "view:view-books:module-import" }),
   },
   "view-notes": {
     cssUrl: `../../styles/modules/notes.css?v=${NOTES_MODULE_VERSION}`,
     htmlUrl: `../../views/notes.html?v=${NOTES_MODULE_VERSION}`,
-    moduleLoader: () => import(`../modules/notes/index.js?v=${NOTES_MODULE_VERSION}`),
+    moduleUrl: `../modules/notes/index.js?v=${NOTES_MODULE_VERSION}`,
+    moduleLoader: () => importDynamicModule(`../modules/notes/index.js?v=${NOTES_MODULE_VERSION}`, { viewId: "view-notes", phase: "view:view-notes:module-import" }),
   },
   "view-world": {
     cssUrl: "../../styles/modules/world.css",
     htmlUrl: "../../views/world.html",
-    moduleLoader: () => import("../modules/world/index.js"),
+    moduleUrl: "../modules/world/index.js",
+    moduleLoader: () => importDynamicModule("../modules/world/index.js", { viewId: "view-world", phase: "view:view-world:module-import" }),
   },
   "view-recipes": {
     cssUrl: "../../styles/modules/recipes.css",
     htmlUrl: "../../views/recipes.html",
-    moduleLoader: () => import("../modules/recipes/index.js"),
+    moduleUrl: "../modules/recipes/index.js",
+    moduleLoader: () => importDynamicModule("../modules/recipes/index.js", { viewId: "view-recipes", phase: "view:view-recipes:module-import" }),
   },
   "view-habits": {
     cssUrl: `../../styles/modules/habits.css?v=${HABITS_MODULE_VERSION}`,
     htmlUrl: `../../views/habits.html?v=${HABITS_MODULE_VERSION}`,
-    moduleLoader: () => import(`../modules/habits/index.js?v=${HABITS_MODULE_VERSION}`),
+    moduleUrl: `../modules/habits/index.js?v=${HABITS_MODULE_VERSION}`,
+    moduleLoader: () => importDynamicModule(`../modules/habits/index.js?v=${HABITS_MODULE_VERSION}`, { viewId: "view-habits", phase: "view:view-habits:module-import" }),
   },
   "view-finance": {
     cssUrl: "../../styles/modules/finance.css",
     htmlUrl: "../../views/finance.html",
-    moduleLoader: () => import("../modules/finance/index.js"),
+    moduleUrl: `../modules/finance/index.js?v=${FINANCE_MODULE_VERSION}`,
+    moduleLoader: () => importDynamicModule(`../modules/finance/index.js?v=${FINANCE_MODULE_VERSION}`, { viewId: "view-finance", phase: "view:view-finance:module-import" }),
   },
   "view-gym": {
     cssUrl: "../../styles/modules/gym.css",
     htmlUrl: "../../views/gym.html",
-    moduleLoader: () => import("../modules/gym/index.js"),
+    moduleUrl: "../modules/gym/index.js",
+    moduleLoader: () => importDynamicModule("../modules/gym/index.js", { viewId: "view-gym", phase: "view:view-gym:module-import" }),
   },
 };
 
@@ -1326,7 +1536,10 @@ function getCurrentViewId() {
 
 async function getNavRootResetApi() {
   if (!navRootResetApiPromise) {
-    navRootResetApiPromise = import("./nav-root-reset.js").catch((error) => {
+    navRootResetApiPromise = importDynamicModule("./nav-root-reset.js", {
+      viewId: "app-nav-root-reset",
+      phase: "app:nav-root-reset-import",
+    }).catch((error) => {
       navRootResetApiPromise = null;
       throw error;
     });
@@ -1337,7 +1550,10 @@ async function getNavRootResetApi() {
 
 function ensureSessionQuickstartReady() {
   if (!sessionQuickstartPromise) {
-    sessionQuickstartPromise = import("./session-quickstart.js")
+    sessionQuickstartPromise = importDynamicModule("./session-quickstart.js", {
+      viewId: "app-session-quickstart",
+      phase: "app:session-quickstart-import",
+    })
       .then(({ initSessionQuickstart }) => {
         initSessionQuickstart({ ensureHabitsApi: ensureHabitsApiReady });
         return true;
@@ -1497,13 +1713,20 @@ async function ensureViewModule(viewId, { runOnShow = true, highPriority = false
     moduleState.pending = (async () => {
       try {
         if (!moduleState.module) {
+          const moduleUrl = config.moduleUrl ? new URL(config.moduleUrl, import.meta.url).href : "";
           logViewInit(viewId, "module:import:start", { highPriority });
-          window.bootDebug?.step?.("Importando módulo", { viewId, path: config.htmlUrl || config.cssUrl || "" });
+          window.bootDebug?.step?.("Importando módulo", { viewId, path: config.htmlUrl || config.cssUrl || "", moduleUrl });
           try {
             moduleState.module = await config.moduleLoader();
             window.bootDebug?.ok?.("Módulo importado", { viewId });
           } catch (error) {
-            window.bootDebug?.error?.("Error importando módulo", error, { viewId, path: config.htmlUrl || config.cssUrl || "" });
+            const payload = rememberTechnicalError("view-module-import", error, {
+              viewId,
+              path: config.htmlUrl || config.cssUrl || "",
+              moduleUrl,
+              phase: `view:${viewId}:module-import`,
+            });
+            window.bootDebug?.error?.("Error importando módulo", error, payload);
             throw error;
           }
           logViewInit(viewId, "module:import:ready", {

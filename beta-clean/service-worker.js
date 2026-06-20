@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-05-22-offline-v4";
+const APP_VERSION = "2026-06-20-finance-debug-v1";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -154,15 +154,16 @@ async function staleWhileRevalidate(request) {
 async function networkFirst(request) {
   try {
     const response = await fetch(request);
+    console.info("[sw:network-first:network]", new URL(request.url).pathname, { status: response.status });
     await putInCache(STATIC_CACHE, request, response);
     return response;
   } catch (_) {
     const cached = await matchAnyCache(request);
     if (cached) {
-      console.warn("[sw:fallback] cache-hit", new URL(request.url).pathname);
+      console.warn("[sw:network-first:cache-fallback]", new URL(request.url).pathname);
       return cached;
     }
-    console.warn("[sw:fallback] app-index", new URL(request.url).pathname);
+    console.warn("[sw:network-first:app-index-fallback]", new URL(request.url).pathname);
     return caches.match(APP_INDEX_URL);
   }
 }
@@ -174,6 +175,14 @@ function isLocalCodeRequest(request, url) {
     return true;
   }
   return /\.(?:html|js|mjs|css)$/i.test(url.pathname);
+}
+
+function shouldBypassModuleCache(url) {
+  return url.origin === self.location.origin
+    && (
+      url.pathname.includes("/scripts/modules/finance/")
+      || url.pathname.endsWith("/scripts/app/main.js")
+    );
 }
 
 self.addEventListener("install", (event) => {
@@ -206,6 +215,12 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     console.debug("[sw:fetch] nav", url.pathname);
+    event.respondWith(networkFirst(request));
+    return;
+  }
+
+  if (shouldBypassModuleCache(url)) {
+    console.debug("[sw:fetch] finance-debug-bypass", url.pathname);
     event.respondWith(networkFirst(request));
     return;
   }

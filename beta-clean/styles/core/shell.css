@@ -606,6 +606,22 @@
     line-height: 1.45;
   }
 
+  .shell-view-fallback-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .shell-view-fallback-actions button {
+    font: inherit;
+    border-radius: 10px;
+    border: 1px solid var(--app-border);
+    background: color-mix(in srgb, var(--app-panel-bg) 88%, #000 12%);
+    color: var(--app-text);
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+
   .empty-state {
     margin: 16px 4px;
     padding: 16px 18px;

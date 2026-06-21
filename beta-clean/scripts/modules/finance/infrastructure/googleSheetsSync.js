@@ -66,14 +66,8 @@ export function syncProductDeleteToGoogleSheets(productId) {
   });
 }
 
-export function syncAccountUpsertToGoogleSheets(account) {
-  return postToGoogleSheets("account", "update", account);
-}
-
-export function syncAccountDeleteToGoogleSheets(accountId) {
-  return postToGoogleSheets("account", "delete", {
-    id: String(accountId || "").trim(),
-  });
+export function syncAccountCreateToGoogleSheets(account) {
+  return postToGoogleSheets("account", "create", account);
 }
 
 export function syncProductSummaryUpsertToGoogleSheets(summary) {

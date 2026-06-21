@@ -43,8 +43,7 @@ import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
 import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, normalizeCurrencyCode } from './finance/currency-utils.js';
 import {
-  syncAccountDeleteToGoogleSheets,
-  syncAccountUpsertToGoogleSheets,
+  syncAccountCreateToGoogleSheets,
   syncMovementCreateToGoogleSheets,
   syncMovementDeleteToGoogleSheets,
   syncMovementUpdateToGoogleSheets,
@@ -52,7 +51,7 @@ import {
   syncProductDeleteToGoogleSheets,
   syncProductSummaryUpsertToGoogleSheets,
   syncProductUpsertToGoogleSheets,
-} from './infrastructure/googleSheetsSync.js?v=2026-06-20-finance-syntax-fix';
+} from './infrastructure/googleSheetsSync.js?v=2026-06-21-account-history';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -5296,7 +5295,7 @@ async function deleteProductsHistoryTicket(ticketId = '') {
     const movementAccountId = String(txRecord?.accountId || ticket.accountId || '').trim();
     if (movementAccountId && typeof persistRecomputedFinanceAccountEntries === 'function') {
       await persistRecomputedFinanceAccountEntries([movementAccountId], ticket.dateISO || dayKeyFromTs(nowTs()), 'receipt-delete');
-      queueAccountGoogleSheetsUpsert(movementAccountId);
+      queueAccountGoogleSheetsHistoryCreate(movementAccountId);
     }
 
     if (typeof applyPatchedFinanceCaches === 'function') applyPatchedFinanceCaches('receipt-delete');
@@ -6934,7 +6933,7 @@ async function confirmProductsTicketFromDom() {
     });
 
     await persistRecomputedFinanceAccountEntries([validation.accountId], confirmedDateISO, 'receipt-confirm');
-    queueAccountGoogleSheetsUpsert(validation.accountId);
+    queueAccountGoogleSheetsHistoryCreate(validation.accountId);
     void persistStoreDefaultCurrency(validation.store, receiptCurrency);
     collectProductIdsForGoogleSheets(txResult?.payload || {}).forEach((productId) => queueProductGoogleSheetsUpsert(productId));
     queueProductSummaryGoogleSheetsRefresh();
@@ -7544,7 +7543,7 @@ async function ensureRecurringCurrentMonthInstances() {
   clearFinanceDerivedCaches();
 
   await persistRecomputedFinanceAccountEntries(Array.from(touchedAccounts), recomputeStart, 'recurring-materialize');
-  Array.from(touchedAccounts).forEach((accountId) => queueAccountGoogleSheetsUpsert(accountId));
+  Array.from(touchedAccounts).forEach((accountId) => queueAccountGoogleSheetsHistoryCreate(accountId));
 
   scheduleAggregateRebuild();
   return Object.keys(localPayloads);
@@ -8553,6 +8552,7 @@ async function maybeAutoBitcoinDailySnapshots(accounts = []) {
     }));
 
     await recomputeAccountEntries(account.id, todayKey);
+    queueAccountGoogleSheetsHistoryCreate(account.id);
   }
 }
 
@@ -10016,6 +10016,7 @@ async function applyImportRows(accountId, parsed) {
   updatesMap[`${state.financePath}/accounts/${accountId}/lastImportAt`] = nowTs();
   await safeFirebase(() => update(ref(db), updatesMap));
   await recomputeAccountEntries(accountId, days[0]);
+  queueAccountGoogleSheetsHistoryCreate(accountId);
   log(`import applied days=${days.length}`);
   return days.length;
 }
@@ -14344,21 +14345,24 @@ function buildProductSummaryGoogleSheetsRows() {
     totalEur: roundGoogleSheetsAmount(row.totalEur),
   }));
 }
-function buildAccountGoogleSheetsRecord(accountId = '') {
+function buildAccountGoogleSheetsHistoryRecord(accountId = '', recordTs = nowTs()) {
   const safeAccountId = String(accountId || '').trim();
   if (!safeAccountId) return null;
   const account = buildAccountModels().find((row) => String(row?.id || '').trim() === safeAccountId) || null;
   if (!account) return null;
   const currency = accountCurrency(account);
   const balance = Number(account?.currentReal ?? account?.current ?? 0);
+  const convertedBalanceEur = currency === 'EUR'
+    ? balance
+    : convertCurrency(balance, currency, 'EUR', getFinanceCurrencyRates());
   return {
-    id: safeAccountId,
+    id: `${safeAccountId}_${Number(recordTs || nowTs())}`,
+    date: financeCsvTimestampValue(recordTs),
     name: financeCsvText(account?.name, ''),
     type: financeCsvText(account?.assetType, 'cash'),
     balance: roundGoogleSheetsAmount(balance, currency === 'BTC' ? 8 : 2),
     currency,
-    balanceEur: roundGoogleSheetsAmount(convertCurrency(balance, currency, 'EUR', getFinanceCurrencyRates()) || 0),
-    updatedAt: financeCsvTimestampValue(account?.updatedAt),
+    balanceEur: roundGoogleSheetsAmount(Number.isFinite(convertedBalanceEur) ? convertedBalanceEur : 0),
   };
 }
 function collectProductIdsForGoogleSheets(row = {}) {
@@ -14405,15 +14409,26 @@ function queueProductGoogleSheetsDelete(productId = '') {
   if (!safeProductId) return;
   void syncProductDeleteToGoogleSheets(safeProductId);
 }
-function queueAccountGoogleSheetsUpsert(accountId = '') {
-  const account = buildAccountGoogleSheetsRecord(accountId);
+function queueAccountGoogleSheetsHistoryCreate(accountId = '', recordTs = nowTs()) {
+  const account = buildAccountGoogleSheetsHistoryRecord(accountId, recordTs);
   if (!account?.id) return;
-  void syncAccountUpsertToGoogleSheets(account);
+  void syncAccountCreateToGoogleSheets(account);
 }
-function queueAccountGoogleSheetsDelete(accountId = '') {
-  const safeAccountId = String(accountId || '').trim();
-  if (!safeAccountId) return;
-  void syncAccountDeleteToGoogleSheets(safeAccountId);
+function shouldQueueAccountGoogleSheetsHistoryForMovementChange(previousRow = null, nextRow = {}) {
+  if (!previousRow || typeof previousRow !== 'object') return true;
+  return [
+    normalizeTxType(previousRow?.type),
+    Number(previousRow?.amount || 0),
+    String(previousRow?.accountId || '').trim(),
+    String(previousRow?.fromAccountId || '').trim(),
+    String(previousRow?.toAccountId || '').trim(),
+  ].join('|') !== [
+    normalizeTxType(nextRow?.type),
+    Number(nextRow?.amount || 0),
+    String(nextRow?.accountId || '').trim(),
+    String(nextRow?.fromAccountId || '').trim(),
+    String(nextRow?.toAccountId || '').trim(),
+  ].join('|');
 }
 function productSummaryGoogleSheetsKey(summary = {}) {
   return `${financeCsvText(summary?.product, '').toLowerCase()}__${financeCsvText(summary?.supermarketName, '').toLowerCase()}`;
@@ -15279,7 +15294,7 @@ async function addAccount({ name, shared = false, sharedRatio = 0.5, assetType =
     syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
     await recomputeAccountEntries(id, day);
   }
-  queueAccountGoogleSheetsUpsert(id);
+  queueAccountGoogleSheetsHistoryCreate(id);
 }
 
 function syncNewAccountFormUI(formEl) {
@@ -15314,18 +15329,20 @@ async function updateAccountMeta(accountId, payload = {}) {
   syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
   clearFinanceDerivedCaches();
   scheduleFinanceSnapshotSave('account-meta-update');
-  queueAccountGoogleSheetsUpsert(accountId);
 }
 async function saveSnapshot(accountId, day, value) {
   const parsedValue = parseEuroNumber(value);
   if (!Number.isFinite(parsedValue) || !day) return false;
-  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`), { value: parsedValue, updatedAt: nowTs() }));
   const account = (state.accounts || []).find((item) => String(item.id) === String(accountId));
+  const previousValue = Number(accountValueForDay(account, day));
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`), { value: parsedValue, updatedAt: nowTs() }));
   if (isCryptoAccount(account)) {
     await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { btcUnits: parsedValue, currency: 'BTC', assetType: 'crypto', isBitcoin: true, updatedAt: nowTs() }));
   }
   await recomputeAccountEntries(accountId, day);
-  queueAccountGoogleSheetsUpsert(accountId);
+  if (Number(previousValue) !== Number(parsedValue)) {
+    queueAccountGoogleSheetsHistoryCreate(accountId);
+  }
   toast('Guardado');
   return true;
 }
@@ -15334,11 +15351,10 @@ async function deleteDay(accountId, day) {
   await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`)));
   await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}/entries/${day}`)));
   await recomputeAccountEntries(accountId, day);
-  queueAccountGoogleSheetsUpsert(accountId);
+  queueAccountGoogleSheetsHistoryCreate(accountId);
 }
 async function deleteAccount(accountId) {
   await safeFirebase(() => remove(ref(db, `${state.financePath}/accounts/${accountId}`)));
-  queueAccountGoogleSheetsDelete(accountId);
 }
 
 function mergeAccountEntryMaps(destinationAccount = {}, sourceAccounts = [], legacyEntries = {}) {
@@ -15527,6 +15543,7 @@ async function mergeAccounts(selection = [], destinationId = '') {
 
   clearFinanceDerivedCaches();
   scheduleAggregateRebuild();
+  queueAccountGoogleSheetsHistoryCreate(canonicalId);
 
   return {
     destinationId: canonicalId,
@@ -16847,7 +16864,7 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
   removeLocalTxEverywhere(txDelete);
   clearFinanceDerivedCaches();
   queueMovementGoogleSheetsDelete(txDelete);
-  [...new Set(touched)].forEach((accountId) => queueAccountGoogleSheetsUpsert(accountId));
+  [...new Set(touched)].forEach((accountId) => queueAccountGoogleSheetsHistoryCreate(accountId));
   collectProductIdsForGoogleSheets(existing).forEach((productId) => queueProductGoogleSheetsUpsert(productId));
   queueProductSummaryGoogleSheetsRefresh();
 
@@ -17780,6 +17797,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         if (raw == null || raw === '') return;
         const parsed = Number(String(raw).replace(',', '.'));
         if (!Number.isFinite(parsed)) return;
+        if (Number(accountValueForDay(account, day)) === parsed) return;
         updatesMap[`${state.financePath}/accounts/${account.id}/snapshots/${day}`] = { value: parsed, updatedAt: nowTs() };
         updatesMap[`${state.financePath}/accounts/${account.id}/updatedAt`] = nowTs();
         touched.push(account.id);
@@ -17787,7 +17805,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       if (!touched.length) { toast('Sin cambios'); return; }
       await safeFirebase(() => update(ref(db), updatesMap));
       for (const accountId of touched) await recomputeAccountEntries(accountId, day);
-      touched.forEach((accountId) => queueAccountGoogleSheetsUpsert(accountId));
+      touched.forEach((accountId) => queueAccountGoogleSheetsHistoryCreate(accountId));
       state.modal = { type: null };
       toast('Saldos guardados');
       triggerRender();
@@ -18126,7 +18144,9 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         log('no se pudieron recalcular los apuntes de cuenta tras guardar el movimiento', error);
         toast('Movimiento guardado; no se pudo recalcular cuentas');
       }
-      Array.from(touched).forEach((accountId) => queueAccountGoogleSheetsUpsert(accountId));
+      if (isNewMovement || shouldQueueAccountGoogleSheetsHistoryForMovementChange(prev, payload)) {
+        Array.from(touched).forEach((accountId) => queueAccountGoogleSheetsHistoryCreate(accountId));
+      }
       if (extras?.items?.length) {
         collectProductIdsForGoogleSheets(payload).forEach((productId) => queueProductGoogleSheetsUpsert(productId));
         queueProductSummaryGoogleSheetsRefresh();

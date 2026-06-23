@@ -68,6 +68,20 @@ const GOOGLE_SHEETS_PRODUCT_SUMMARY_KEYS_KEY = 'bookshell_finance_gs_product_sum
 const FINANCE_OFFLINE_SNAPSHOT_MODULE = 'finance';
 const FINANCE_OFFLINE_SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const GLOBAL_PRODUCTS_PATH = PUBLIC_PATHS.foodItems;
+const DEFAULT_PRODUCT_TYPE_OPTIONS = Object.freeze([
+  'CARNE',
+  'CONGELADO',
+  'ALMACEN',
+  'PANADERIA',
+  'PASTA',
+  'MUEBLES',
+  'COMIDA PREPARADA',
+  'SALSAS',
+  'SNACKS',
+  'BEBIDAS',
+  'MEDIAS',
+]);
+const PRODUCT_WEIGHT_UNIT_OPTIONS = Object.freeze(['g', 'kg', 'ml', 'l', 'ud']);
 const FINANCE_CORE_BRANCHES = Object.freeze([
   { key: 'accounts', path: 'accounts', fallback: {} },
   { key: 'transactions', path: 'transactions', fallback: {} },
@@ -425,7 +439,79 @@ function normalizeAccountMetaPayload(payload = {}) {
   return { assetType, currency, isBitcoin, btcUnits: Number.isFinite(btcUnits) ? btcUnits : 0 };
 }
 function storeCurrencyKey(store = '') { return firebaseSafeKey(normalizeFoodName(store).toLocaleLowerCase('es')); }
+function isFinanceTestingLocalOnly() {
+  try {
+    return !!window.__bookshellFinanceTesting?.localOnly;
+  } catch (_) {
+    return false;
+  }
+}
+function recordFinanceTestingEvent(type = '', payload = {}) {
+  try {
+    if (!window.__bookshellFinanceTesting || typeof window.__bookshellFinanceTesting !== 'object') return;
+    const bucket = Array.isArray(window.__bookshellFinanceTesting.events) ? window.__bookshellFinanceTesting.events : [];
+    bucket.push({ type: String(type || '').trim(), payload: payload && typeof payload === 'object' ? { ...payload } : {}, ts: Date.now() });
+    window.__bookshellFinanceTesting.events = bucket;
+  } catch (_) {}
+}
+function createProductsStoreId(name = '', existingMap = {}) {
+  const seed = firebaseSafeKeyLoose(normalizeFoodName(name || '').replace(/\s+/g, '-'));
+  const base = `store-${seed || 'item'}`;
+  if (!existingMap?.[base]) return base;
+  let index = 2;
+  while (existingMap?.[`${base}-${index}`]) index += 1;
+  return `${base}-${index}`;
+}
+function normalizeProductsStoreRecord(id = '', payload = {}) {
+  const safeName = normalizeFoodName(payload?.name || payload?.displayName || '');
+  const existingId = String(id || payload?.id || '').trim();
+  const safeId = existingId || createProductsStoreId(safeName || 'store', state.productsHub?.settings?.stores || {});
+  return {
+    id: safeId,
+    name: safeName,
+    currency: normalizeCurrencyCode(payload?.currency || getDefaultCurrency()),
+    active: payload?.active !== false,
+    createdAt: Number(payload?.createdAt || 0) || nowTs(),
+    updatedAt: Number(payload?.updatedAt || 0) || nowTs(),
+  };
+}
+function normalizeProductsStoreMap(map = {}) {
+  return Object.entries(map || {}).reduce((acc, [id, payload]) => {
+    const normalized = normalizeProductsStoreRecord(id, payload);
+    if (!normalized.name) return acc;
+    acc[normalized.id] = normalized;
+    return acc;
+  }, {});
+}
+function getManagedProductsStoreEntries({ includeInactive = false } = {}) {
+  return Object.values(normalizeProductsStoreMap(state.productsHub?.settings?.stores || {}))
+    .filter((store) => includeInactive || store.active !== false)
+    .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+}
+function listManagedProductsStoreNames({ includeInactive = false } = {}) {
+  return getManagedProductsStoreEntries({ includeInactive }).map((store) => store.name);
+}
+function findManagedProductsStoreByName(store = '') {
+  const safeStore = normalizeFoodName(store || '');
+  if (!safeStore) return null;
+  return getManagedProductsStoreEntries({ includeInactive: true }).find((entry) => entry.name.toLowerCase() === safeStore.toLowerCase()) || null;
+}
+function buildManagedStoreCurrencyMap(stores = {}, fallbackMap = {}) {
+  const baseMap = Object.entries(fallbackMap || {}).reduce((acc, [key, value]) => {
+    const safeKey = firebaseSafeKey(key);
+    if (!safeKey) return acc;
+    acc[safeKey] = normalizeCurrencyCode(value || getDefaultCurrency());
+    return acc;
+  }, {});
+  Object.values(normalizeProductsStoreMap(stores || {})).forEach((store) => {
+    if (!store?.name) return;
+    baseMap[storeCurrencyKey(store.name)] = normalizeCurrencyCode(store.currency || baseMap[storeCurrencyKey(store.name)] || getDefaultCurrency());
+  });
+  return baseMap;
+}
 function getStoreDefaultCurrency(store = '') {
+  const managedStore = findManagedProductsStoreByName(store);
+  if (managedStore?.currency) return normalizeCurrencyCode(managedStore.currency);
   const key = storeCurrencyKey(store);
   const raw = key ? state.productsHub?.settings?.storeCurrencies?.[key] : '';
   return raw ? normalizeCurrencyCode(raw) : '';
@@ -742,6 +828,43 @@ function calculateLineTotals(line = {}) {
     estimatedSubtotal,
     actualSubtotal,
     diffSubtotal,
+  };
+}
+
+function resolveProductsReceiptLineMoneyBreakdown(line = {}, {
+  fallbackCurrency = getDefaultCurrency(),
+  targetCurrency = '',
+} = {}) {
+  const normalized = normalizeProductsReceiptLinePrices(line);
+  const qty = Math.max(0.01, Number(normalized.qty || 1));
+  const lineCurrency = normalizeCurrencyCode(line?.currency || fallbackCurrency || getDefaultCurrency());
+  const exchangeRateToEUR = lineCurrency === 'EUR'
+    ? 1
+    : Number(line?.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
+  const unitOriginal = Number(line?.priceOriginal ?? normalized.actualPrice ?? 0);
+  const unitEUR = Number.isFinite(Number(line?.priceEUR))
+    ? Number(line.priceEUR || 0)
+    : Number(normalizeMovementCurrencyPayload({
+      amount: unitOriginal,
+      currency: lineCurrency,
+      exchangeRateToEUR,
+    }).amountEUR || 0);
+  const lineTotalOriginal = unitOriginal * qty;
+  const lineTotalEUR = unitEUR * qty;
+  const safeTargetCurrency = normalizeCurrencyCode(targetCurrency || lineCurrency);
+  const lineTotalTarget = safeTargetCurrency === lineCurrency
+    ? lineTotalOriginal
+    : Number(convertCurrency(lineTotalOriginal, lineCurrency, safeTargetCurrency, getFinanceCurrencyRates()));
+  return {
+    ...normalized,
+    qty,
+    lineCurrency,
+    exchangeRateToEUR: Number.isFinite(exchangeRateToEUR) && exchangeRateToEUR > 0 ? exchangeRateToEUR : 1,
+    unitOriginal,
+    unitEUR,
+    lineTotalOriginal,
+    lineTotalEUR,
+    lineTotalTarget: Number.isFinite(lineTotalTarget) ? lineTotalTarget : lineTotalOriginal,
   };
 }
 
@@ -1554,8 +1677,18 @@ function normalizeProductPositiveNumber(value, fallback = 0) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
 }
 
+function normalizeProductWeightValue(value, fallback = 0) {
+  const normalized = typeof value === 'string' ? value.replace(',', '.') : value;
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+}
+
 function normalizeProductUnit(value = '') {
   return normalizeProductText(value).toLowerCase() || 'ud';
+}
+
+function normalizeProductWeightUnit(value = '') {
+  return normalizeProductText(value).toLowerCase();
 }
 
 function normalizeProductTags(value = []) {
@@ -1587,8 +1720,18 @@ function createFinanceProductId(name = '', existingMap = {}) {
 }
 
 function normalizeFinanceProductMeta(payload = {}, previous = {}) {
+  const productType = normalizeFoodName(
+    payload?.tipoProducto
+    || payload?.productType
+    || payload?.mealType
+    || previous?.tipoProducto
+    || previous?.productType
+    || previous?.mealType
+    || '',
+  );
   return {
-    productType: normalizeFoodName(payload?.productType || payload?.mealType || previous?.productType || previous?.mealType || ''),
+    productType,
+    tipoProducto: productType,
     productCategory: normalizeFoodName(payload?.productCategory || payload?.subtype || previous?.productCategory || previous?.subtype || ''),
     preferredStore: normalizeFoodName(payload?.preferredStore || payload?.place || previous?.preferredStore || previous?.place || ''),
     brand: normalizeProductText(payload?.brand || previous?.brand || ''),
@@ -1601,6 +1744,8 @@ function normalizeFinanceProductMeta(payload = {}, previous = {}) {
     lastPurchaseAt: normalizeProductDateValue(payload?.lastPurchaseAt || previous?.lastPurchaseAt || 0),
     purchaseFrequencyDays: normalizeProductPositiveNumber(payload?.purchaseFrequencyDays, normalizeProductPositiveNumber(previous?.purchaseFrequencyDays, 0)),
     estimatedDurationDays: normalizeProductPositiveNumber(payload?.estimatedDurationDays, normalizeProductPositiveNumber(previous?.estimatedDurationDays, 0)),
+    pesoValor: normalizeProductWeightValue(payload?.pesoValor ?? previous?.pesoValor, 0),
+    pesoUnidad: normalizeProductWeightUnit(payload?.pesoUnidad || previous?.pesoUnidad || ''),
     notes: normalizeProductText(payload?.notes || previous?.notes || ''),
     active: normalizeProductBoolean(payload?.active, normalizeProductBoolean(previous?.active, true)),
     tags: normalizeProductTags(payload?.tags ?? previous?.tags ?? []),
@@ -1924,7 +2069,374 @@ function getFoodByName(name = '') {
   return id ? state.food.itemsById?.[id] || null : null;
 }
 function foodOptionList(kind) {
-  return Object.keys(state.food.options?.[kind] || {}).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+  const stored = Object.keys(state.food.options?.[kind] || {});
+  const source = kind === 'typeOfMeal'
+    ? [...DEFAULT_PRODUCT_TYPE_OPTIONS, ...stored]
+    : stored;
+  return [...new Set(source.map((value) => normalizeFoodName(value)).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+}
+
+function renderProductTypeOptions(selected = '') {
+  const safeSelected = normalizeFoodName(selected);
+  const options = foodOptionList('typeOfMeal');
+  const finalOptions = safeSelected && !options.includes(safeSelected)
+    ? [safeSelected, ...options]
+    : options;
+  return [
+    '<option value="">Seleccionar</option>',
+    ...finalOptions.map((value) => `<option value="${escapeHtml(value)}" ${value === safeSelected ? 'selected' : ''}>${escapeHtml(value)}</option>`),
+  ].join('');
+}
+
+function renderProductWeightUnitOptions(selected = '') {
+  const safeSelected = normalizeProductWeightUnit(selected);
+  const finalOptions = safeSelected && !PRODUCT_WEIGHT_UNIT_OPTIONS.includes(safeSelected)
+    ? [safeSelected, ...PRODUCT_WEIGHT_UNIT_OPTIONS]
+    : [...PRODUCT_WEIGHT_UNIT_OPTIONS];
+  return [
+    '<option value="">Seleccionar</option>',
+    ...finalOptions.map((value) => `<option value="${escapeHtml(value)}" ${value === safeSelected ? 'selected' : ''}>${escapeHtml(value)}</option>`),
+  ].join('');
+}
+
+function closeProductsCreateModal({ preserveDraft = false } = {}) {
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    createProductModalOpen: false,
+    createProductDraft: preserveDraft ? (state.foodProductsView?.createProductDraft || null) : null,
+    createProductModalContext: null,
+  };
+  const model = buildCurrentProductsModel();
+  if (!patchProductsWorkbench(model)) triggerRender();
+}
+
+function closeProductsStoreManagerModal() {
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    storeManagerModalOpen: false,
+  };
+  const model = buildCurrentProductsModel();
+  if (!patchProductsWorkbench(model)) triggerRender();
+}
+
+function openProductsStoreManagerModal() {
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    storeManagerModalOpen: true,
+  };
+  const model = buildCurrentProductsModel();
+  if (!patchProductsWorkbench(model)) triggerRender();
+}
+
+function resolveProductTypeFromForm(form) {
+  return normalizeFoodName(
+    String(form.get('productTypeCustom') || form.get('productType') || ''),
+  );
+}
+
+function openProductsCreateModal(seed = {}, context = {}) {
+  state.foodProductsView = {
+    ...(state.foodProductsView || {}),
+    createProductModalOpen: true,
+    createProductDraft: {
+      name: normalizeFoodName(seed?.name || ''),
+      estimatedPrice: normalizeProductPositiveNumber(seed?.estimatedPrice, 0),
+      preferredStore: normalizeFoodName(seed?.preferredStore || ''),
+      productCategory: normalizeFoodName(seed?.productCategory || ''),
+      productType: normalizeFoodName(seed?.productType || seed?.tipoProducto || ''),
+      brand: normalizeProductText(seed?.brand || ''),
+      barcode: normalizeProductText(seed?.barcode || ''),
+      unit: normalizeProductUnit(seed?.unit || 'ud'),
+      usualQty: normalizeProductPositiveNumber(seed?.usualQty, 1),
+      lastCurrency: normalizeCurrencyCode(seed?.lastCurrency || getStoreDefaultCurrency(seed?.preferredStore || seed?.place || '') || getDefaultCurrency()),
+      pesoValor: normalizeProductWeightValue(seed?.pesoValor, 0),
+      pesoUnidad: normalizeProductWeightUnit(seed?.pesoUnidad || ''),
+    },
+    createProductModalContext: context && typeof context === 'object' ? { ...context } : {},
+  };
+  const model = buildCurrentProductsModel();
+  if (!patchProductsWorkbench(model)) triggerRender();
+}
+
+function readCreateProductFormPayload(formEl) {
+  const form = new FormData(formEl);
+  const name = normalizeFoodName(String(form.get('name') || ''));
+  const preferredStore = normalizeFoodName(String(form.get('preferredStore') || ''));
+  const lastCurrency = normalizeCurrencyCode(String(form.get('lastCurrency') || getStoreDefaultCurrency(preferredStore) || getDefaultCurrency()));
+  return {
+    name,
+    displayName: name,
+    preferredStore,
+    place: preferredStore,
+    productType: resolveProductTypeFromForm(form),
+    tipoProducto: resolveProductTypeFromForm(form),
+    productCategory: normalizeFoodName(String(form.get('productCategory') || '')),
+    mealType: resolveProductTypeFromForm(form),
+    brand: String(form.get('brand') || '').trim(),
+    barcode: String(form.get('barcode') || '').trim(),
+    estimatedPrice: Math.max(0, Number(form.get('estimatedPrice') || 0)),
+    usualPrice: Math.max(0, Number(form.get('estimatedPrice') || 0)),
+    defaultPrice: Math.max(0, Number(form.get('estimatedPrice') || 0)),
+    lastPrice: Math.max(0, Number(form.get('estimatedPrice') || 0)),
+    lastCurrency,
+    usualQty: Math.max(0.01, Number(form.get('usualQty') || 1)),
+    unit: normalizeProductUnit(String(form.get('unit') || 'ud')),
+    pesoValor: normalizeProductWeightValue(form.get('pesoValor'), 0),
+    pesoUnidad: normalizeProductWeightUnit(String(form.get('pesoUnidad') || '')),
+    active: true,
+  };
+}
+
+function resolveProductsCreateForm(scope = document) {
+  if (scope?.matches?.('[data-products-create-form]')) return scope;
+  return scope?.querySelector?.('[data-products-create-form]') || document.querySelector('[data-products-create-form]');
+}
+
+function resolveProductsStoreManagerRow(storeId = '', root = document) {
+  const safeStoreId = String(storeId || '').trim();
+  if (!safeStoreId) return null;
+  return root?.querySelector?.(`[data-products-store-row="${safeStoreId}"]`) || document.querySelector(`[data-products-store-row="${safeStoreId}"]`);
+}
+
+function buildCreateProductSeedFromSnapshot(productSnapshot = {}, overrides = {}) {
+  const snapshot = productSnapshot && typeof productSnapshot === 'object' ? productSnapshot : {};
+  const preferredStore = normalizeFoodName(
+    overrides.preferredStore
+    || snapshot.preferredStore
+    || snapshot.place
+    || '',
+  );
+  const fallbackCurrency = getStoreDefaultCurrency(preferredStore) || getDefaultCurrency();
+  const resolvedPrice = normalizeProductPositiveNumber(
+    overrides.estimatedPrice,
+    normalizeProductPositiveNumber(
+      snapshot.lastPrice,
+      normalizeProductPositiveNumber(
+        snapshot.estimatedPrice,
+        normalizeProductPositiveNumber(snapshot.currentUnitPrice, normalizeProductsCatalogPrice(snapshot)),
+      ),
+    ),
+  );
+  return {
+    name: normalizeFoodName(snapshot.canonicalName || snapshot.displayName || snapshot.name || overrides.name || ''),
+    estimatedPrice: resolvedPrice,
+    preferredStore,
+    productCategory: normalizeFoodName(overrides.productCategory || snapshot.productCategory || ''),
+    productType: normalizeFoodName(overrides.productType || snapshot.productType || snapshot.tipoProducto || snapshot.mealType || ''),
+    brand: normalizeProductText(overrides.brand || snapshot.brand || ''),
+    barcode: normalizeProductText(overrides.barcode || snapshot.barcode || ''),
+    unit: normalizeProductUnit(overrides.unit || snapshot.unit || 'ud'),
+    usualQty: normalizeProductPositiveNumber(overrides.usualQty, snapshot.usualQty || 1),
+    lastCurrency: normalizeCurrencyCode(overrides.lastCurrency || snapshot.lastCurrency || fallbackCurrency),
+    pesoValor: normalizeProductWeightValue(overrides.pesoValor ?? snapshot.pesoValor, 0),
+    pesoUnidad: normalizeProductWeightUnit(overrides.pesoUnidad || snapshot.pesoUnidad || ''),
+  };
+}
+
+function openProductsCreateModalForExistingProduct(productId = '', context = {}) {
+  const snapshot = resolveProductsCatalogSnapshot(productId);
+  if (!snapshot) return false;
+  const qty = Math.max(0.01, Number(context?.qty ?? parseProductsReceiptQuantity(document.querySelector('[data-products-receipt-add-qty]')?.value || 1, 1)));
+  const enteredUnitPrice = Math.max(0, Number(context?.unitPrice ?? parseProductsReceiptMoney(document.querySelector('[data-products-receipt-add-unit]')?.value || '', 0)));
+  openProductsCreateModal(
+    buildCreateProductSeedFromSnapshot(snapshot, {
+      estimatedPrice: enteredUnitPrice > 0 ? enteredUnitPrice : undefined,
+      usualQty: qty,
+    }),
+    {
+      ...(context && typeof context === 'object' ? context : {}),
+      productId: String(snapshot.canonicalId || snapshot.id || productId).trim(),
+      existingProduct: true,
+      qty,
+      unitPrice: enteredUnitPrice > 0 ? enteredUnitPrice : normalizeProductPositiveNumber(snapshot.lastPrice, normalizeProductsCatalogPrice(snapshot)),
+    },
+  );
+  return true;
+}
+
+async function handleAddProductToTicketFromModal(scope = document) {
+  console.debug('[product-modal] add-to-ticket');
+  const formEl = resolveProductsCreateForm(scope);
+  const modalContext = state.foodProductsView?.createProductModalContext || {};
+  const payload = formEl ? readCreateProductFormPayload(formEl) : null;
+  if (!payload?.name) {
+    toast('Nombre obligatorio');
+    return false;
+  }
+  if (!(Number(payload.estimatedPrice || 0) > 0)) {
+    toast('Precio obligatorio');
+    return false;
+  }
+  closeProductsCreateModal({ preserveDraft: false });
+  try {
+    await addProductToTicket(payload, {
+      qty: payload.usualQty ?? modalContext.qty,
+      unitPrice: payload.estimatedPrice ?? modalContext.unitPrice,
+      productId: String(modalContext.productId || '').trim(),
+      currency: payload.lastCurrency,
+      exchangeRateToEUR: payload.lastCurrency === 'EUR' ? 1 : Number(modalContext.exchangeRateToEUR || getCurrencyRates()[payload.lastCurrency] || 1),
+    });
+    toast('Producto añadido al ticket');
+    return true;
+  } catch (error) {
+    console.error('[products][create-modal] no se pudo añadir al ticket', { name: payload.name, error });
+    toast('No se pudo añadir el producto al ticket');
+    return false;
+  }
+}
+
+async function handleSaveProductFromModal(scope = document) {
+  console.debug('[product-modal] save-product');
+  const formEl = resolveProductsCreateForm(scope);
+  if (!formEl) return false;
+  return createProductFromModalForm(formEl);
+}
+
+function handleCloseProductsCreateModal(action = 'close') {
+  console.debug(action === 'cancel' ? '[product-modal] cancel' : '[product-modal] close');
+  closeProductsCreateModal();
+}
+
+async function handleProductsCreateModalAction(action = '', scope = document) {
+  const safeAction = String(action || '').trim();
+  console.debug('[product-modal] click', safeAction);
+  if (safeAction === 'close' || safeAction === 'cancel') {
+    handleCloseProductsCreateModal(safeAction);
+    return true;
+  }
+  if (safeAction === 'add-to-ticket') return handleAddProductToTicketFromModal(scope);
+  if (safeAction === 'save-product') return handleSaveProductFromModal(scope);
+  return false;
+}
+
+async function saveProductToCatalog(productInput = {}, options = {}) {
+  const payload = typeof productInput === 'object' && productInput ? { ...productInput } : {};
+  const name = normalizeFoodName(payload.name || '');
+  if (!name) {
+    toast('Nombre obligatorio');
+    return '';
+  }
+  payload.name = name;
+  payload.displayName = String(payload.displayName || name).trim() || name;
+  payload.preferredStore = normalizeFoodName(payload.preferredStore || payload.place || '');
+  payload.place = payload.preferredStore;
+  payload.productType = normalizeFoodName(payload.productType || payload.tipoProducto || payload.mealType || '');
+  payload.tipoProducto = payload.productType;
+  payload.mealType = payload.productType;
+  payload.productCategory = normalizeFoodName(payload.productCategory || '');
+  payload.estimatedPrice = Math.max(0, Number(payload.estimatedPrice || 0));
+  payload.usualPrice = Math.max(0, Number((payload.usualPrice ?? payload.estimatedPrice) || 0));
+  payload.defaultPrice = Math.max(0, Number((payload.defaultPrice ?? payload.estimatedPrice) || 0));
+  payload.lastPrice = Math.max(0, Number((payload.lastPrice ?? payload.estimatedPrice) || 0));
+  payload.lastCurrency = normalizeCurrencyCode(payload.lastCurrency || getStoreDefaultCurrency(payload.preferredStore || payload.place || '') || getDefaultCurrency());
+  payload.lastPriceEur = Number(normalizeMovementCurrencyPayload({
+    amount: payload.lastPrice,
+    currency: payload.lastCurrency,
+    exchangeRateToEUR: payload.lastCurrency === 'EUR' ? 1 : Number(payload.exchangeRateToEUR || getCurrencyRates()[payload.lastCurrency] || 1),
+  }).amountEUR || 0);
+  payload.usualQty = Math.max(0.01, Number(payload.usualQty || 1));
+  payload.unit = normalizeProductUnit(payload.unit || 'ud');
+  payload.pesoValor = normalizeProductWeightValue(payload.pesoValor, 0);
+  payload.pesoUnidad = normalizeProductWeightUnit(payload.pesoUnidad || '');
+  recordFinanceTestingEvent('catalog:save-requested', {
+    name: payload.name,
+    store: payload.preferredStore,
+    currency: payload.lastCurrency,
+  });
+  const savedId = await upsertFoodItem(payload, false, {}, {
+    syncGoogleSheets: options.syncGoogleSheets !== false,
+  });
+  if (payload.preferredStore) await upsertFoodOption('place', payload.preferredStore, false);
+  if (payload.productType) await upsertFoodOption('typeOfMeal', payload.productType, false);
+  recordFinanceTestingEvent('catalog:save-completed', {
+    productId: savedId,
+    name: payload.name,
+    store: payload.preferredStore,
+    currency: payload.lastCurrency,
+  });
+  return savedId;
+}
+
+async function addProductToTicket(productInput = {}, options = {}) {
+  const payload = typeof productInput === 'object' && productInput ? { ...productInput } : {};
+  const name = normalizeFoodName(payload.name || '');
+  const quantity = Math.max(0.01, Number((options.qty ?? payload.usualQty) || 1));
+  const unitPrice = Math.max(0, Number((options.unitPrice ?? payload.estimatedPrice ?? payload.lastPrice) || 0));
+  const productId = String(options.productId || payload.id || '').trim();
+  const preferredStore = normalizeFoodName(payload.preferredStore || payload.place || '');
+  const currency = normalizeCurrencyCode(options.currency || payload.lastCurrency || payload.currency || getStoreDefaultCurrency(preferredStore) || getDefaultCurrency());
+  if (!name) {
+    toast('Nombre obligatorio');
+    return '';
+  }
+  if (!(unitPrice > 0)) {
+    toast('Precio obligatorio');
+    return '';
+  }
+  const exchangeRateToEUR = currency === 'EUR' ? 1 : Number(options.exchangeRateToEUR || payload.exchangeRateToEUR || getCurrencyRates()[currency] || 1);
+  recordFinanceTestingEvent('ticket:add-requested', {
+    name,
+    productId,
+    quantity,
+    unitPrice,
+    currency,
+  });
+  const syncedDraft = readProductsListDraftFromDom();
+  syncProductsDraftListLocal(syncedDraft);
+  const persistedBase = await ensurePersistedActiveProductsList(syncedDraft);
+  const nextList = ensureProductsListTickets(cloneProductsListRecord(persistedBase));
+  const activeTicketId = String(nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  const existingEntry = productId
+    ? Object.entries(nextList.lines || {}).find(([, line]) => (
+      String(line?.productId || '').trim() === productId
+      && String(line?.ticketId || activeTicketId).trim() === activeTicketId
+    ))
+    : null;
+  const lineId = existingEntry?.[0] || createFinanceRecordId('line');
+  const previousLine = existingEntry?.[1] || {};
+  const nextQty = existingEntry
+    ? Math.max(0.01, Number(previousLine.qty || 1)) + quantity
+    : quantity;
+  nextList.lines[lineId] = {
+    ...previousLine,
+    id: lineId,
+    productId,
+    name,
+    qty: nextQty,
+    unit: normalizeProductUnit(payload.unit || previousLine.unit || 'ud'),
+    estimatedPrice: unitPrice,
+    actualPrice: unitPrice,
+    currency,
+    priceOriginal: unitPrice,
+    priceEUR: Number(normalizeMovementCurrencyPayload({ amount: unitPrice, currency, exchangeRateToEUR }).amountEUR || 0),
+    exchangeRateToEUR: Number.isFinite(exchangeRateToEUR) && exchangeRateToEUR > 0 ? exchangeRateToEUR : 1,
+    store: preferredStore || normalizeFoodName(previousLine.store || nextList.store || ''),
+    productCategory: normalizeFoodName(payload.productCategory || previousLine.productCategory || ''),
+    productType: normalizeFoodName(payload.productType || payload.tipoProducto || previousLine.productType || previousLine.tipoProducto || ''),
+    tipoProducto: normalizeFoodName(payload.tipoProducto || payload.productType || previousLine.tipoProducto || previousLine.productType || ''),
+    pesoValor: normalizeProductWeightValue(payload.pesoValor ?? previousLine.pesoValor, 0),
+    pesoUnidad: normalizeProductWeightUnit(payload.pesoUnidad || previousLine.pesoUnidad || ''),
+    checked: previousLine.checked !== false,
+    ticketId: activeTicketId,
+    note: normalizeProductText(previousLine.note || ''),
+    sortOrder: Number(previousLine.sortOrder || Object.keys(nextList.lines || {}).length),
+    createdAt: Number(previousLine.createdAt || nowTs()),
+    updatedAt: nowTs(),
+  };
+  nextList.updatedAt = nowTs();
+  await persistProductsListRecord(ensureProductsListTickets(nextList), { activate: true });
+  const model = buildCurrentProductsModel();
+  patchProductsShoppingPanel(model);
+  patchProductsCatalogSubview(model);
+  requestAnimationFrame(() => document.querySelector('[data-products-receipt-add-name]')?.focus());
+  recordFinanceTestingEvent('ticket:add-completed', {
+    name,
+    productId: productId || lineId,
+    currency,
+    quantity: nextQty,
+  });
+  return productId || lineId;
 }
 function foodItemsList() {
   return Object.values(state.food.itemsById || {}).map((item) => ({
@@ -2918,6 +3430,7 @@ function buildProductsViewModel(cfg = {}) {
       displayName: initialName,
       aliasList: [...new Set(Array.isArray(product?.aliases) ? product.aliases : [])],
       productType: meta.productType || normalizeFoodName(product?.mealType || ''),
+      tipoProducto: meta.tipoProducto || meta.productType || normalizeFoodName(product?.mealType || ''),
       productCategory: meta.productCategory || '',
       preferredStore,
       brand: normalizeProductText(product?.brand || ''),
@@ -2927,6 +3440,8 @@ function buildProductsViewModel(cfg = {}) {
       lastPrice: normalizeProductPositiveNumber(product?.lastPrice, 0),
       usualQty: normalizeProductPositiveNumber(product?.usualQty, 1),
       unit: normalizeProductUnit(product?.unit || 'ud'),
+      pesoValor: normalizeProductWeightValue(product?.pesoValor ?? meta.pesoValor, 0),
+      pesoUnidad: normalizeProductWeightUnit(product?.pesoUnidad || meta.pesoUnidad || ''),
       lastPurchaseAt: normalizeProductNumber(product?.lastPurchaseAt, 0),
       purchaseFrequencyDays: normalizeProductPositiveNumber(product?.purchaseFrequencyDays, 0),
       estimatedDurationDays: normalizeProductPositiveNumber(product?.estimatedDurationDays, 0),
@@ -3597,6 +4112,7 @@ function buildProductsStoreChoices(model = null) {
   return [
     activeList.store,
     state.productsHub?.settings?.defaultStore,
+    ...listManagedProductsStoreNames(),
     ...(Array.isArray(model?.storeOptions) ? model.storeOptions.filter((value) => value !== 'all') : []),
     ...foodOptionList('place'),
   ]
@@ -3776,7 +4292,7 @@ function renderProductsReceiptEmptyRow(model) {
       </div>
       <input class="productsWorkbench__receiptUnit food-control" type="number" min="0" step="0.01" inputmode="decimal" placeholder="precio ${escapeHtml(currencyLabel)}" aria-label="Precio unitario nuevo en ${escapeHtml(ticketCurrency)}" data-products-receipt-add-unit />
       <strong class="productsWorkbench__receiptTotal" data-products-receipt-add-total>${fmtCurrencyCode(0, ticketCurrency)}</strong>
-      <button type="button" class="productsWorkbench__receiptAddHint" data-products-receipt-add-line aria-label="Añadir línea">+</button>
+      <button type="button" class="productsWorkbench__receiptAddHint" data-products-receipt-add-line="" aria-label="Añadir línea">+</button>
     </div>
   `;
 }
@@ -4025,6 +4541,8 @@ function renderProductsEditorPanel(model) {
     lastPurchaseAt: 0,
     purchaseFrequencyDays: 0,
     estimatedDurationDays: 0,
+    pesoValor: 0,
+    pesoUnidad: '',
     notes: '',
     active: true,
     tags: [],
@@ -4058,7 +4576,13 @@ function renderProductsEditorPanel(model) {
         </label>
         <label class="productsWorkbench__field">
           <span>Tipo</span>
-          <input class="food-control" type="text" name="productType" value="${escapeHtml(values.productType || '')}" placeholder="Despensa" />
+          <select class="food-control" name="productType">
+            ${renderProductTypeOptions(values.tipoProducto || values.productType || '')}
+          </select>
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Nuevo tipo</span>
+          <input class="food-control" type="text" name="productTypeCustom" value="" placeholder="Ej. SNACKS" />
         </label>
         <label class="productsWorkbench__field">
           <span>Categoria</span>
@@ -4083,6 +4607,16 @@ function renderProductsEditorPanel(model) {
         <label class="productsWorkbench__field">
           <span>Unidad</span>
           <input class="food-control" type="text" name="unit" value="${escapeHtml(values.unit || 'ud')}" placeholder="ud, kg, l..." />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Peso / cantidad</span>
+          <input class="food-control" type="number" min="0" step="0.01" name="pesoValor" value="${Number(values.pesoValor || 0) || ''}" placeholder="300" />
+        </label>
+        <label class="productsWorkbench__field">
+          <span>Unidad peso</span>
+          <select class="food-control" name="pesoUnidad">
+            ${renderProductWeightUnitOptions(values.pesoUnidad || '')}
+          </select>
         </label>
         <label class="productsWorkbench__field">
           <span>Precio habitual</span>
@@ -4270,6 +4804,7 @@ function renderProductsTicketHero(model, options = {}) {
             ${renderProductsStoreSelect(model)
               .replace('class="food-control"', 'class="food-control productsWorkbench__receiptMetaControl productsWorkbench__receiptMetaControl--store"')
               .replace('data-products-store-select', 'data-products-store-select data-products-receipt-store')}
+            <button type="button" class="food-history-btn" data-products-open-store-manager>Gestionar supermercados</button>
           </div>
           <div class="productsWorkbench__panelActions productsWorkbench__panelActions--inlineReceipt productsWorkbench__panelActions--receiptHeader" ${selectedCount ? '' : 'hidden'} data-products-receipt-move-actions>
             <button type="button" class="food-history-btn" data-products-move-selected-ticket>Nuevo ticket (${selectedCount})</button>
@@ -4324,6 +4859,8 @@ function renderProductsTicketHero(model, options = {}) {
 
       </div>
       ${showRegistry ? renderProductsTicketRegistry(model) : ''}
+      ${renderProductsCreateModal()}
+      ${renderProductsStoreManagerModal()}
       </section>
   `;
 }
@@ -4461,28 +4998,88 @@ ${ticketBlockedDeletion ? 'disabled' : ''}
 
 function renderProductsCreateModal() {
   if (!state.foodProductsView?.createProductModalOpen) return '';
+  const draft = state.foodProductsView?.createProductDraft || {};
+  const showAddToTicket = !!document.querySelector('[data-products-receipt-add-name]');
   return `
-    <div class="productsWorkbenchCreateModal__backdrop" data-products-close-create-modal>
-      <div class="productsWorkbenchCreateModal" role="dialog" aria-modal="true" aria-label="Crear producto" onclick="event.stopPropagation()">
+    <div class="productsWorkbenchCreateModal__backdrop" data-products-create-modal-backdrop>
+      <div class="productsWorkbenchCreateModal" role="dialog" aria-modal="true" aria-label="Crear producto" data-products-create-modal-root>
         <header class="food-sheet-header">
           <h3>Nuevo producto</h3>
-          <button type="button" class="btn-x food-sheet-close" data-products-close-create-modal aria-label="Cerrar">✕</button>
+          <button type="button" class="btn-x food-sheet-close" data-product-modal-action="close" aria-label="Cerrar">✕</button>
         </header>
         <form class="productsWorkbench__editorForm" data-products-create-form>
-          <label class="productsWorkbench__field"><span>Nombre</span><input class="food-control" name="name" required /></label>
-          <label class="productsWorkbench__field"><span>Precio</span><input class="food-control" name="estimatedPrice" type="number" min="0" step="0.01" inputmode="decimal" /></label>
-          <label class="productsWorkbench__field"><span>Tienda</span><input class="food-control" name="preferredStore" /></label>
-          <label class="productsWorkbench__field"><span>Categoría</span><input class="food-control" name="productCategory" /></label>
-          <label class="productsWorkbench__field"><span>Tipo</span><input class="food-control" name="productType" /></label>
-          <label class="productsWorkbench__field"><span>Marca</span><input class="food-control" name="brand" /></label>
-          <label class="productsWorkbench__field"><span>Código de barras</span><input class="food-control" name="barcode" /></label>
-          <label class="productsWorkbench__field"><span>Unidad</span><input class="food-control" name="unit" value="ud" /></label>
-          <label class="productsWorkbench__field"><span>Cantidad base</span><input class="food-control" name="usualQty" type="number" min="0.01" step="0.01" value="1" /></label>
+          <label class="productsWorkbench__field"><span>Nombre</span><input class="food-control" name="name" required value="${escapeHtml(draft.name || '')}" /></label>
+          <label class="productsWorkbench__field"><span>Precio</span><input class="food-control" name="estimatedPrice" type="number" min="0" step="0.01" inputmode="decimal" value="${Number(draft.estimatedPrice || 0) || ''}" /></label>
+          <label class="productsWorkbench__field"><span>Moneda</span><select class="food-control" name="lastCurrency">${renderCurrencyOptions(draft.lastCurrency || getStoreDefaultCurrency(draft.preferredStore || '') || getDefaultCurrency())}</select></label>
+          <label class="productsWorkbench__field"><span>Tienda</span><input class="food-control" name="preferredStore" value="${escapeHtml(draft.preferredStore || '')}" /></label>
+          <label class="productsWorkbench__field"><span>Categoría</span><input class="food-control" name="productCategory" value="${escapeHtml(draft.productCategory || '')}" /></label>
+          <label class="productsWorkbench__field"><span>Tipo</span><select class="food-control" name="productType">${renderProductTypeOptions(draft.productType || '')}</select></label>
+          <label class="productsWorkbench__field"><span>Nuevo tipo</span><input class="food-control" name="productTypeCustom" placeholder="Ej. SNACKS" /></label>
+          <label class="productsWorkbench__field"><span>Marca</span><input class="food-control" name="brand" value="${escapeHtml(draft.brand || '')}" /></label>
+          <label class="productsWorkbench__field"><span>Código de barras</span><input class="food-control" name="barcode" value="${escapeHtml(draft.barcode || '')}" /></label>
+          <label class="productsWorkbench__field"><span>Unidad</span><input class="food-control" name="unit" value="${escapeHtml(draft.unit || 'ud')}" /></label>
+          <label class="productsWorkbench__field"><span>Cantidad base</span><input class="food-control" name="usualQty" type="number" min="0.01" step="0.01" value="${Number(draft.usualQty || 1)}" /></label>
+          <label class="productsWorkbench__field"><span>Peso / cantidad</span><input class="food-control" name="pesoValor" type="number" min="0" step="0.01" inputmode="decimal" value="${Number(draft.pesoValor || 0) || ''}" placeholder="300" /></label>
+          <label class="productsWorkbench__field"><span>Unidad peso</span><select class="food-control" name="pesoUnidad">${renderProductWeightUnitOptions(draft.pesoUnidad || '')}</select></label>
           <div class="productsWorkbench__editorActions">
-            <button type="submit" class="food-history-btn">Guardar producto</button>
-            <button type="button" class="food-history-btn" data-products-close-create-modal>Cancelar</button>
+            <button type="button" class="food-history-btn" data-product-modal-action="save-product">Guardar producto</button>
+            ${showAddToTicket ? '<button type="button" class="food-history-btn" data-product-modal-action="add-to-ticket">Añadir al ticket</button>' : ''}
+            <button type="button" class="food-history-btn" data-product-modal-action="cancel">Cancelar</button>
           </div>
         </form>
+      </div>
+    </div>
+  `;
+}
+
+function renderProductsStoreManagerModal() {
+  if (!state.foodProductsView?.storeManagerModalOpen) return '';
+  const stores = getManagedProductsStoreEntries({ includeInactive: true });
+  return `
+    <div class="productsWorkbenchCreateModal__backdrop" data-products-store-manager-backdrop>
+      <div class="productsWorkbenchCreateModal" role="dialog" aria-modal="true" aria-label="Gestionar supermercados" data-products-store-manager-root>
+        <header class="food-sheet-header">
+          <h3>Gestionar supermercados</h3>
+          <button type="button" class="btn-x food-sheet-close" data-products-store-manager-action="close" aria-label="Cerrar">✕</button>
+        </header>
+        <div class="productsWorkbench__editorForm">
+          <div class="productsWorkbench__storeManagerList">
+            ${stores.length ? stores.map((store) => `
+              <section class="productsWorkbench__storeManagerRow ${store.active === false ? 'is-inactive' : ''}" data-products-store-row="${escapeHtml(store.id)}">
+                <label class="productsWorkbench__field">
+                  <span>Nombre</span>
+                  <input class="food-control" type="text" value="${escapeHtml(store.name)}" data-products-store-field="name" />
+                </label>
+                <label class="productsWorkbench__field">
+                  <span>Moneda</span>
+                  <select class="food-control" data-products-store-field="currency">${renderCurrencyOptions(store.currency || getDefaultCurrency())}</select>
+                </label>
+                <label class="productsWorkbench__field">
+                  <span>Activo</span>
+                  <input class="food-control" type="checkbox" ${store.active === false ? '' : 'checked'} data-products-store-field="active" />
+                </label>
+                <div class="productsWorkbench__editorActions">
+                  <button type="button" class="food-history-btn" data-products-store-manager-action="save" data-products-store-id="${escapeHtml(store.id)}">Guardar</button>
+                  <button type="button" class="food-history-btn" data-products-store-manager-action="toggle-active" data-products-store-id="${escapeHtml(store.id)}">${store.active === false ? 'Reactivar' : 'Desactivar'}</button>
+                </div>
+              </section>
+            `).join('') : '<div class="productsWorkbench__empty">Todavía no hay supermercados gestionados.</div>'}
+          </div>
+          <section class="productsWorkbench__storeManagerRow productsWorkbench__storeManagerRow--new" data-products-store-create-row>
+            <label class="productsWorkbench__field">
+              <span>Nuevo supermercado</span>
+              <input class="food-control" type="text" placeholder="Ej. Mercadona" data-products-store-create-name />
+            </label>
+            <label class="productsWorkbench__field">
+              <span>Moneda por defecto</span>
+              <select class="food-control" data-products-store-create-currency>${renderCurrencyOptions(getDefaultCurrency())}</select>
+            </label>
+            <div class="productsWorkbench__editorActions">
+              <button type="button" class="food-history-btn" data-products-store-manager-action="create">Crear supermercado</button>
+              <button type="button" class="food-history-btn" data-products-store-manager-action="close">Cerrar</button>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   `;
@@ -4623,7 +5220,6 @@ function renderProductsCatalogSubview(model) {
       ${renderProductsSummaryCards(model)}
       ${renderProductsFilters(model)}
       ${renderProductsCatalogWorkspace(model)}
-      ${renderProductsCreateModal()}
     </div>
   `;
 }
@@ -5437,6 +6033,10 @@ function readProductsListDraftFromDom(root = document) {
     const actualPriceFallback = Math.max(0, normalizeProductPositiveNumber(baseLine.actualPrice, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || baseLine.estimatedPrice || 0)));
     const estimatedPrice = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-unit="${lineId}"]`], estimatedPriceFallback), estimatedPriceFallback);
     const actualPrice = parseProductsReceiptMoney(productsDomValue(root, [`[data-products-receipt-total="${lineId}"]`], actualPriceFallback), actualPriceFallback);
+    const lineCurrency = normalizeCurrencyCode(baseLine.currency || ticketCurrency);
+    const lineExchangeRateToEUR = lineCurrency === 'EUR'
+      ? 1
+      : Number(baseLine.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
     return [lineId, {
       id: lineId,
       productId: String(rowEl.querySelector(`[data-products-line-product-id="${lineId}"]`)?.value || baseList.lines?.[lineId]?.productId || '').trim(),
@@ -5445,10 +6045,16 @@ function readProductsListDraftFromDom(root = document) {
       unit: normalizeProductUnit(rowEl.querySelector(`[data-products-line-unit="${lineId}"]`)?.value || baseList.lines?.[lineId]?.unit || 'ud'),
       estimatedPrice,
       actualPrice,
-      currency: String(baseList.lines?.[lineId]?.currency || ticketCurrency).toUpperCase(),
+      currency: lineCurrency,
       priceOriginal: actualPrice,
-      priceEUR: normalizeMovementCurrencyPayload({ amount: actualPrice, currency: String(baseList.lines?.[lineId]?.currency || ticketCurrency).toUpperCase(), exchangeRateToEUR }).amountEUR,
+      priceEUR: normalizeMovementCurrencyPayload({ amount: actualPrice, currency: lineCurrency, exchangeRateToEUR: lineExchangeRateToEUR }).amountEUR,
+      exchangeRateToEUR: lineExchangeRateToEUR,
       store: normalizeFoodName(baseList.lines?.[lineId]?.store || nextList.store || ''),
+      productCategory: normalizeFoodName(baseList.lines?.[lineId]?.productCategory || ''),
+      productType: normalizeFoodName(baseList.lines?.[lineId]?.productType || baseList.lines?.[lineId]?.tipoProducto || ''),
+      tipoProducto: normalizeFoodName(baseList.lines?.[lineId]?.tipoProducto || baseList.lines?.[lineId]?.productType || ''),
+      pesoValor: normalizeProductWeightValue(baseList.lines?.[lineId]?.pesoValor, 0),
+      pesoUnidad: normalizeProductWeightUnit(baseList.lines?.[lineId]?.pesoUnidad || ''),
       checked: rowEl.querySelector(`[data-products-line-checked="${lineId}"]`)?.checked !== false,
       ticketId: lineTicketId,
       note: normalizeProductText(baseList.lines?.[lineId]?.note || ''),
@@ -5467,12 +6073,13 @@ function syncProductsTicketComposerDom(root = document) {
   const scope = formEl.closest('[data-products-workbench]') || root;
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || '').trim();
   const ticketCurrency = String(scope.querySelector('[data-products-receipt-currency]')?.value || getDefaultCurrency()).toUpperCase();
-  const lineTotals = [];
-  const activeTicketLineTotals = [];
+  const draftSnapshot = ensureProductsListTickets(readProductsListDraftFromDom(root));
+  const activeTicketTotals = { estimatedTotal: 0, actualTotal: 0, diffTotal: 0 };
   formEl.querySelectorAll('[data-products-line-row]').forEach((rowEl) => {
     const lineId = String(rowEl.dataset.productsLineRow || '').trim();
     if (!lineId) return;
     syncProductsReceiptLineToBacking(root, lineId);
+    const draftLine = draftSnapshot.lines?.[lineId] || {};
     const qty = Math.max(0.01, parseProductsReceiptQuantity(productsDomValue(root, [`[data-products-receipt-qty="${lineId}"]`, `[data-products-line-qty="${lineId}"]`], 1), 1));
     const estimatedPriceFallback = Math.max(0, Number(rowEl.querySelector(`[data-products-line-estimate="${lineId}"]`)?.value || 0));
     const actualPriceFallback = Math.max(0, Number(rowEl.querySelector(`[data-products-line-actual="${lineId}"]`)?.value || estimatedPriceFallback));
@@ -5484,11 +6091,15 @@ function syncProductsTicketComposerDom(root = document) {
     const computedLine = calculateLineTotals({ qty, estimatedPrice, actualPrice });
     const estimatedSubtotal = computedLine.estimatedSubtotal;
     const actualSubtotal = computedLine.actualSubtotal;
+    const lineCurrency = normalizeCurrencyCode(draftLine.currency || ticketCurrency || getDefaultCurrency());
+    const estimatedInTicket = Number(convertCurrency(estimatedSubtotal, lineCurrency, ticketCurrency, getFinanceCurrencyRates()));
+    const actualInTicket = Number(convertCurrency(actualSubtotal, lineCurrency, ticketCurrency, getFinanceCurrencyRates()));
     const rowTicketId = String(rowEl.querySelector(`[data-products-line-ticket-id="${lineId}"]`)?.value || '').trim();
     if (rowTicketId && rowTicketId === activeTicketId) {
-      activeTicketLineTotals.push(computedLine);
+      activeTicketTotals.estimatedTotal += Number.isFinite(estimatedInTicket) ? estimatedInTicket : estimatedSubtotal;
+      activeTicketTotals.actualTotal += Number.isFinite(actualInTicket) ? actualInTicket : actualSubtotal;
+      activeTicketTotals.diffTotal = activeTicketTotals.actualTotal - activeTicketTotals.estimatedTotal;
     }
-    lineTotals.push(computedLine);
     rowEl.classList.toggle('is-unchecked', !isChecked);
     rowEl.classList.toggle('is-checked', isChecked);
     const estimatedNode = root.querySelector(`[data-products-line-est-total="${lineId}"]`);
@@ -5499,8 +6110,8 @@ function syncProductsTicketComposerDom(root = document) {
     const receiptDiff = root.querySelector(`[data-products-receipt-diff="${lineId}"]`);
     const quickQty = root.querySelector(`[data-products-quick-line-qty="${lineId}"]`);
     const lineDiffMeta = resolveProductsReceiptDiffMeta(actualSubtotal - estimatedSubtotal);
-    if (estimatedNode) estimatedNode.textContent = fmtCurrencyCode(estimatedSubtotal, line.currency || ticketCurrency || 'EUR');
-    if (actualNode) actualNode.textContent = fmtCurrencyCode(actualSubtotal, line.currency || ticketCurrency || 'EUR');
+    if (estimatedNode) estimatedNode.textContent = fmtCurrencyCode(estimatedSubtotal, lineCurrency);
+    if (actualNode) actualNode.textContent = fmtCurrencyCode(actualSubtotal, lineCurrency);
     if (receiptQty && document.activeElement !== receiptQty) receiptQty.value = String(qty);
     syncProductsMoneyFieldDisplay(receiptUnit, estimatedPrice);
     syncProductsMoneyFieldDisplay(receiptTotal, actualPrice);
@@ -5512,8 +6123,6 @@ function syncProductsTicketComposerDom(root = document) {
     }
     if (quickQty && document.activeElement !== quickQty) quickQty.value = String(qty);
   });
-  const receiptTotals = calculateReceiptTotals(lineTotals);
-  const activeTicketTotals = calculateReceiptTotals(activeTicketLineTotals);
   const addQty = root.querySelector('[data-products-receipt-add-qty]');
   const addUnit = root.querySelector('[data-products-receipt-add-unit]');
   const addTotal = root.querySelector('[data-products-receipt-add-total]');
@@ -5805,7 +6414,7 @@ async function addProductToActiveProductsList(productId = '') {
   patchProductsCatalogSubview(model);
 }
 
-async function addProductToActiveProductsListFromReceipt(productId = '') {
+async function addProductToActiveProductsListFromReceipt(productId = '', options = {}) {
   const product = resolveProductsCatalogSnapshot(productId);
   if (!product) return;
   const syncedDraft = readProductsListDraftFromDom();
@@ -5817,8 +6426,8 @@ async function addProductToActiveProductsListFromReceipt(productId = '') {
     .filter((line) => String(line.productId || '').trim() === String(product.canonicalId || product.id || '').trim())
     .filter((line) => String(line.ticketId || '').trim() === activeTicketId)
     .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0];
-  const addQty = parseProductsReceiptQuantity(document.querySelector('[data-products-receipt-add-qty]')?.value || 1, 1);
-  const addUnit = parseProductsReceiptMoney(document.querySelector('[data-products-receipt-add-unit]')?.value || '', 0);
+  const addQty = Math.max(0.01, Number(options.qty ?? parseProductsReceiptQuantity(document.querySelector('[data-products-receipt-add-qty]')?.value || 1, 1)));
+  const addUnit = Math.max(0, Number(options.unitPrice ?? parseProductsReceiptMoney(document.querySelector('[data-products-receipt-add-unit]')?.value || '', 0)));
   if (addedLine?.id) {
     const activeTicket = nextList.tickets?.[activeTicketId] || {};
     const itemCurrency = String(activeTicket.ticketCurrency || 'EUR').toUpperCase();
@@ -5851,6 +6460,8 @@ async function changeProductsReceiptLineProduct(lineId = '', productId = '') {
   const line = draft?.lines?.[safeLineId];
   if (!line) return;
   const price = resolveProductsCatalogPrice(product);
+  const lineCurrency = normalizeCurrencyCode(product.lastCurrency || line.currency || getStoreDefaultCurrency(product.preferredStore || product.place || '') || getDefaultCurrency());
+  const lineExchangeRateToEUR = lineCurrency === 'EUR' ? 1 : Number(product.exchangeRateToEUR || line.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
   draft.lines[safeLineId] = {
     ...line,
     productId: String(product.canonicalId || product.id || '').trim(),
@@ -5858,7 +6469,20 @@ async function changeProductsReceiptLineProduct(lineId = '', productId = '') {
     unit: normalizeProductUnit(product.unit || line.unit || 'ud'),
     estimatedPrice: normalizeProductPositiveNumber(line.estimatedPrice, price || 0),
     actualPrice: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(price, line.estimatedPrice || 0)),
+    currency: lineCurrency,
+    priceOriginal: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(price, line.estimatedPrice || 0)),
+    priceEUR: Number(normalizeMovementCurrencyPayload({
+      amount: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(price, line.estimatedPrice || 0)),
+      currency: lineCurrency,
+      exchangeRateToEUR: lineExchangeRateToEUR,
+    }).amountEUR || 0),
+    exchangeRateToEUR: lineExchangeRateToEUR,
     store: normalizeFoodName(product.preferredStore || product.place || draft.store || line.store || ''),
+    productCategory: normalizeFoodName(product.productCategory || line.productCategory || ''),
+    productType: normalizeFoodName(product.productType || product.tipoProducto || product.mealType || line.productType || line.tipoProducto || ''),
+    tipoProducto: normalizeFoodName(product.tipoProducto || product.productType || product.mealType || line.tipoProducto || line.productType || ''),
+    pesoValor: normalizeProductWeightValue(product.pesoValor ?? line.pesoValor, 0),
+    pesoUnidad: normalizeProductWeightUnit(product.pesoUnidad || line.pesoUnidad || ''),
     updatedAt: nowTs(),
   };
   if (draft.id === '__draft__') syncProductsDraftListLocal(draft);
@@ -5909,73 +6533,45 @@ async function createProductFromReceiptRow() {
   const storeSelect = document.querySelector('[data-products-store-select]');
   const defaultStore = normalizeFoodName((storeSelect?.value === '__new__' ? document.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || state.productsHub?.settings?.defaultStore || '');
   const unitPrice = parseProductsReceiptMoney(document.querySelector('[data-products-receipt-add-unit]')?.value || '', 0);
+  const addQty = parseProductsReceiptQuantity(document.querySelector('[data-products-receipt-add-qty]')?.value || 1, 1);
   const normalizedName = normalizeProductItemKey(name);
   const existing = Object.values(state.food.itemsById || {}).find((item) => normalizeProductItemKey(item?.name || item?.displayName || '') === normalizedName);
   if (existing?.id) {
-    await addProductToActiveProductsListFromReceipt(existing.id);
+    openProductsCreateModalForExistingProduct(existing.id, {
+      source: 'receipt-add',
+      qty: Math.max(0.01, addQty),
+      unitPrice,
+    });
     return;
   }
-  try {
-    const savedId = await upsertFoodItem({
-      name,
-      displayName: name,
-      place: defaultStore,
-      preferredStore: defaultStore,
-      estimatedPrice: unitPrice,
-      usualPrice: unitPrice,
-      defaultPrice: unitPrice,
-      unit: 'ud',
-      usualQty: 1,
-      lastPrice: unitPrice,
-      lastPurchaseAt: dayKeyFromTs(nowTs()),
-      active: true,
-    }, false);
-    if (!savedId) return;
-    await addProductToActiveProductsListFromReceipt(savedId);
-  } catch (error) {
-    console.error('[products][receipt-add] no se pudo crear el producto desde ticket', { name, unitPrice, error });
-    state.productsReceiptError = 'No se pudo crear el producto. Revisa la consola.';
-  }
+  openProductsCreateModal({
+    name,
+    estimatedPrice: unitPrice,
+    preferredStore: defaultStore,
+    usualQty: Math.max(0.01, addQty),
+    unit: 'ud',
+  }, {
+    source: 'receipt-add',
+    qty: Math.max(0.01, addQty),
+    unitPrice,
+  });
 }
 
 async function createProductFromModalForm(formEl) {
-  const form = new FormData(formEl);
-  const name = normalizeFoodName(String(form.get('name') || ''));
-  if (!name) { toast('Nombre obligatorio'); return false; }
-  const preferredStore = normalizeFoodName(String(form.get('preferredStore') || ''));
-  const productType = normalizeFoodName(String(form.get('productType') || ''));
-  const productCategory = normalizeFoodName(String(form.get('productCategory') || ''));
-  const estimatedPrice = Math.max(0, Number(form.get('estimatedPrice') || 0));
-  const usualQty = Math.max(0.01, Number(form.get('usualQty') || 1));
-  const unit = normalizeProductUnit(String(form.get('unit') || 'ud'));
+  const payload = readCreateProductFormPayload(formEl);
+  const modalContext = state.foodProductsView?.createProductModalContext || {};
+  if (!payload.name) return false;
   try {
-    await upsertFoodItem({
-      name,
-      displayName: name,
-      preferredStore,
-      place: preferredStore,
-      productType,
-      productCategory,
-      mealType: productType,
-      brand: String(form.get('brand') || '').trim(),
-      barcode: String(form.get('barcode') || '').trim(),
-      estimatedPrice,
-      usualPrice: estimatedPrice,
-      defaultPrice: estimatedPrice,
-      lastPrice: estimatedPrice,
-      usualQty,
-      unit,
-      active: true,
-    }, false);
-    if (preferredStore) await upsertFoodOption('place', preferredStore, false);
-    if (productType) await upsertFoodOption('typeOfMeal', productType, false);
-    state.foodProductsView = { ...(state.foodProductsView || {}), createProductModalOpen: false };
+    await saveProductToCatalog({
+      ...payload,
+      id: String(modalContext.productId || payload.id || '').trim(),
+    }, { syncGoogleSheets: true });
+    closeProductsCreateModal();
     formEl.reset();
     toast('Producto guardado');
-    patchProductsCatalogSubview(buildCurrentProductsModel());
     return true;
   } catch (error) {
-    console.error('[products][create-modal] no se pudo guardar el producto', { name, error });
+    console.error('[products][create-modal] no se pudo guardar el producto', { name: payload.name, error });
     toast('No se pudo guardar el producto');
     return false;
   }
@@ -6113,7 +6709,7 @@ async function persistProductsEditorForm(formEl) {
     return;
   }
   const preferredStore = normalizeFoodName(String(form.get('preferredStore') || ''));
-  const productType = normalizeFoodName(String(form.get('productType') || ''));
+  const productType = resolveProductTypeFromForm(form);
   const previous = productId ? (state.food.itemsById?.[productId] || null) : null;
   const payload = {
     id: productId,
@@ -6126,6 +6722,7 @@ async function persistProductsEditorForm(formEl) {
     healthy: previous?.healthy || previous?.cuisine || '',
     place: preferredStore,
     productType,
+    tipoProducto: productType,
     productCategory: normalizeFoodName(String(form.get('productCategory') || '')),
     preferredStore,
     brand: String(form.get('brand') || ''),
@@ -6135,6 +6732,8 @@ async function persistProductsEditorForm(formEl) {
     lastPrice: Number(form.get('lastPrice') || 0),
     usualQty: Number(form.get('usualQty') || 1),
     unit: String(form.get('unit') || 'ud'),
+    pesoValor: normalizeProductWeightValue(form.get('pesoValor'), normalizeProductWeightValue(previous?.pesoValor, 0)),
+    pesoUnidad: normalizeProductWeightUnit(String(form.get('pesoUnidad') || previous?.pesoUnidad || '')),
     lastPurchaseAt: String(form.get('lastPurchaseAt') || ''),
     purchaseFrequencyDays: Number(form.get('purchaseFrequencyDays') || 0),
     estimatedDurationDays: Number(form.get('estimatedDurationDays') || 0),
@@ -6411,23 +7010,29 @@ function buildReceiptMovementLines(lines = [], list = {}, category = 'Compra') {
       qty,
       unit: normalizeProductUnit(line.unit || productSnapshot?.unit || 'ud'),
       unitPrice,
+      unitPriceOriginal: unitPrice,
       currency,
+      currencyOriginal: currency,
       priceEur,
       amount: total,
       total,
       totalPrice: total,
       price: total,
-      category: normalizeFoodName(productSnapshot?.productCategory || category) || category,
-      mealType: normalizeFoodName(productSnapshot?.productType || productSnapshot?.mealType || ''),
+      category: normalizeFoodName(line.productCategory || productSnapshot?.productCategory || category) || category,
+      mealType: normalizeFoodName(line.productType || line.tipoProducto || productSnapshot?.productType || productSnapshot?.mealType || ''),
       cuisine: normalizeFoodName(productSnapshot?.cuisine || ''),
       place: store,
       store,
       supermarket: store,
+      supermarketName: store,
       healthy: normalizeFoodName(productSnapshot?.healthy || productSnapshot?.cuisine || ''),
+      pesoValor: normalizeProductWeightValue(line.pesoValor ?? productSnapshot?.pesoValor, 0),
+      pesoUnidad: normalizeProductWeightUnit(line.pesoUnidad || productSnapshot?.pesoUnidad || ''),
+      tipoProducto: normalizeFoodName(line.tipoProducto || line.productType || productSnapshot?.tipoProducto || productSnapshot?.productType || productSnapshot?.mealType || ''),
       snapshot: {
         productId,
         store,
-        category: normalizeFoodName(productSnapshot?.productCategory || ''),
+        category: normalizeFoodName(line.productCategory || productSnapshot?.productCategory || ''),
       },
     };
   }).filter((item) => item.name);
@@ -6442,11 +7047,12 @@ async function syncReceiptCatalogAfterWrite(items = [], {
   store = '',
 } = {}) {
   const normalizedItems = Array.isArray(items) ? items.filter((item) => item?.name) : [];
-  if (!normalizedItems.length) return;
+  if (!normalizedItems.length) return [];
   financeReceiptLog('catalog-sync:start', {
     movementId,
     lineCount: normalizedItems.length,
   });
+  const syncedProductIds = new Set();
   try {
     await ensureFoodCatalogLoaded();
     for (const item of normalizedItems) {
@@ -6477,9 +7083,12 @@ async function syncReceiptCatalogAfterWrite(items = [], {
           lastPriceEur: Number(item.priceEur || 0),
           lastPurchaseAt: parseDayKey(dateISO),
           unit: item.unit || 'ud',
+        }, {
+          syncGoogleSheets: false,
         });
         item.foodId = savedFoodId;
         item.productId = savedFoodId || item.productId;
+        if (savedFoodId) syncedProductIds.add(String(savedFoodId).trim());
         if (item.mealType) await upsertFoodOption('typeOfMeal', item.mealType, true);
         if (item.place) await upsertFoodOption('place', item.place, true);
         await recordFoodPricePoint(savedFoodId, Number(item.unitPrice || 0), 'expense', {
@@ -6513,6 +7122,7 @@ async function syncReceiptCatalogAfterWrite(items = [], {
       message: error?.message || String(error || ''),
     });
   }
+  return [...syncedProductIds].filter(Boolean);
 }
 
 async function saveProductsPurchaseTransaction(list = {}, options = {}) {
@@ -6539,14 +7149,18 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     list.notes
     || `Compra ${list.store || ''}${ticketReference ? ` · ${ticketReference}` : ''}`,
   ) || 'Compra';
-  const totalAmount = lines.reduce((sum, line) => sum + (Number(line.actualPrice || 0) * Math.max(0.01, Number(line.qty || 1))), 0);
+  const inputCurrency = normalizeCurrencyCode(options.ticketCurrency || list.ticketCurrency || list.currency || getDefaultCurrency());
+  const lineBreakdowns = lines.map((line) => resolveProductsReceiptLineMoneyBreakdown(line, {
+    fallbackCurrency: inputCurrency,
+    targetCurrency: inputCurrency,
+  }));
+  const totalAmount = lineBreakdowns.reduce((sum, line) => sum + Number(line.lineTotalTarget || 0), 0);
   if (!(totalAmount > 0)) {
     throw new Error('receipt-invalid-total');
   }
   const account = (state.accounts || []).find((item) => String(item.id || '') === accountId) || {};
-  const inputCurrency = normalizeCurrencyCode(options.ticketCurrency || list.ticketCurrency || list.currency || getDefaultCurrency());
   const accountCur = accountCurrency(account);
-  const totalEUR = Number(options.totalEUR ?? list.totalEUR ?? normalizeMovementCurrencyPayload({ amount: totalAmount, currency: inputCurrency, exchangeRateToEUR: Number(options.exchangeRateToEUR || list.exchangeRateToEUR || 0) }).amountEUR);
+  const totalEUR = Number(options.totalEUR ?? list.totalEUR ?? lineBreakdowns.reduce((sum, line) => sum + Number(line.lineTotalEUR || 0), 0));
   const amountDebited = convertCurrency(totalAmount, inputCurrency, accountCur);
   if (!Number.isFinite(amountDebited)) throw new Error('receipt-fx-missing-account-currency');
   const rateUsed = inputCurrency === accountCur ? 1 : (amountDebited / Math.max(0.0000001, totalAmount));
@@ -6585,7 +7199,18 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
       accountId,
       accountNameSnapshot: accountNameSnapshot(accountId),
       movementId: saveId,
-      estimatedTotal: lines.reduce((sum, line) => sum + (Number(line.estimatedPrice || 0) * Math.max(1, Number(line.qty || 1))), 0),
+      estimatedTotal: lines.reduce((sum, line) => {
+        const estimatedBreakdown = resolveProductsReceiptLineMoneyBreakdown({
+          ...line,
+          actualPrice: Number(line.estimatedPrice || 0),
+          priceOriginal: Number(line.estimatedPrice || 0),
+          priceEUR: undefined,
+        }, {
+          fallbackCurrency: inputCurrency,
+          targetCurrency: inputCurrency,
+        });
+        return sum + Number(estimatedBreakdown.lineTotalTarget || 0);
+      }, 0),
       actualTotal: totalAmount,
       inputCurrency,
       accountCurrency: accountCur,
@@ -6674,7 +7299,7 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
 
   queueMovementGoogleSheetsCreate(payload);
 
-  await syncReceiptCatalogAfterWrite(normalizedLines, {
+  const syncedProductIds = await syncReceiptCatalogAfterWrite(normalizedLines, {
     movementId: saveId,
     accountId,
     dateISO,
@@ -6685,7 +7310,7 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
 
   localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId);
   state.lastMovementAccountId = accountId;
-  return { txId: saveId, total: totalAmount, payload, accountId, dateISO };
+  return { txId: saveId, total: totalAmount, payload, accountId, dateISO, syncedProductIds };
 }
 
 function resolveProductsTicketConfirmErrorMessage(error) {
@@ -6716,19 +7341,26 @@ async function confirmProductsTicketFromDom() {
       Object.entries(draft.lines || {}).filter(([, line]) => String(line?.ticketId || draft.primaryTicketId || '').trim() === activeTicketId),
     );
     const draftLineCount = Object.keys(activeTicketLines || {}).length;
-    const actualTotalOriginal = Object.values(activeTicketLines || {}).reduce((sum, line) => {
-      const normalizedLine = normalizeProductsReceiptLinePrices(line);
-      return sum + (Number(normalizedLine.actualPrice || 0) * Math.max(0.01, Number(normalizedLine.qty || 1)));
-    }, 0);
     const receiptCurrency = String(activeTicketMeta.ticketCurrency || getDefaultCurrency()).toUpperCase();
+    const lineBreakdowns = Object.values(activeTicketLines || {}).map((line) => resolveProductsReceiptLineMoneyBreakdown(line, {
+      fallbackCurrency: receiptCurrency,
+      targetCurrency: receiptCurrency,
+    }));
+    const actualTotalOriginal = lineBreakdowns.reduce((sum, line) => sum + Number(line.lineTotalTarget || 0), 0);
+    const actualTotalEUR = lineBreakdowns.reduce((sum, line) => sum + Number(line.lineTotalEUR || 0), 0);
     const ticketRate = receiptCurrency === 'EUR' ? 1 : Number(activeTicketMeta.exchangeRateToEUR || getCurrencyRates()[receiptCurrency] || 1);
-    const receiptCurrencyPayload = normalizeMovementCurrencyPayload({ amount: actualTotalOriginal, currency: receiptCurrency, exchangeRateToEUR: ticketRate });
+    const receiptCurrencyPayload = {
+      amountEUR: actualTotalEUR,
+      exchangeRateToEUR: ticketRate,
+    };
     console.info('[finance:currency] ticket:state-before-add', { ticketCurrency: receiptCurrency, exchangeRateToEUR: Number(receiptCurrencyPayload.exchangeRateToEUR || 1) });
-    Object.values(activeTicketLines || {}).forEach((line) => {
-      const normalizedLine = normalizeProductsReceiptLinePrices(line);
-      const lineTotalOriginal = Number(normalizedLine.actualPrice || 0) * Math.max(0.01, Number(normalizedLine.qty || 1));
-      const lineEUR = Number(line?.priceEUR ?? normalizeMovementCurrencyPayload({ amount: lineTotalOriginal, currency: receiptCurrency, exchangeRateToEUR: receiptCurrencyPayload.exchangeRateToEUR }).amountEUR);
-      console.info('[finance:currency] item:converted', { item: line?.name || '', original: lineTotalOriginal, currency: receiptCurrency, eur: lineEUR });
+    lineBreakdowns.forEach((lineBreakdown) => {
+      console.info('[finance:currency] item:converted', {
+        item: lineBreakdown?.name || '',
+        original: Number(lineBreakdown.lineTotalOriginal || 0),
+        currency: lineBreakdown.lineCurrency || receiptCurrency,
+        eur: Number(lineBreakdown.lineTotalEUR || 0),
+      });
     });
     const draftAccountId = String(activeTicketMeta.accountId || draft.accountId || '').trim();
     const draftCategoryId = String(
@@ -6935,7 +7567,11 @@ async function confirmProductsTicketFromDom() {
     await persistRecomputedFinanceAccountEntries([validation.accountId], confirmedDateISO, 'receipt-confirm');
     queueAccountGoogleSheetsHistoryCreate(validation.accountId);
     void persistStoreDefaultCurrency(validation.store, receiptCurrency);
-    collectProductIdsForGoogleSheets(txResult?.payload || {}).forEach((productId) => queueProductGoogleSheetsUpsert(productId));
+    const productIdsForGoogleSheets = new Set([
+      ...collectProductIdsForGoogleSheets(txResult?.payload || {}),
+      ...(Array.isArray(txResult?.syncedProductIds) ? txResult.syncedProductIds : []),
+    ]);
+    productIdsForGoogleSheets.forEach((productId) => queueProductGoogleSheetsUpsert(productId));
     queueProductSummaryGoogleSheetsRefresh();
     financeReceiptLog('local-update:success', {
       movementId: txResult.txId,
@@ -7037,6 +7673,11 @@ function normalizeProductsHubLineMap(lines = {}) {
       priceEUR,
       exchangeRateToEUR: Number.isFinite(exchangeRateToEUR) && exchangeRateToEUR > 0 ? exchangeRateToEUR : 1,
       store: normalizeFoodName(payload?.store || payload?.place || ''),
+      productCategory: normalizeFoodName(payload?.productCategory || ''),
+      productType: normalizeFoodName(payload?.productType || payload?.tipoProducto || ''),
+      tipoProducto: normalizeFoodName(payload?.tipoProducto || payload?.productType || ''),
+      pesoValor: normalizeProductWeightValue(payload?.pesoValor, 0),
+      pesoUnidad: normalizeProductWeightUnit(payload?.pesoUnidad || ''),
       checked: payload?.checked !== false,
       ticketId: String(payload?.ticketId || '').trim(),
       note: normalizeProductText(payload?.note || ''),
@@ -7563,8 +8204,9 @@ async function upsertFoodOption(kind, value, incrementCount = false) {
   return name;
 }
 
-async function upsertFoodItem(value, incrementCount = false, patch = {}) {
+async function upsertFoodItem(value, incrementCount = false, patch = {}, options = {}) {
   const payloadInput = typeof value === 'object' && value ? value : { name: value };
+  const shouldSyncGoogleSheets = options.syncGoogleSheets !== false;
   const name = normalizeFoodName(payloadInput.name || '');
   if (!name) return '';
   const existingId = payloadInput.id || state.food.nameToId?.[name.toLowerCase()] || '';
@@ -7645,7 +8287,7 @@ async function upsertFoodItem(value, incrementCount = false, patch = {}) {
   };
   state.food.items[legacyKey] = legacyPayload;
   await safeFirebase(() => update(ref(db, `${state.financePath}/catalog/foodItems/${legacyKey}`), legacyPayload));
-  queueProductGoogleSheetsUpsert(foodId);
+  if (shouldSyncGoogleSheets) queueProductGoogleSheetsUpsert(foodId);
   if (auth?.currentUser?.uid) {
     const globalItem = {
       name: payload.displayName || payload.name,
@@ -8188,6 +8830,10 @@ function deltaByBounds(series, startTs, endTs) {
 }
 
 function safeFirebase(action, fallback = null) {
+  if (isFinanceTestingLocalOnly()) {
+    recordFinanceTestingEvent('firebase:skipped');
+    return Promise.resolve(fallback);
+  }
   return action().catch((error) => {
     log('firebase error', error);
     toast('No se pudo guardar en Firebase');
@@ -14296,6 +14942,9 @@ function buildProductGoogleSheetsRecord(productId = '') {
     id: safeProductId,
     name: financeCsvText(product?.displayName || product?.name, ''),
     categoryName: financeCsvText(product?.productCategory || product?.productType || product?.mealType || product?.cuisine || stats?.categoryName, ''),
+    tipoProducto: financeCsvText(product?.tipoProducto || product?.productType || product?.mealType, ''),
+    pesoValor: roundGoogleSheetsAmount(product?.pesoValor || 0, 3),
+    pesoUnidad: financeCsvText(product?.pesoUnidad, ''),
     supermarketName: financeCsvText(product?.preferredStore || product?.place || stats?.supermarketName, ''),
     lastPrice,
     lastCurrency: currency,
@@ -14402,16 +15051,22 @@ function queueMovementGoogleSheetsDelete(movementId = '') {
 function queueProductGoogleSheetsUpsert(productId = '') {
   const product = buildProductGoogleSheetsRecord(productId);
   if (!product?.id) return;
+  recordFinanceTestingEvent('gs:product-upsert-queued', { productId: product.id });
+  if (isFinanceTestingLocalOnly()) return;
   void syncProductUpsertToGoogleSheets(product);
 }
 function queueProductGoogleSheetsDelete(productId = '') {
   const safeProductId = String(productId || '').trim();
   if (!safeProductId) return;
+  recordFinanceTestingEvent('gs:product-delete-queued', { productId: safeProductId });
+  if (isFinanceTestingLocalOnly()) return;
   void syncProductDeleteToGoogleSheets(safeProductId);
 }
 function queueAccountGoogleSheetsHistoryCreate(accountId = '', recordTs = nowTs()) {
   const account = buildAccountGoogleSheetsHistoryRecord(accountId, recordTs);
   if (!account?.id) return;
+  recordFinanceTestingEvent('gs:account-history-queued', { accountId: account.id });
+  if (isFinanceTestingLocalOnly()) return;
   void syncAccountCreateToGoogleSheets(account);
 }
 function shouldQueueAccountGoogleSheetsHistoryForMovementChange(previousRow = null, nextRow = {}) {
@@ -15698,6 +16353,10 @@ function bindEvents() {
 
   view.addEventListener('pointerdown', (event) => {
     const target = event.target;
+    if (target?.closest?.('[data-products-receipt-add-line]')) {
+      event.preventDefault();
+      return;
+    }
     const chartEl = target?.closest?.('#finance-lineChart');
     if (!chartEl) return;
 
@@ -16289,7 +16948,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       const lineId = String(receiptPick.dataset.productsReceiptPickLine || '').trim();
       closeProductsReceiptSuggestions(view);
       if (lineId) await changeProductsReceiptLineProduct(lineId, productId);
-      else await addProductToActiveProductsListFromReceipt(productId);
+      else openProductsCreateModalForExistingProduct(productId, { source: 'receipt-pick' });
       return;
     }
     const createFromSearch = target.closest('[data-products-create-from-search]')?.dataset.productsCreateFromSearch;
@@ -16339,14 +16998,38 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       return;
     }
     if (target.closest('[data-products-open-create-modal]')) {
-      state.foodProductsView = { ...(state.foodProductsView || {}), createProductModalOpen: true };
-      patchProductsCatalogSubview(buildCurrentProductsModel());
-      requestAnimationFrame(() => document.querySelector('[data-products-create-form]')?.reset());
+      openProductsCreateModal();
       return;
     }
-    if (target.closest('[data-products-close-create-modal]')) {
-      state.foodProductsView = { ...(state.foodProductsView || {}), createProductModalOpen: false };
-      patchProductsCatalogSubview(buildCurrentProductsModel());
+    const productModalActionButton = target.closest('[data-product-modal-action]');
+    if (productModalActionButton && target.closest('[data-products-create-modal-root]')) {
+      event.preventDefault();
+      event.stopPropagation();
+      await handleProductsCreateModalAction(productModalActionButton.dataset.productModalAction, target.closest('[data-products-create-modal-root]'));
+      return;
+    }
+    if (target.matches('[data-products-create-modal-backdrop]')) {
+      event.preventDefault();
+      event.stopPropagation();
+      console.debug('[product-modal] click', 'backdrop-close');
+      handleCloseProductsCreateModal('close');
+      return;
+    }
+    if (target.closest('[data-products-open-store-manager]')) {
+      openProductsStoreManagerModal();
+      return;
+    }
+    const storeManagerActionButton = target.closest('[data-products-store-manager-action]');
+    if (storeManagerActionButton && target.closest('[data-products-store-manager-root]')) {
+      event.preventDefault();
+      event.stopPropagation();
+      await handleProductsStoreManagerAction(storeManagerActionButton, target.closest('[data-products-store-manager-root]'));
+      return;
+    }
+    if (target.matches('[data-products-store-manager-backdrop]')) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeProductsStoreManagerModal();
       return;
     }
     if (target.closest('[data-products-save-list]')) {
@@ -17201,7 +17884,7 @@ view.addEventListener('focusout', async (event) => {
     if (event.key === 'Enter' && event.target.matches('[data-products-receipt-add-name]')) {
       event.preventDefault();
       const first = document.querySelector('[data-products-receipt-add-suggest] [data-products-receipt-pick]');
-      if (first) await addProductToActiveProductsListFromReceipt(first.dataset.productsReceiptPick);
+      if (first) openProductsCreateModalForExistingProduct(first.dataset.productsReceiptPick, { source: 'receipt-enter' });
       else await createProductFromReceiptRow();
       return;
     }
@@ -17638,7 +18321,7 @@ if (event.target.matches('[data-products-editor-form]')) {
 }
 if (event.target.matches('[data-products-create-form]')) {
   event.preventDefault();
-  await createProductFromModalForm(event.target);
+  await handleSaveProductFromModal(event.target);
   return;
 }
 if (event.target.matches('[data-products-batch-form]')) {

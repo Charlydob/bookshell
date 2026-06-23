@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-06-20-finance-debug-v1";
+const APP_VERSION = "2026-06-23-finance-debug-v2";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 

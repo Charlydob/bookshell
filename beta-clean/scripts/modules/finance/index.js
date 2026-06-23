@@ -1,6 +1,6 @@
 console.info("[finance/index] parsed ok");
 
-const FINANCE_RUNTIME_VERSION = "2026-06-20-finance-syntax-fix";
+const FINANCE_RUNTIME_VERSION = "2026-06-23-finance-runtime-cachebust-1";
 const FINANCE_RUNTIME_URL = "./runtime.js?v=" + FINANCE_RUNTIME_VERSION;
 let runtimeModule = null;
 

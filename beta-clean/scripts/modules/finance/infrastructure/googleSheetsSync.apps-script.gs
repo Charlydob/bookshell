@@ -9,7 +9,7 @@ var ENTITY_CONFIG = {
   product: {
     sheetName: 'Productos',
     keyColumns: ['id'],
-    columns: ['id', 'name', 'categoryName', 'supermarketName', 'lastPrice', 'lastCurrency', 'lastPriceEur', 'purchaseCount', 'totalOriginal', 'totalEur', 'updatedAt'],
+    columns: ['id', 'name', 'categoryName', 'tipoProducto', 'pesoValor', 'pesoUnidad', 'supermarketName', 'lastPrice', 'lastCurrency', 'lastPriceEur', 'purchaseCount', 'totalOriginal', 'totalEur', 'updatedAt'],
   },
   account: {
     sheetName: 'Cuentas',

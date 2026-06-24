@@ -415,7 +415,7 @@ function computeFullYearDistribution(year, sourceStays = stays) {
     registeredDays,
     unregisteredDays,
     byCountry,
-    displayItems: unregisteredDays ? [...byCountry, { key:"__unregistered__", countryCode:"", country:"Sin registrar / restante", days:unregisteredDays, isUnregistered:true }] : byCountry,
+    displayItems: unregisteredDays ? [...byCountry, { key:"__unregistered__", countryCode:"", country:"Sin registrar", days:unregisteredDays, isUnregistered:true }] : byCountry,
     fiscal: {
       spainDays,
       abroadDays,
@@ -451,7 +451,7 @@ function renderSpainFiscalCard(summary) {
   const abroadLine = fiscal.missingForAbroad183 > 0
     ? `Faltan ${formatDayLabel(fiscal.missingForAbroad183)} fuera de España para llegar a 183.`
     : "Fuera de España ya alcanza o supera 183 días.";
-  return `<section class="world-year-summary-card world-year-summary-card--fiscal" aria-label="Control fiscal España"><div class="world-year-summary-head"><strong>🧾 Control fiscal España</strong><small>Contador orientativo. No constituye una decisión legal.</small></div><div class="world-fiscal-grid"><div class="world-fiscal-stat"><span>España</span><strong>${formatDayLabel(fiscal.spainDays)}</strong></div><div class="world-fiscal-stat"><span>Fuera de España</span><strong>${formatDayLabel(fiscal.abroadDays)}</strong></div><div class="world-fiscal-stat"><span>Sin registrar / restante</span><strong>${formatDayLabel(fiscal.unregisteredDays)}</strong></div></div><div class="world-fiscal-copy"><p>España: ${formatDayLabel(fiscal.spainDays)}</p><p>${spainLine}</p><p>Días fuera de España registrados: ${fiscal.abroadDays}</p><p>${abroadLine}</p></div></section>`;
+  return `<section class="world-year-summary-card world-year-summary-card--fiscal" aria-label="Control fiscal España"><div class="world-year-summary-head"><strong>🧾 Control fiscal España</strong><small>Contador orientativo. No constituye una decisión legal.</small></div><div class="world-fiscal-grid"><div class="world-fiscal-stat"><span>España</span><strong>${formatDayLabel(fiscal.spainDays)}</strong></div><div class="world-fiscal-stat"><span>Fuera de España</span><strong>${formatDayLabel(fiscal.abroadDays)}</strong></div><div class="world-fiscal-stat"><span>Sin registrar</span><strong>${formatDayLabel(fiscal.unregisteredDays)}</strong></div></div><div class="world-fiscal-copy"><p>España: ${formatDayLabel(fiscal.spainDays)}</p><p>${spainLine}</p><p>Días fuera de España registrados: ${fiscal.abroadDays}</p><p>${abroadLine}</p></div></section>`;
 }
 
 async function mergeStayRecord(payload) {
@@ -611,7 +611,25 @@ function render() {
     }).join("");
     return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)}${countryMetrics.length ? ` · ${esc(countryMetrics.join(" · "))}` : ""} ▾</span></summary>${stayViewOptions.view === "countriesOnly" ? "" : `<ul class="world-stays-city-list">${cities || '<li class="world-stays-city-item">Sin ciudad registrada.</li>'}</ul>`}</details>`;
   }).join("");
-  mount.innerHTML = `<div class="world-stays-head"><h3>Estancias</h3><button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button></div><div class="world-stays-warning" data-world-stays-warning aria-live="polite"></div><div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div>${renderStayViewControls(stats)}<button type="button" class="world-pill world-current-location-kpi" data-world-force-auto-stay><span class="world-current-location-title">📍 Lugar actual</span><strong>${esc(latestPlace)}</strong><small>Último registro: ${esc(latestDate)}</small></button><section class="world-stay-heatmap-card" data-world-stays-heatmap aria-label="Heatmap de estancias"></section><div class="world-kpis world-kpis-compact"><div class="world-pill"><span>📅 ${formatDayLabel(stats.totalDays)}</span></div><div class="world-pill"><span>🌍 ${stats.countriesCount} país${stats.countriesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>🏙️ ${stats.citiesCount} ciudad${stats.citiesCount === 1 ? "" : "es"}</span></div><div class="world-pill"><span>👑 ${dominant ? `${flagFromCountryCode(dominant.countryCode)} ${esc(dominant.country)}` : "-"}</span></div></div>${renderDistribution(stats.byCountry, stats.totalDays)}${renderFullYearDistribution(fullYearSummary)}${renderSpainFiscalCard(fullYearSummary)}<div class="world-stays-countries">${countries || '<div class="world-stays-empty">Sin estancias para este filtro.</div>'}</div>`;
+  mount.innerHTML = `<div class="world-stays-head"><h3>Estancias</h3><button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button></div><div class="world-stays-warning" data-world-stays-warning aria-live="polite"></div><div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div>${renderStayViewControls(stats)}<button type="button" class="world-pill world-current-location-kpi" data-world-force-auto-stay><span class="world-current-location-title">📍 Lugar actual</span><strong>${esc(latestPlace)}</strong><small>Último registro: ${esc(latestDate)}</small></button><section class="world-stay-heatmap-card" data-world-stays-heatmap aria-label="Heatmap de estancias"></section>
+  
+  <div class="world-kpis world-kpis-compact">
+  
+    <div class="world-pill">
+    <span>📅 ${formatDayLabel(stats.totalDays)}</span></div>
+    
+    <div class="world-pill">
+    <span>🌍 ${stats.countriesCount} país${stats.countriesCount === 1 ? "" : "es"}</span></div>
+    
+    <div class="world-pill"><span>🏙️ ${stats.citiesCount} ciudad${stats.citiesCount === 1 ? "" : "es"}</span></div>
+    
+
+  
+  </div>
+  
+      <div class="world-pill"><span>👑 ${dominant ? `${flagFromCountryCode(dominant.countryCode)} ${esc(dominant.country)}` : "-"}</span></div>
+      
+  ${renderDistribution(stats.byCountry, stats.totalDays)}${renderFullYearDistribution(fullYearSummary)}${renderSpainFiscalCard(fullYearSummary)}<div class="world-stays-countries">${countries || '<div class="world-stays-empty">Sin estancias para este filtro.</div>'}</div>`;
   renderAutoStayWarning();
   renderWorldStayHeatmap(stats).catch((error) => console.error("[world:stays:heatmap:error]", error));
   const btn = mount.querySelector("[data-world-stay-action='open-modal']");

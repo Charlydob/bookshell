@@ -3,7 +3,21 @@
 #view-world .world-shell{display:flex;flex-direction:column;gap:10px}
 #view-world .world-topbar{display:flex;flex-direction:column;gap:8px}
 #view-world .world-kpis{display:flex;gap:6px;overflow:auto}
-#view-world .world-pill{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;min-width:110px;border-radius:999px;background:rgba(255,255,255,.08);backdrop-filter:blur(12px);font-size:12px}
+
+#view-world .world-pill{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  padding:8px 8px;
+  min-width:110px;
+  border-radius:999px;
+  background:rgba(255,255,255,.08);
+  backdrop-filter:blur(12px);
+  font-size:12px;
+  margin-top: 8px
+}
+
 #view-world .world-top-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}
 #view-world .world-tabs{display:flex;gap:6px;background:rgba(255,255,255,.06);padding:4px;border-radius:999px}
 #view-world .world-tab,#view-world .world-add-btn,#view-world .world-save{border:0;border-radius:999px;padding:8px 12px;background:rgba(255,255,255,.08);color:#eef0ff}
@@ -77,8 +91,21 @@
 #view-world .world-window[data-window-panel="stays"]{min-width:0}
 #view-world .world-stays-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
 #view-world .world-stays-head h3{margin:0}
-#view-world .world-kpis-compact{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;overflow:visible}
-#view-world .world-kpis-compact .world-pill{padding:6px 8px;min-width:0;justify-content:flex-start}
+
+#view-world .world-kpis-compact{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:6px;
+  overflow:visible
+}
+
+#view-world .world-kpis-compact .world-pill{
+  padding:6px 8px;
+  min-width:0;
+  margin-top:5px;
+  justify-content:flex-start
+}
+
 #view-world .world-kpis-compact .world-pill span{overflow-wrap:anywhere}
 #view-world .world-birth-compact{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:12px;background:rgba(255,255,255,.06);margin:8px 0;flex-wrap:wrap}
 #view-world .world-birth-compact button{border:0;border-radius:999px;padding:5px 10px;background:rgba(255,255,255,.12);color:#eef0ff}
@@ -251,7 +278,7 @@
 @media (max-width:460px){
   #view-world .world-current-location-kpi{padding:11px 12px;border-radius:16px}
   #view-world .world-current-location-kpi strong{font-size:14px}
-  #view-world .world-fiscal-grid{grid-template-columns:1fr}
+  #view-world .world-fiscal-grid{grid-template-columns:1fr 1fr 1fr}
 }
 
 #view-world .world-stay-heatmap-card{margin:8px 0 10px;padding:10px;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:linear-gradient(145deg,rgba(255,255,255,.095),rgba(255,255,255,.045));box-shadow:0 14px 34px rgba(0,0,0,.18);backdrop-filter:blur(12px);min-width:0;overflow:hidden}

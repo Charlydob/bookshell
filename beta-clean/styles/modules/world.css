@@ -139,7 +139,20 @@
 #view-world .world-stays-city-meta{opacity:.84;font-size:12px}
 #view-world .world-stays-empty{padding:10px;border-radius:12px;background:rgba(255,255,255,.05)}
 
-#view-world .world-stays-warning{font-size:12px;opacity:.92;color:#ffd0d0;background:rgba(255,120,120,.12);border:1px solid rgba(255,120,120,.35);padding:6px 8px;border-radius:10px;margin-top:6px}
+#view-world .world-stays-warning{display:flex;flex-direction:column;gap:10px;font-size:12px;opacity:.96;color:#fff2d6;background:linear-gradient(180deg,rgba(255,196,120,.12),rgba(255,152,120,.08));border:1px solid rgba(255,196,120,.24);padding:10px 12px;border-radius:14px;margin-top:6px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+#view-world .world-stays-warning.is-hidden{display:none}
+#view-world .world-stays-warning[data-tone="ok"]{color:#dff6e8;background:linear-gradient(180deg,rgba(110,230,170,.12),rgba(90,190,150,.08));border-color:rgba(110,230,170,.22)}
+#view-world .world-stays-warning-block{display:flex;flex-direction:column;gap:6px}
+#view-world .world-stays-warning-block strong{font-size:13px;line-height:1.35}
+#view-world .world-stays-warning-block small{font-size:11px;line-height:1.35;opacity:.82}
+#view-world .world-stays-warning-gap-list{display:flex;flex-direction:column;gap:6px}
+#view-world .world-stays-warning-gap{width:100%;text-align:left;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.06);color:#eef0ff;padding:8px 10px;font-size:12px;line-height:1.35}
+#view-world .world-stays-warning-gap:active{background:rgba(255,255,255,.1)}
+#view-world .world-stays-warning-toggle{align-self:flex-start;border:0;border-radius:999px;background:rgba(255,255,255,.12);color:#eef0ff;padding:6px 10px;font-size:11px}
+#view-world .world-stays-warning-actions{display:flex;flex-wrap:wrap;gap:6px}
+#view-world .world-stays-warning-actions button{border:0;border-radius:999px;padding:6px 10px;background:rgba(255,255,255,.12);color:#eef0ff;font-size:11px}
+#view-world .world-stays-warning-block--auto[data-tone="ok"] strong{color:#dff6e8}
+#view-world .world-stays-warning-block--auto[data-tone="progress"] strong{color:#eef0ff}
 .world-stay-modal{position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;justify-content:center}
 .world-stay-modal.is-open{visibility:visible;opacity:1}
 .world-stay-modal__backdrop{position:absolute;inset:0;background:rgba(2,5,12,.62);backdrop-filter:blur(2px)}

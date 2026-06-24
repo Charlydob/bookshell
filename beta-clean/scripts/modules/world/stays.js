@@ -18,6 +18,7 @@ let searchDebounceTimer = null;
 let searchResults = [];
 let memoStats = { key:"", value:null };
 let activeStayHeatmapCountry = null;
+const stayWarningState = { autoMessage:"", autoTone:"warning", showAllGaps:false };
 
 const DAY_MS = 86400000;
 const STAY_VIEW_STORAGE_KEY = "worldStayViewOptions";
@@ -36,10 +37,18 @@ const fmtDate = (date = "") => {
   return y && m && d ? `${d}/${m}/${y}` : "";
 };
 const todayIso = () => new Date().toISOString().slice(0, 10);
+const yearStartIso = (year) => `${year}-01-01`;
+const yearEndIso = (year) => `${year}-12-31`;
 const addDaysIso = (iso, delta) => {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + delta);
   return d.toISOString().slice(0, 10);
+};
+const diffDaysInclusiveIso = (startIso, endIso) => {
+  const startMs = Date.parse(`${startIso}T00:00:00Z`);
+  const endMs = Date.parse(`${endIso}T00:00:00Z`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 0;
+  return Math.floor((endMs - startMs) / DAY_MS) + 1;
 };
 
 function readStayViewOptions() {
@@ -244,6 +253,73 @@ function computeStaySummaries(options = stayViewOptions) {
   return memoStats.value;
 }
 
+function clampStayRangeToYear(stay, year) {
+  if (!isValidStayDate(stay?.startDate) || !isValidStayDate(stay?.endDate) || compareIsoDate(stay.endDate, stay.startDate) < 0) return null;
+  const startDate = stay.startDate < yearStartIso(year) ? yearStartIso(year) : stay.startDate;
+  const endDate = stay.endDate > yearEndIso(year) ? yearEndIso(year) : stay.endDate;
+  if (compareIsoDate(endDate, startDate) < 0) return null;
+  return { startDate, endDate };
+}
+
+function resolveCoverageWindow(year) {
+  const startDate = yearStartIso(year);
+  const endDate = yearEndIso(year);
+  return { year, startDate, endDate, expectedDays:diffDaysInclusiveIso(startDate, endDate) };
+}
+
+function buildMergedCoverageRanges(year, sourceStays = stays) {
+  const ranges = sourceStays
+    .map((stay) => clampStayRangeToYear(stay, year))
+    .filter(Boolean)
+    .sort((a, b) => compareIsoDate(a.startDate, b.startDate) || compareIsoDate(a.endDate, b.endDate));
+  const merged = [];
+  for (const range of ranges) {
+    const last = merged[merged.length - 1];
+    if (!last) {
+      merged.push({ ...range });
+      continue;
+    }
+    if (compareIsoDate(range.startDate, addDaysIso(last.endDate, 1)) <= 0) {
+      if (compareIsoDate(range.endDate, last.endDate) > 0) last.endDate = range.endDate;
+      continue;
+    }
+    merged.push({ ...range });
+  }
+  return merged;
+}
+
+function computeYearCoverageSummary(year, sourceStays = stays) {
+  const window = resolveCoverageWindow(year);
+  const mergedRanges = buildMergedCoverageRanges(year, sourceStays);
+  const gaps = [];
+  let cursor = window.startDate;
+
+  for (const range of mergedRanges) {
+    if (compareIsoDate(range.startDate, cursor) > 0) {
+      const gapEnd = addDaysIso(range.startDate, -1);
+      gaps.push({ startDate:cursor, endDate:gapEnd, days:diffDaysInclusiveIso(cursor, gapEnd) });
+    }
+    const nextCursor = addDaysIso(range.endDate, 1);
+    if (compareIsoDate(nextCursor, cursor) > 0) cursor = nextCursor;
+  }
+
+  if (compareIsoDate(cursor, window.endDate) <= 0) {
+    gaps.push({ startDate:cursor, endDate:window.endDate, days:diffDaysInclusiveIso(cursor, window.endDate) });
+  }
+
+  const registeredDays = mergedRanges.reduce((sum, range) => sum + diffDaysInclusiveIso(range.startDate, range.endDate), 0);
+  const missingDays = gaps.reduce((sum, gap) => sum + Number(gap.days || 0), 0);
+
+  return {
+    ...window,
+    mergedRanges,
+    gaps,
+    registeredDays,
+    missingDays,
+    gapCount:gaps.length
+  };
+}
+
 function getBirthDate() { return String(localStorage.getItem("worldBirthDate") || "").trim(); }
 function persistBirthDate(date) { localStorage.setItem("worldBirthDate", date); }
 function daysAlive(birthDate) { if (!birthDate) return null; const born = new Date(`${birthDate}T00:00:00Z`); const value = Math.floor((new Date() - born) / DAY_MS) + 1; return Number.isFinite(value) && value > 0 ? value : null; }
@@ -379,7 +455,8 @@ function isSpainCountry(country = {}) {
 }
 
 function computeFullYearDistribution(year, sourceStays = stays) {
-  const yearDays = daysInYear(year);
+  const coverage = computeYearCoverageSummary(year, sourceStays);
+  const yearDays = coverage.expectedDays;
   const yearOptions = { ...stayViewOptions, scope:"chosenYear", year };
   const dayOwners = new Map();
   const relevantStays = sourceStays
@@ -404,8 +481,8 @@ function computeFullYearDistribution(year, sourceStays = stays) {
 
   const byCountry = [...byCountryMap.values()]
     .sort((a, b) => b.days - a.days || a.country.localeCompare(b.country, "es"));
-  const registeredDays = dayOwners.size;
-  const unregisteredDays = Math.max(0, yearDays - registeredDays);
+  const registeredDays = coverage.registeredDays;
+  const unregisteredDays = coverage.missingDays;
   const spainDays = byCountry.reduce((sum, country) => sum + (isSpainCountry(country) ? Number(country.days || 0) : 0), 0);
   const abroadDays = Math.max(0, registeredDays - spainDays);
 
@@ -422,7 +499,8 @@ function computeFullYearDistribution(year, sourceStays = stays) {
       unregisteredDays,
       missingForSpain183: Math.max(0, 183 - spainDays),
       missingForAbroad183: Math.max(0, 183 - abroadDays)
-    }
+    },
+    coverage
   };
 }
 
@@ -595,6 +673,53 @@ function renderStayViewControls(stats) {
   </details>`;
 }
 
+function formatGapLine(gap) {
+  if (!gap?.startDate || !gap?.endDate) return "";
+  if (gap.startDate === gap.endDate) return `Sin constancia: ${fmtDate(gap.startDate)}`;
+  return `Sin constancia: del ${fmtDate(gap.startDate)} al ${fmtDate(gap.endDate)}`;
+}
+
+function renderCoverageWarning(coverage) {
+  if (!coverage) return "";
+  if (!coverage.missingDays) {
+    return `<div class="world-stays-warning-block world-stays-warning-block--ok">
+      <strong>✅ Todas las fechas del periodo están registradas</strong>
+      <small>Base revisada: ${coverage.expectedDays} días de ${coverage.year}.</small>
+    </div>`;
+  }
+  const visibleGaps = stayWarningState.showAllGaps ? coverage.gaps : coverage.gaps.slice(0, 5);
+  const toggleButton = coverage.gaps.length > 5
+    ? `<button type="button" class="world-stays-warning-toggle" data-world-stay-gap-toggle>${stayWarningState.showAllGaps ? "Mostrar menos" : "Ver todos los huecos"}</button>`
+    : "";
+  return `<div class="world-stays-warning-block">
+    <strong>⚠️ Faltan ${coverage.missingDays} días por registrar</strong>
+    <small>Hay ${coverage.gapCount} huecos temporales sin constancia.</small>
+    <div class="world-stays-warning-gap-list">${visibleGaps.map((gap) => `<button type="button" class="world-stays-warning-gap" data-world-stay-gap-start="${esc(gap.startDate)}" data-world-stay-gap-end="${esc(gap.endDate)}">${esc(formatGapLine(gap))}</button>`).join("")}</div>
+    ${toggleButton}
+  </div>`;
+}
+
+function renderAutoWarningBlock() {
+  if (!stayWarningState.autoMessage) return "";
+  const tone = stayWarningState.autoTone === "success" ? "ok" : (stayWarningState.autoTone === "progress" ? "progress" : "warning");
+  return `<div class="world-stays-warning-block world-stays-warning-block--auto" data-tone="${esc(tone)}">
+    <strong>${esc(stayWarningState.autoMessage)}</strong>
+    ${(tone === "warning" || tone === "progress") ? `<div class="world-stays-warning-actions"><button type="button" data-world-auto-stay-retry>Reintentar ubicación</button><button type="button" data-world-force-auto-stay>Registrar ubicación actual</button></div>` : "" }
+  </div>`;
+}
+
+function renderStayWarningPanel(stats = computeStaySummaries()) {
+  const node = $("[data-world-stays-warning]");
+  if (!node) return;
+  const coverage = stats.viewYear ? computeYearCoverageSummary(stats.viewYear) : null;
+  const parts = [renderCoverageWarning(coverage), renderAutoWarningBlock()].filter(Boolean);
+  const hasCoverageGaps = Boolean(coverage?.missingDays);
+  const tone = !hasCoverageGaps && (!stayWarningState.autoMessage || stayWarningState.autoTone === "success") ? "ok" : "warning";
+  node.dataset.tone = tone;
+  node.classList.toggle("is-hidden", !parts.length);
+  node.innerHTML = parts.join("");
+}
+
 function render() {
   const mount = $("[data-world-stays-summary]");
   if (!mount) return;
@@ -623,7 +748,7 @@ function render() {
     }).join("");
     return `<details class="world-stays-country" ${isCollapsed ? "" : "open"} data-country-key="${esc(country.key)}"><summary><span class="world-stays-country-main">${flagFromCountryCode(country.countryCode)} ${esc(country.country)}${countryMetrics.length ? ` · ${esc(countryMetrics.join(" · "))}` : ""} ▾</span></summary>${stayViewOptions.view === "countriesOnly" ? "" : `<ul class="world-stays-city-list">${cities || '<li class="world-stays-city-item">Sin ciudad registrada.</li>'}</ul>`}</details>`;
   }).join("");
-  mount.innerHTML = `<div class="world-stays-head"><h3>Estancias</h3><button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button></div><div class="world-stays-warning" data-world-stays-warning aria-live="polite"></div><div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div>${renderStayViewControls(stats)}<button type="button" class="world-pill world-current-location-kpi" data-world-force-auto-stay><span class="world-current-location-title">📍 Lugar actual</span><strong>${esc(latestPlace)}</strong><small>Último registro: ${esc(latestDate)}</small></button><section class="world-stay-heatmap-card" data-world-stays-heatmap aria-label="Heatmap de estancias"></section>
+  mount.innerHTML = `<div class="world-stays-head"><h3>Estancias</h3><button type="button" class="world-add-btn" data-world-stay-action="open-modal">+ Añadir estancia</button></div><div class="world-stays-warning is-hidden" data-world-stays-warning aria-live="polite"></div><div class="world-birth-compact"><span>🎂 Nacimiento: ${esc(birthLine)}</span><button type="button" data-world-set-birthdate>Editar</button></div>${renderStayViewControls(stats)}<button type="button" class="world-pill world-current-location-kpi" data-world-force-auto-stay><span class="world-current-location-title">📍 Lugar actual</span><strong>${esc(latestPlace)}</strong><small>Último registro: ${esc(latestDate)}</small></button><section class="world-stay-heatmap-card" data-world-stays-heatmap aria-label="Heatmap de estancias"></section>
   
   <div class="world-kpis world-kpis-compact">
   
@@ -642,7 +767,7 @@ function render() {
       <div class="world-pill"><span>👑 ${dominant ? `${flagFromCountryCode(dominant.countryCode)} ${esc(dominant.country)}` : "-"}</span></div>
       
   ${renderDistribution(stats.byCountry, stats.totalDays)}${renderYearSummaryPanel(fullYearSummary)}<div class="world-stays-countries">${countries || '<div class="world-stays-empty">Sin estancias para este filtro.</div>'}</div>`;
-  renderAutoStayWarning();
+  renderStayWarningPanel(stats);
   renderWorldStayHeatmap(stats).catch((error) => console.error("[world:stays:heatmap:error]", error));
   const btn = mount.querySelector("[data-world-stay-action='open-modal']");
   if (btn) btn.onclick = () => openWorldStayModal();
@@ -665,28 +790,29 @@ function renderSearchResults(items = []) { searchResults = items; const box = do
 async function searchPlace(query) { if (searchAbortController) searchAbortController.abort(); searchAbortController = new AbortController(); const u = new URL("https://nominatim.openstreetmap.org/search"); u.searchParams.set("q", query); u.searchParams.set("format", "jsonv2"); u.searchParams.set("addressdetails", "1"); u.searchParams.set("limit", "8"); console.debug("[world:stays:search:start]", { query }); const raw = await (await fetch(u, { signal:searchAbortController.signal })).json(); console.debug("[world:stays:search:results]", { query, total:raw.length }); return raw; }
 
 function openModal(stay = null) {
+  const isEditing = Boolean(stay?.id);
   activeEditStayId = stay?.id || null;
   if (document.querySelector("[data-world-stay-modal]")) return;
   const modal = document.createElement("div");
   modal.setAttribute("data-world-stay-modal", "");
   modal.className = "world-stay-modal is-open";
-  modal.innerHTML = `<div class="world-stay-modal__backdrop" data-world-stay-close></div><section class="world-sheet world-stay-modal__sheet"><div class="world-sheet-header"><h3>${stay ? "Editar estancia" : "Añadir estancia"}</h3><button type="button" class="world-stay-close-x" data-world-stay-close aria-label="Cerrar">✕</button></div><div class="world-stay-block"><input data-world-stay-search placeholder="Buscar ciudad, país o dirección"><button type="button" class="world-optional-location-btn" data-world-use-current>Usar ubicación actual</button><div class="world-stay-search-results" data-world-stay-search-results hidden></div></div><div class="world-inline-2"><input data-world-stay-city placeholder="Ciudad"><input data-world-stay-region placeholder="Región"></div><div class="world-inline-2"><input data-world-stay-country placeholder="País"><input data-world-stay-flag placeholder="Bandera"></div><input data-world-stay-country-code hidden><div class="world-inline-2"><input type="date" data-world-stay-start><input type="date" data-world-stay-end></div><div class="world-inline-2"><input inputmode="numeric" data-world-stay-total-days placeholder="Días totales"></div><button type="button" class="world-save" data-world-stay-save>Guardar</button></section>`;
+  modal.innerHTML = `<div class="world-stay-modal__backdrop" data-world-stay-close></div><section class="world-sheet world-stay-modal__sheet"><div class="world-sheet-header"><h3>${isEditing ? "Editar estancia" : "Añadir estancia"}</h3><button type="button" class="world-stay-close-x" data-world-stay-close aria-label="Cerrar">✕</button></div><div class="world-stay-block"><input data-world-stay-search placeholder="Buscar ciudad, país o dirección"><button type="button" class="world-optional-location-btn" data-world-use-current>Usar ubicación actual</button><div class="world-stay-search-results" data-world-stay-search-results hidden></div></div><div class="world-inline-2"><input data-world-stay-city placeholder="Ciudad"><input data-world-stay-region placeholder="Región"></div><div class="world-inline-2"><input data-world-stay-country placeholder="País"><input data-world-stay-flag placeholder="Bandera"></div><input data-world-stay-country-code hidden><div class="world-inline-2"><input type="date" data-world-stay-start><input type="date" data-world-stay-end></div><div class="world-inline-2"><input inputmode="numeric" data-world-stay-total-days placeholder="Días totales"></div><button type="button" class="world-save" data-world-stay-save>Guardar</button></section>`;
   document.body.appendChild(modal);
   fillStayForm(stay || {});
 }
 const closeModal = () => document.querySelector("[data-world-stay-modal]")?.remove();
 const openWorldStayModal = (stay = null) => openModal(stay);
-function renderAutoStayWarning(message = "") {
-  const node = $("[data-world-stays-warning]");
-  if (!node) return;
-  if (!message) {
-    node.textContent = "";
-    return;
-  }
-  node.innerHTML = `<span>${esc(message)}</span> <button type="button" data-world-auto-stay-retry>Reintentar ubicación</button> <button type="button" data-world-force-auto-stay>Registrar ubicación actual</button>`;
+function setAutoStayWarning(message = "", tone = "warning") {
+  stayWarningState.autoMessage = String(message || "").trim();
+  stayWarningState.autoTone = tone;
+  renderStayWarningPanel();
 }
 
-const showCompactWarning = (message = "") => renderAutoStayWarning(message);
+function renderAutoStayWarning(message = "") {
+  setAutoStayWarning(message, "warning");
+}
+
+const showCompactWarning = (message = "", tone = "warning") => setAutoStayWarning(message, tone);
 const normalizeText = (value = "") => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 function buildLocationComparisonKey(place = {}) {
   const countryCode = normalizeText(place.countryCode || "");
@@ -729,7 +855,7 @@ async function ensureAutoStayToday({ force = false } = {}) {
       console.debug("[world:stays:auto:force-overwrite]", { stayId:payload?.id || null, date:todayStay, city:place.city, country:place.country });
       localStorage.setItem(checkPath, today);
       lastAutoStayError = null;
-      renderAutoStayWarning("");
+      setAutoStayWarning("", "warning");
       return;
     }
     const autos = stays.filter((s) => s.source === "auto-location").sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0) || String(b.endDate || "").localeCompare(String(a.endDate || "")));
@@ -759,7 +885,7 @@ async function ensureAutoStayToday({ force = false } = {}) {
     localStorage.setItem(checkPath, today);
     console.debug("[world:stays:auto:save:ok]", { day:today });
     lastAutoStayError = null;
-    renderAutoStayWarning("");
+    setAutoStayWarning("", "warning");
   } catch (error) {
     lastAutoStayError = String(error?.message || "error");
     console.warn("[world:stays:auto:error]", lastAutoStayError);
@@ -771,13 +897,13 @@ async function ensureAutoStayToday({ force = false } = {}) {
 
 async function registerAutoStayFromCurrentLocation() {
   if (autoStayInFlight) return;
-  renderAutoStayWarning("Registrando ubicación…");
+  setAutoStayWarning("Registrando ubicación…", "progress");
   await ensureAutoStayToday({ force:true });
   if (lastAutoStayError) {
     renderAutoStayWarning(`No se pudo registrar ubicación actual: ${lastAutoStayError}`);
     return;
   }
-  renderAutoStayWarning("✅ Ubicación actual registrada.");
+  setAutoStayWarning("✅ Ubicación actual registrada.", "success");
 }
 
 export function renderWorldStays() { render(); }
@@ -786,7 +912,7 @@ function initWorldStaysAsync() { Promise.resolve().then(() => ensureAutoStayToda
 function handleWorldRootClick(e) {
   const btn = e.target.closest("button");
   if (!btn) return;
-  if (btn.dataset.worldStayScope) { stayViewOptions = { ...stayViewOptions, scope:btn.dataset.worldStayScope }; persistStayViewOptions(); memoStats = { key:"", value:null }; render(); return; }
+  if (btn.dataset.worldStayScope) { stayWarningState.showAllGaps = false; stayViewOptions = { ...stayViewOptions, scope:btn.dataset.worldStayScope }; persistStayViewOptions(); memoStats = { key:"", value:null }; render(); return; }
   if (btn.dataset.worldStayToggle) { const key = btn.dataset.worldStayToggle; stayViewOptions = { ...stayViewOptions, [key]:!stayViewOptions[key] }; persistStayViewOptions(); memoStats = { key:"", value:null }; render(); return; }
   if (btn.dataset.worldStayView) { stayViewOptions = { ...stayViewOptions, view:btn.dataset.worldStayView }; persistStayViewOptions(); render(); return; }
   if (btn.dataset.worldStaySort) { stayViewOptions = { ...stayViewOptions, sort:btn.dataset.worldStaySort === "lastDate" ? "lastDate" : "days" }; persistStayViewOptions(); memoStats = { key:"", value:null }; render(); return; }
@@ -795,7 +921,12 @@ function handleWorldRootClick(e) {
   if (btn.dataset.worldStayEdit) { const stay = stays.find((s) => s.id === btn.dataset.worldStayEdit); if (stay) openWorldStayModal(stay); return; }
   if (btn.dataset.worldStayDelete) { const uid2 = getCurrentUserDataRootKey() || auth.currentUser?.uid; if (!uid2 || !window.confirm("¿Eliminar esta estancia?")) return; remove(ref(db, `v2/users/${uid2}/world/stays/${btn.dataset.worldStayDelete}`)); return; }
   if (btn.dataset.worldSetBirthdate !== undefined) { const val = window.prompt("Fecha de nacimiento (YYYY-MM-DD)", getBirthDate()); if (val) { persistBirthDate(val.trim()); render(); } return; }
-  if (btn.dataset.worldAutoStayRetry !== undefined) { console.debug("[world:stays:auto:retry]", { lastAutoStayError }); renderAutoStayWarning("Buscando ubicación…"); ensureAutoStayToday({ force:true }); }
+  if (btn.dataset.worldStayGapToggle !== undefined) { stayWarningState.showAllGaps = !stayWarningState.showAllGaps; renderStayWarningPanel(); return; }
+  if (btn.dataset.worldStayGapStart && btn.dataset.worldStayGapEnd) {
+    openWorldStayModal({ startDate:btn.dataset.worldStayGapStart, endDate:btn.dataset.worldStayGapEnd, city:"", region:"", country:"", countryCode:"", flagEmoji:"" });
+    return;
+  }
+  if (btn.dataset.worldAutoStayRetry !== undefined) { console.debug("[world:stays:auto:retry]", { lastAutoStayError }); setAutoStayWarning("Buscando ubicación…", "progress"); ensureAutoStayToday({ force:true }); }
   if (btn.dataset.worldForceAutoStay !== undefined) { registerAutoStayFromCurrentLocation(); return; }
 }
 
@@ -838,15 +969,15 @@ export function initWorldStays({ root }) {
       }
       if (btn.dataset.worldUseCurrent !== undefined) {
         try {
-          showCompactWarning("Buscando ubicación…");
+          showCompactWarning("Buscando ubicación…", "progress");
           const coords = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition((pos) => resolve({ lat:Number(pos.coords.latitude), lon:Number(pos.coords.longitude) }), (err) => reject(new Error(err?.message || "permiso denegado")), { enableHighAccuracy:true, maximumAge:60000, timeout:12000 }));
           const place = await reverseGeocode(coords.lat, coords.lon);
           if (!place.country) throw new Error("No se pudo detectar el país de la ubicación actual");
           fillStayForm({ city:place.city, region:place.region, country:place.country, countryCode:place.countryCode, flagEmoji:flagFromCountryCode(place.countryCode) });
-          showCompactWarning("");
+          showCompactWarning("", "warning");
         } catch (error) {
           const msg = `No se pudo usar la ubicación actual: ${String(error?.message || "error")}`;
-          showCompactWarning(msg);
+          showCompactWarning(msg, "warning");
           console.warn("[world:stays:auto:error]", msg);
         }
       }
@@ -869,6 +1000,7 @@ export function initWorldStays({ root }) {
       if (!yearInput) return;
       const year = Number(yearInput.value);
       if (!Number.isFinite(year) || year < 1900 || year > 2100) return;
+      stayWarningState.showAllGaps = false;
       stayViewOptions = { ...stayViewOptions, scope:"chosenYear", year:Math.floor(year) };
       persistStayViewOptions();
       memoStats = { key:"", value:null };

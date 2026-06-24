@@ -451,7 +451,16 @@ function renderSpainFiscalCard(summary) {
   const abroadLine = fiscal.missingForAbroad183 > 0
     ? `Faltan ${formatDayLabel(fiscal.missingForAbroad183)} fuera de España para llegar a 183.`
     : "Fuera de España ya alcanza o supera 183 días.";
-  return `<section class="world-year-summary-card world-year-summary-card--fiscal" aria-label="Control fiscal España"><div class="world-year-summary-head"><strong>🧾 Control fiscal España</strong><small>Contador orientativo. No constituye una decisión legal.</small></div><div class="world-fiscal-grid"><div class="world-fiscal-stat"><span>España</span><strong>${formatDayLabel(fiscal.spainDays)}</strong></div><div class="world-fiscal-stat"><span>Fuera de España</span><strong>${formatDayLabel(fiscal.abroadDays)}</strong></div><div class="world-fiscal-stat"><span>Sin registrar</span><strong>${formatDayLabel(fiscal.unregisteredDays)}</strong></div></div><div class="world-fiscal-copy"><p>España: ${formatDayLabel(fiscal.spainDays)}</p><p>${spainLine}</p><p>Días fuera de España registrados: ${fiscal.abroadDays}</p><p>${abroadLine}</p></div></section>`;
+  return `<section class="world-year-summary-card world-year-summary-card--fiscal" aria-label="Control fiscal España"><div class="world-year-summary-head"><strong>🧾 Control fiscal España</strong><small>Contador orientativo. No constituye una decisión legal.</small></div><div class="world-fiscal-grid"><div class="world-fiscal-stat"><span>España</span><strong>${formatDayLabel(fiscal.spainDays)}</strong></div><div class="world-fiscal-stat"><span>Fuera de España</span><strong>${formatDayLabel(fiscal.abroadDays)}</strong></div><div class="world-fiscal-stat"><span>Sin registrar</span><strong>${formatDayLabel(fiscal.unregisteredDays)}</strong></div></div><div class="world-fiscal-copy"><p>${spainLine}</p>
+  <p>${abroadLine}</p></div></section>`;
+}
+
+function renderYearSummaryPanel(summary) {
+  if (!summary) return "";
+  return `<details class="world-year-summary-panel" aria-label="Año fiscal">
+    <summary class="world-year-summary-panel-summary">Año fiscal</summary>
+    <div class="world-year-summary-panel-body">${renderFullYearDistribution(summary)}${renderSpainFiscalCard(summary)}</div>
+  </details>`;
 }
 
 async function mergeStayRecord(payload) {
@@ -560,7 +569,9 @@ async function combineCityInto(sourceKey, countryKey) {
 function renderStayViewControls(stats) {
   const currentYear = new Date().getFullYear();
   const selectedYear = Number(stayViewOptions.year || currentYear);
-  return `<div class="world-stays-controls" aria-label="Filtros de estancias">
+  return `<details class="world-stays-controls" aria-label="Filtros de estancias">
+    <summary class="world-stays-controls-summary">Filtros de estancias</summary>
+    <div class="world-stays-controls-body">
     <div class="world-stays-filter-group" role="group" aria-label="Periodo">
       <button type="button" class="world-stays-filter ${stayViewOptions.scope === "life" ? "active" : ""}" data-world-stay-scope="life">Vida total</button>
       <button type="button" class="world-stays-filter ${stayViewOptions.scope === "currentYear" ? "active" : ""}" data-world-stay-scope="currentYear">Año actual</button>
@@ -580,7 +591,8 @@ function renderStayViewControls(stats) {
       <button type="button" class="world-stays-filter ${stayViewOptions.sort === "lastDate" ? "active" : ""}" data-world-stay-sort="lastDate">Última fecha</button>
     </div>
     ${stats.viewYear ? `<small class="world-stays-scope-note">Mostrando días dentro de ${stats.viewYear} (${stats.yearDays} días).</small>` : ""}
-  </div>`;
+    </div>
+  </details>`;
 }
 
 function render() {
@@ -629,7 +641,7 @@ function render() {
   
       <div class="world-pill"><span>👑 ${dominant ? `${flagFromCountryCode(dominant.countryCode)} ${esc(dominant.country)}` : "-"}</span></div>
       
-  ${renderDistribution(stats.byCountry, stats.totalDays)}${renderFullYearDistribution(fullYearSummary)}${renderSpainFiscalCard(fullYearSummary)}<div class="world-stays-countries">${countries || '<div class="world-stays-empty">Sin estancias para este filtro.</div>'}</div>`;
+  ${renderDistribution(stats.byCountry, stats.totalDays)}${renderYearSummaryPanel(fullYearSummary)}<div class="world-stays-countries">${countries || '<div class="world-stays-empty">Sin estancias para este filtro.</div>'}</div>`;
   renderAutoStayWarning();
   renderWorldStayHeatmap(stats).catch((error) => console.error("[world:stays:heatmap:error]", error));
   const btn = mount.querySelector("[data-world-stay-action='open-modal']");

@@ -226,7 +226,12 @@
 @media (max-width:460px){
   #view-world .world-category-emoji-field{grid-template-columns:auto minmax(0,1fr)}
 }
-#view-world .world-stays-controls{display:flex;flex-direction:column;gap:7px;margin:8px 0;min-width:0}
+#view-world .world-stays-controls{margin:8px 0;min-width:0;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(255,255,255,.05);overflow:hidden}
+#view-world .world-stays-controls-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;list-style:none;cursor:pointer;padding:10px 12px;font-size:13px;font-weight:600}
+#view-world .world-stays-controls-summary::-webkit-details-marker{display:none}
+#view-world .world-stays-controls-summary::after{content:'›';display:inline-block;opacity:.65;transition:transform .16s ease}
+#view-world .world-stays-controls[open] .world-stays-controls-summary::after{transform:rotate(90deg)}
+#view-world .world-stays-controls-body{display:flex;flex-direction:column;gap:7px;padding:0 12px 12px}
 #view-world .world-stays-filter-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
 #view-world .world-stays-filter{border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:6px 9px;background:rgba(255,255,255,.07);color:#eef0ff;font-size:12px;line-height:1.1}
 #view-world .world-stays-filter.active{border-color:rgba(99,215,255,.6);background:linear-gradient(120deg,rgba(117,110,255,.72),rgba(74,184,255,.62))}
@@ -263,6 +268,12 @@
 #view-world .world-stays-order-label{font-size:11px;opacity:.7;margin-left:4px}
 #view-world .world-stays-city-actions{display:flex;justify-content:flex-start;margin:2px 0 4px}
 #view-world .world-stays-city-actions button{border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(255,255,255,.07);color:#eef0ff;padding:4px 8px;font-size:11px;line-height:1.1}
+#view-world .world-year-summary-panel{margin:8px 0 10px;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:linear-gradient(145deg,rgba(255,255,255,.085),rgba(255,255,255,.045));box-shadow:0 12px 28px rgba(0,0,0,.16);backdrop-filter:blur(12px);overflow:hidden}
+#view-world .world-year-summary-panel-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;list-style:none;cursor:pointer;padding:10px 12px;font-size:14px;font-weight:600}
+#view-world .world-year-summary-panel-summary::-webkit-details-marker{display:none}
+#view-world .world-year-summary-panel-summary::after{content:'›';display:inline-block;opacity:.65;transition:transform .16s ease}
+#view-world .world-year-summary-panel[open] .world-year-summary-panel-summary::after{transform:rotate(90deg)}
+#view-world .world-year-summary-panel-body{padding:0 10px 10px}
 #view-world .world-year-summary-card{margin:8px 0 10px;padding:10px 12px;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:linear-gradient(145deg,rgba(255,255,255,.085),rgba(255,255,255,.045));box-shadow:0 12px 28px rgba(0,0,0,.16);backdrop-filter:blur(12px)}
 #view-world .world-year-summary-head{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
 #view-world .world-year-summary-head strong{font-size:14px;line-height:1.2}
@@ -300,3 +311,16 @@
 #view-world .world-stay-region-cell strong{font-size:12px;line-height:1.15;overflow-wrap:anywhere;color:rgba(4,12,22,.92);text-shadow:0 1px 12px rgba(255,255,255,.28)}
 #view-world .world-stay-region-cell span{font-size:11px;font-weight:800;color:rgba(4,12,22,.85)}
 @media (max-width:460px){#view-world .world-stay-heatmap-card{border-radius:16px;padding:8px}#view-world .world-stay-heatmap-chart{height:180px}#view-world .world-stay-heatmap-chart--regional{height:175px}#view-world .world-stay-region-map{grid-template-columns:repeat(2,minmax(0,1fr));max-height:180px}#view-world .world-stay-heatmap-top{align-items:flex-start}#view-world .world-stay-heatmap-top button{padding:5px 8px}}
+
+
+#view-world .world-year-summary-panel-summary, #view-world .world-stays-controls-summary  {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    list-style: none;
+    cursor: pointer;
+    padding: 0px;
+    font-size: 14px;
+    font-weight: 600;
+}

@@ -90,6 +90,7 @@
 #view-world .world-dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:0 0 auto}
 #view-world .world-dist-label{flex:1;min-width:0;overflow-wrap:anywhere}
 #view-world .world-dist-pct{white-space:nowrap;opacity:.9}
+#view-world .world-dist-meta{white-space:nowrap;opacity:.9;font-size:12px}
 #view-world .world-dist-color-1{background:linear-gradient(90deg,#6ed8ff,#8cf6c6)}
 #view-world .world-dist-color-2{background:linear-gradient(90deg,#ffc988,#ff9ea8)}
 #view-world .world-dist-color-3{background:linear-gradient(90deg,#b7a0ff,#7dc1ff)}
@@ -98,6 +99,7 @@
 #view-world .world-dist-color-6{background:linear-gradient(90deg,#f0a3ff,#9fc2ff)}
 #view-world .world-dist-color-7{background:linear-gradient(90deg,#7cf0ff,#8eb7ff)}
 #view-world .world-dist-color-8{background:linear-gradient(90deg,#ffbca0,#ffd58f)}
+#view-world .world-dist-color-rest{background:linear-gradient(90deg,rgba(255,255,255,.28),rgba(255,255,255,.12));color:#eef0ff}
 #view-world .world-stays-countries{display:flex;flex-direction:column;gap:8px;min-width:0}
 #view-world .world-stays-country{background:rgba(255,255,255,.05);border-radius:12px;padding:8px;min-width:0}
 #view-world .world-stays-country summary{display:flex;flex-direction:column;gap:2px;cursor:pointer;list-style:none}
@@ -234,9 +236,22 @@
 #view-world .world-stays-order-label{font-size:11px;opacity:.7;margin-left:4px}
 #view-world .world-stays-city-actions{display:flex;justify-content:flex-start;margin:2px 0 4px}
 #view-world .world-stays-city-actions button{border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(255,255,255,.07);color:#eef0ff;padding:4px 8px;font-size:11px;line-height:1.1}
+#view-world .world-year-summary-card{margin:8px 0 10px;padding:10px 12px;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:linear-gradient(145deg,rgba(255,255,255,.085),rgba(255,255,255,.045));box-shadow:0 12px 28px rgba(0,0,0,.16);backdrop-filter:blur(12px)}
+#view-world .world-year-summary-head{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
+#view-world .world-year-summary-head strong{font-size:14px;line-height:1.2}
+#view-world .world-year-summary-head small{font-size:11px;line-height:1.3;opacity:.76}
+#view-world .world-dist-wrap--full-year{margin:0}
+#view-world .world-year-summary-card--fiscal{display:flex;flex-direction:column;gap:10px}
+#view-world .world-fiscal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+#view-world .world-fiscal-stat{display:flex;flex-direction:column;gap:4px;padding:9px 10px;border-radius:12px;background:rgba(255,255,255,.06);min-width:0}
+#view-world .world-fiscal-stat span{font-size:11px;line-height:1.2;opacity:.78}
+#view-world .world-fiscal-stat strong{font-size:14px;line-height:1.2;overflow-wrap:anywhere}
+#view-world .world-fiscal-copy{display:flex;flex-direction:column;gap:4px}
+#view-world .world-fiscal-copy p{margin:0;font-size:12px;line-height:1.35;opacity:.92}
 @media (max-width:460px){
   #view-world .world-current-location-kpi{padding:11px 12px;border-radius:16px}
   #view-world .world-current-location-kpi strong{font-size:14px}
+  #view-world .world-fiscal-grid{grid-template-columns:1fr}
 }
 
 #view-world .world-stay-heatmap-card{margin:8px 0 10px;padding:10px;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:linear-gradient(145deg,rgba(255,255,255,.095),rgba(255,255,255,.045));box-shadow:0 14px 34px rgba(0,0,0,.18);backdrop-filter:blur(12px);min-width:0;overflow:hidden}

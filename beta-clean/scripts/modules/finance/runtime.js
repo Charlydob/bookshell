@@ -43,6 +43,8 @@ import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
 import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, normalizeCurrencyCode } from './finance/currency-utils.js';
 import {
+  flushPendingTicketSyncToGoogleSheets,
+  syncTicketConfirmToGoogleSheets,
   syncAccountCreateToGoogleSheets,
   syncMovementCreateToGoogleSheets,
   syncMovementDeleteToGoogleSheets,
@@ -51,7 +53,7 @@ import {
   syncProductDeleteToGoogleSheets,
   syncProductSummaryUpsertToGoogleSheets,
   syncProductUpsertToGoogleSheets,
-} from './infrastructure/googleSheetsSync.js?v=2026-06-21-account-history';
+} from './infrastructure/googleSheetsSync.js?v=2026-06-25-ticket-atomic-sync';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };
@@ -2033,7 +2035,9 @@ async function recordFoodPricePoint(foodId, priceInput, source = "expense", opti
       [entryId]: payload
     }
   };
-  queueProductGoogleSheetsUpsert(safeFoodId);
+  if (options?.syncGoogleSheets !== false) {
+    queueProductGoogleSheetsUpsert(safeFoodId);
+  }
 }
 
 async function deleteFoodPricePoint(foodId, vendor, entryId) {
@@ -7045,6 +7049,7 @@ async function syncReceiptCatalogAfterWrite(items = [], {
   note = '',
   category = 'Compra',
   store = '',
+  syncGoogleSheets = true,
 } = {}) {
   const normalizedItems = Array.isArray(items) ? items.filter((item) => item?.name) : [];
   if (!normalizedItems.length) return [];
@@ -7103,6 +7108,7 @@ async function syncReceiptCatalogAfterWrite(items = [], {
           totalPrice: Number(item.totalPrice || item.total || 0),
           linePrice: Number(item.totalPrice || item.total || 0),
           expenseId: movementId,
+          syncGoogleSheets,
         });
       } catch (error) {
         financeReceiptLog('catalog-sync:item-error', {
@@ -7297,7 +7303,9 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     throw error;
   }
 
-  queueMovementGoogleSheetsCreate(payload);
+  if (options.syncGoogleSheets !== false) {
+    queueMovementGoogleSheetsCreate(payload);
+  }
 
   const syncedProductIds = await syncReceiptCatalogAfterWrite(normalizedLines, {
     movementId: saveId,
@@ -7306,6 +7314,7 @@ async function saveProductsPurchaseTransaction(list = {}, options = {}) {
     note,
     category,
     store,
+    syncGoogleSheets: options.syncGoogleSheets !== false,
   });
 
   localStorage.setItem('bookshell_finance_lastMovementAccountId', accountId);
@@ -7550,6 +7559,7 @@ async function confirmProductsTicketFromDom() {
       txId: movementId,
       receiptId: ticketId,
       extraUpdates: shoppingHubUpdates,
+      syncGoogleSheets: false,
     });
     console.info('[finance:movement] from-ticket', { amount: txResult?.payload?.amount, currency: txResult?.payload?.currency || 'EUR', originalAmount: txResult?.payload?.originalAmount, originalCurrency: txResult?.payload?.originalCurrency });
     console.info('[finance:currency] movement:payload', txResult?.payload || null);
@@ -7565,14 +7575,7 @@ async function confirmProductsTicketFromDom() {
     });
 
     await persistRecomputedFinanceAccountEntries([validation.accountId], confirmedDateISO, 'receipt-confirm');
-    queueAccountGoogleSheetsHistoryCreate(validation.accountId);
     void persistStoreDefaultCurrency(validation.store, receiptCurrency);
-    const productIdsForGoogleSheets = new Set([
-      ...collectProductIdsForGoogleSheets(txResult?.payload || {}),
-      ...(Array.isArray(txResult?.syncedProductIds) ? txResult.syncedProductIds : []),
-    ]);
-    productIdsForGoogleSheets.forEach((productId) => queueProductGoogleSheetsUpsert(productId));
-    queueProductSummaryGoogleSheetsRefresh();
     financeReceiptLog('local-update:success', {
       movementId: txResult.txId,
       ticketId: activeTicketId,
@@ -7593,8 +7596,41 @@ async function confirmProductsTicketFromDom() {
 
     setReceiptSelectionMap(shouldRotateList ? nextActiveList.id : convertedList.id, {});
     setProductsReceiptError('');
+    const googleSheetsPayload = buildTicketConfirmGoogleSheetsPayload({
+      ticketRecord,
+      movement: txResult?.payload || {},
+      syncedProductIds: Array.isArray(txResult?.syncedProductIds) ? txResult.syncedProductIds : [],
+    });
+    let googleSheetsPendingRetry = false;
+    try {
+      await syncTicketConfirmToGoogleSheets(googleSheetsPayload);
+      financeReceiptLog('google-sheets:success', {
+        movementId: txResult.txId,
+        ticketId,
+        lineCount: Array.isArray(googleSheetsPayload?.ticket?.lines) ? googleSheetsPayload.ticket.lines.length : 0,
+      });
+      try {
+        await flushPendingTicketSyncToGoogleSheets();
+      } catch (flushError) {
+        console.warn('[finance] no se pudo vaciar la cola pendiente de Google Sheets', flushError);
+      }
+    } catch (googleSheetsError) {
+      googleSheetsPendingRetry = true;
+      financeReceiptLog('google-sheets:error', {
+        movementId: txResult.txId,
+        ticketId,
+        message: googleSheetsError?.message || String(googleSheetsError || ''),
+      });
+      console.warn('[finance] compra confirmada pero sincronizacion con Google Sheets pendiente', {
+        ticketId,
+        movementId: txResult.txId,
+        error: googleSheetsError,
+      });
+    }
     console.log('[ticket:confirm:success]', { ticketId, txId: txResult.txId });
-    toast('Compra confirmada y gasto registrado');
+    toast(googleSheetsPendingRetry
+      ? 'Compra confirmada; sincronizacion con Google Sheets pendiente'
+      : 'Compra confirmada y gasto registrado');
   } catch (error) {
     const message = error?.message || String(error || '');
     financeReceiptLog('confirm:error', {
@@ -14993,6 +15029,214 @@ function buildProductSummaryGoogleSheetsRows() {
     totalOriginal: roundGoogleSheetsAmount(row.totalOriginal),
     totalEur: roundGoogleSheetsAmount(row.totalEur),
   }));
+}
+function buildTicketGoogleSheetsLineRows(movement = {}, ticketRecord = {}) {
+  const ticketId = financeCsvText(ticketRecord?.id || movement?.ticketId || movement?.receiptId, '');
+  const movementId = financeCsvText(movement?.id || ticketRecord?.movementId || ticketRecord?.txId, '');
+  const ticketDate = financeCsvText(ticketRecord?.dateISO || movement?.date || dayKeyFromTs(nowTs()), dayKeyFromTs(nowTs()));
+  const items = Array.isArray(movement?.items) && movement.items.length
+    ? movement.items
+    : (Array.isArray(movement?.extras?.items) ? movement.extras.items : []);
+  return items.map((item, index) => {
+    const qty = Math.max(0.01, Number(item?.qty || item?.quantity || 1));
+    const unitPrice = Number(item?.unitPriceOriginal ?? item?.unitPrice ?? item?.actualPrice ?? 0);
+    const totalOriginal = Number(item?.totalPrice ?? item?.total ?? item?.amount ?? (unitPrice * qty));
+    const currency = financeCsvText(
+      item?.currencyOriginal || item?.currency || movement?.originalCurrency || movement?.inputCurrency || movement?.currency || getDefaultCurrency(),
+      getDefaultCurrency(),
+    );
+    const unitPriceEur = Number.isFinite(Number(item?.priceEur))
+      ? Number(item.priceEur || 0)
+      : Number(normalizeMovementCurrencyPayload({
+        amount: unitPrice,
+        currency,
+        exchangeRateToEUR: Number(movement?.exchangeRateToEUR || item?.exchangeRateToEUR || 1),
+      }).amountEUR || 0);
+    const totalEur = Number.isFinite(Number(item?.totalEur))
+      ? Number(item.totalEur || 0)
+      : roundGoogleSheetsAmount(unitPriceEur * qty);
+    const supermarketName = financeCsvText(
+      item?.supermarketName || item?.supermarket || item?.store || item?.place || movement?.supermarket || movement?.store || ticketRecord?.store,
+      '',
+    );
+    const categoryName = financeCsvText(
+      item?.category || item?.categoryName || item?.snapshot?.category || ticketRecord?.categoryId,
+      '',
+    );
+    return {
+      lineId: financeCsvText(item?.lineId || item?.id || `${ticketId || movementId || 'ticket'}:${index + 1}`, `${ticketId || movementId || 'ticket'}:${index + 1}`),
+      ticketId,
+      movementId,
+      dateISO: ticketDate,
+      productId: financeCsvText(item?.foodId || item?.productId || item?.productKey, ''),
+      product: financeCsvText(item?.name, ''),
+      quantity: qty,
+      unit: financeCsvText(item?.unit, 'ud'),
+      unitPrice: roundGoogleSheetsAmount(unitPrice),
+      totalOriginal: roundGoogleSheetsAmount(totalOriginal),
+      currency,
+      unitPriceEur: roundGoogleSheetsAmount(unitPriceEur),
+      totalEur: roundGoogleSheetsAmount(totalEur),
+      categoryName,
+      tipoProducto: financeCsvText(item?.tipoProducto || item?.productType || item?.mealType, ''),
+      pesoValor: roundGoogleSheetsAmount(item?.pesoValor || 0, 3),
+      pesoUnidad: financeCsvText(item?.pesoUnidad, ''),
+      supermarketName,
+      note: financeCsvText(item?.note || movement?.note || ticketRecord?.note, ''),
+    };
+  }).filter((row) => row.productId || row.product);
+}
+function buildTicketGoogleSheetsSummaryRows(ticketLines = []) {
+  const grouped = new Map();
+  (Array.isArray(ticketLines) ? ticketLines : []).forEach((line) => {
+    const productKey = financeCsvText(line?.productId, '') || normalizeFoodCompareKey(line?.product || '') || financeCsvText(line?.product, '').toLowerCase();
+    const supermarketName = financeCsvText(line?.supermarketName, '');
+    if (!productKey || !supermarketName) return;
+    const key = `${productKey}__${supermarketName.toLowerCase()}`;
+    const current = grouped.get(key) || {
+      productId: financeCsvText(line?.productId, ''),
+      product: financeCsvText(line?.product, ''),
+      supermarketName,
+      quantity: 0,
+      purchaseKeys: new Set(),
+      lastPrice: 0,
+      lastCurrency: financeCsvText(line?.currency, getDefaultCurrency()),
+      totalOriginal: 0,
+      totalEur: 0,
+      categoryName: financeCsvText(line?.categoryName, ''),
+      tipoProducto: financeCsvText(line?.tipoProducto, ''),
+    };
+    current.quantity += Number(line?.quantity || 0);
+    current.totalOriginal += Number(line?.totalOriginal || 0);
+    current.totalEur += Number(line?.totalEur || 0);
+    if (line?.ticketId) current.purchaseKeys.add(String(line.ticketId));
+    current.lastPrice = Number(line?.unitPrice || current.lastPrice || 0);
+    current.lastCurrency = financeCsvText(line?.currency, current.lastCurrency || getDefaultCurrency());
+    if (line?.categoryName) current.categoryName = financeCsvText(line.categoryName, current.categoryName);
+    if (line?.tipoProducto) current.tipoProducto = financeCsvText(line.tipoProducto, current.tipoProducto);
+    grouped.set(key, current);
+  });
+  return [...grouped.values()].map((row) => ({
+    productId: financeCsvText(row.productId, ''),
+    product: financeCsvText(row.product, ''),
+    supermarketName: financeCsvText(row.supermarketName, ''),
+    quantity: roundGoogleSheetsAmount(row.quantity, 3),
+    purchaseCount: Math.max(1, Number(row.purchaseKeys.size || 1)),
+    lastPrice: roundGoogleSheetsAmount(row.lastPrice),
+    lastCurrency: financeCsvText(row.lastCurrency, getDefaultCurrency()),
+    totalOriginal: roundGoogleSheetsAmount(row.totalOriginal),
+    totalEur: roundGoogleSheetsAmount(row.totalEur),
+    categoryName: financeCsvText(row.categoryName, ''),
+    tipoProducto: financeCsvText(row.tipoProducto, ''),
+  }));
+}
+function buildTicketGoogleSheetsProductRows(ticketLines = [], syncedProductIds = []) {
+  const grouped = new Map();
+  (Array.isArray(ticketLines) ? ticketLines : []).forEach((line) => {
+    const key = financeCsvText(line?.productId, '') || normalizeFoodCompareKey(line?.product || '') || financeCsvText(line?.product, '').toLowerCase();
+    if (!key) return;
+    const current = grouped.get(key) || {
+      productId: financeCsvText(line?.productId, ''),
+      product: financeCsvText(line?.product, ''),
+      supermarketName: financeCsvText(line?.supermarketName, ''),
+      categoryName: financeCsvText(line?.categoryName, ''),
+      tipoProducto: financeCsvText(line?.tipoProducto, ''),
+      pesoValor: Number(line?.pesoValor || 0),
+      pesoUnidad: financeCsvText(line?.pesoUnidad, ''),
+      lastPrice: Number(line?.unitPrice || 0),
+      lastCurrency: financeCsvText(line?.currency, getDefaultCurrency()),
+      lastPriceEur: Number(line?.unitPriceEur || 0),
+      ticketQuantity: 0,
+      ticketTotalOriginal: 0,
+      ticketTotalEur: 0,
+    };
+    current.ticketQuantity += Number(line?.quantity || 0);
+    current.ticketTotalOriginal += Number(line?.totalOriginal || 0);
+    current.ticketTotalEur += Number(line?.totalEur || 0);
+    current.lastPrice = Number(line?.unitPrice || current.lastPrice || 0);
+    current.lastCurrency = financeCsvText(line?.currency, current.lastCurrency || getDefaultCurrency());
+    current.lastPriceEur = Number(line?.unitPriceEur || current.lastPriceEur || 0);
+    if (line?.supermarketName) current.supermarketName = financeCsvText(line.supermarketName, current.supermarketName);
+    if (line?.categoryName) current.categoryName = financeCsvText(line.categoryName, current.categoryName);
+    if (line?.tipoProducto) current.tipoProducto = financeCsvText(line.tipoProducto, current.tipoProducto);
+    if (Number(line?.pesoValor || 0) > 0) current.pesoValor = Number(line.pesoValor);
+    if (line?.pesoUnidad) current.pesoUnidad = financeCsvText(line.pesoUnidad, current.pesoUnidad);
+    grouped.set(key, current);
+  });
+  [...new Set((Array.isArray(syncedProductIds) ? syncedProductIds : []).map((id) => String(id || '').trim()).filter(Boolean))].forEach((productId) => {
+    if (!grouped.has(productId)) {
+      grouped.set(productId, {
+        productId,
+        product: '',
+        supermarketName: '',
+        categoryName: '',
+        tipoProducto: '',
+        pesoValor: 0,
+        pesoUnidad: '',
+        lastPrice: 0,
+        lastCurrency: getDefaultCurrency(),
+        lastPriceEur: 0,
+        ticketQuantity: 0,
+        ticketTotalOriginal: 0,
+        ticketTotalEur: 0,
+      });
+    }
+  });
+  return [...grouped.entries()].map(([key, row]) => {
+    const safeProductId = financeCsvText(row.productId, '') || String(key || '').trim();
+    const product = state.food.itemsById?.[safeProductId] || getFoodByName(row.product) || null;
+    return {
+      id: safeProductId,
+      name: financeCsvText(product?.displayName || product?.name || row.product, ''),
+      categoryName: financeCsvText(product?.productCategory || row.categoryName, ''),
+      tipoProducto: financeCsvText(product?.tipoProducto || product?.productType || product?.mealType || row.tipoProducto, ''),
+      pesoValor: roundGoogleSheetsAmount(product?.pesoValor ?? row.pesoValor, 3),
+      pesoUnidad: financeCsvText(product?.pesoUnidad || row.pesoUnidad, ''),
+      supermarketName: financeCsvText(product?.preferredStore || product?.place || row.supermarketName, ''),
+      lastPrice: roundGoogleSheetsAmount(row.lastPrice || product?.lastPrice || product?.defaultPrice || 0),
+      lastCurrency: financeCsvText(row.lastCurrency || product?.lastCurrency, getDefaultCurrency()),
+      lastPriceEur: roundGoogleSheetsAmount(row.lastPriceEur || product?.lastPriceEur || 0),
+      purchaseCountDelta: row.ticketQuantity > 0 ? 1 : 0,
+      ticketQuantity: roundGoogleSheetsAmount(row.ticketQuantity, 3),
+      ticketTotalOriginal: roundGoogleSheetsAmount(row.ticketTotalOriginal),
+      ticketTotalEur: roundGoogleSheetsAmount(row.ticketTotalEur),
+      updatedAt: financeCsvTimestampValue(product?.updatedAt || nowTs()),
+    };
+  }).filter((row) => row.id || row.name);
+}
+function buildTicketConfirmGoogleSheetsPayload({ ticketRecord = {}, movement = {}, syncedProductIds = [] } = {}) {
+  const ticketLines = buildTicketGoogleSheetsLineRows(movement, ticketRecord);
+  const products = buildTicketGoogleSheetsProductRows(ticketLines, syncedProductIds);
+  const summaries = buildTicketGoogleSheetsSummaryRows(ticketLines);
+  const confirmedAt = Number(ticketRecord?.confirmedAt || movement?.updatedAt || movement?.createdAt || nowTs());
+  const ticket = {
+    id: financeCsvText(ticketRecord?.id || movement?.ticketId || movement?.receiptId, ''),
+    txId: financeCsvText(ticketRecord?.txId || ticketRecord?.movementId || movement?.id, ''),
+    movementId: financeCsvText(ticketRecord?.movementId || ticketRecord?.txId || movement?.id, ''),
+    dateISO: financeCsvText(ticketRecord?.dateISO || movement?.date || dayKeyFromTs(confirmedAt), dayKeyFromTs(confirmedAt)),
+    confirmedAt,
+    accountId: financeCsvText(ticketRecord?.accountId || movement?.accountId, ''),
+    accountName: financeCsvText(ticketRecord?.accountNameSnapshot || movement?.accountNameSnapshot || financeCsvAccountName(movement?.accountId), ''),
+    supermarketName: financeCsvText(ticketRecord?.store || movement?.supermarket || movement?.store, ''),
+    currency: financeCsvText(ticketRecord?.ticketCurrency || movement?.inputCurrency || movement?.originalCurrency || movement?.currency, getDefaultCurrency()),
+    inputCurrency: financeCsvText(ticketRecord?.inputCurrency || movement?.inputCurrency || movement?.originalCurrency || movement?.currency, getDefaultCurrency()),
+    accountCurrency: financeCsvText(ticketRecord?.accountCurrency || movement?.accountCurrency || movement?.currency, getDefaultCurrency()),
+    totalOriginal: roundGoogleSheetsAmount(ticketRecord?.totalOriginal ?? movement?.totalOriginal ?? movement?.originalAmount ?? 0),
+    totalEur: roundGoogleSheetsAmount(ticketRecord?.totalEUR ?? movement?.totalEUR ?? 0),
+    amountDebited: roundGoogleSheetsAmount(ticketRecord?.amountDebited ?? movement?.amountDebited ?? movement?.amount ?? 0),
+    categoryId: financeCsvText(ticketRecord?.categoryId || movement?.category, ''),
+    paymentMethod: financeCsvText(ticketRecord?.paymentMethod, ''),
+    note: financeCsvText(ticketRecord?.note || movement?.note, ''),
+    lines: ticketLines,
+  };
+  return {
+    ticket,
+    products,
+    summaries,
+    supermarket: ticket.supermarketName,
+    currency: ticket.currency,
+    confirmedAt: ticket.confirmedAt,
+  };
 }
 function buildAccountGoogleSheetsHistoryRecord(accountId = '', recordTs = nowTs()) {
   const safeAccountId = String(accountId || '').trim();

@@ -1,21 +1,25 @@
-/**
- * CONTRATO ACTUALIZADO DEL WEB APP DE GOOGLE SHEETS
- *
- * Importante:
- * - Este archivo del repo prepara el contrato nuevo `ticket.confirm`.
- * - El Apps Script desplegado que maneja la hoja estructurada real no esta versionado aqui.
- * - La logica avanzada de bloques de supermercado, zona Suiza y recreacion de grupos
- *   debe pegarse y adaptarse en el script desplegado real antes de entrar en produccion.
- * - Mientras tanto, este script deja implementados:
- *   1. recepcion atomica del ticket completo,
- *   2. lock global con LockService,
- *   3. idempotencia por ticket,
- *   4. escritura consolidada en una sola ejecucion,
- *   5. puntos de extension claros para la hoja estructurada.
- */
-
 var GOOGLE_SHEETS_TOKEN = 'MiTokenSuperSecreto123456';
 var TICKET_SYNC_PROPERTY_PREFIX = 'bookshell.finance.ticketSync.';
+var REGISTRY_SHEET_NAME = 'Registro Productos';
+var REGISTRY_HEADER_SCAN_ROWS = 6;
+var STORE_BLOCK_WIDTH = 5;
+var STORE_COLS = {
+  COOP: 27,
+};
+var STORE_COUNTRY_HINTS = {
+  COOP: 'CH',
+  MIGROS: 'CH',
+  DENNER: 'CH',
+  MERCADONA: 'ES',
+  EROSKI: 'ES',
+  'EROSKI CITY': 'ES',
+  CARREFOUR: 'ES',
+  DIA: 'ES',
+  ALCAMPO: 'ES',
+  CONSUM: 'ES',
+  ALDI: 'ES',
+  LIDL: 'ES',
+};
 
 var ENTITY_CONFIG = {
   movement: {
@@ -135,6 +139,9 @@ function handleTicketConfirm_(rawData) {
       upsertEntityRow(summarySheet, ENTITY_CONFIG.productSummary, mapSummaryRowFromTicket_(summary), false);
     });
 
+    var registryResult = syncStructuredRegistryProducts_(payload);
+    warnings = warnings.concat(registryResult.warnings || []);
+
     SpreadsheetApp.flush();
     properties.setProperty(syncPropertyKey, syncStamp);
 
@@ -143,6 +150,8 @@ function handleTicketConfirm_(rawData) {
       ticketId: ticket.id,
       movementId: ticket.movementId,
       productCount: payload.products.length,
+      productsProcessed: registryResult.processed,
+      productsSource: payload.productsSource,
       summaryCount: payload.summaries.length,
       warnings: warnings,
     };
@@ -160,11 +169,25 @@ function normalizeTicketSyncPayload_(rawData) {
   if (!ticketId) throw new Error('missing-ticket-id');
   if (!movementId) throw new Error('missing-movement-id');
 
-  var lines = Array.isArray(ticket.lines) ? ticket.lines.filter(function(line) {
-    return line && typeof line === 'object';
-  }) : [];
+  var lineSource = pickLongestObjectArray_([
+    { name: 'ticket.lines', items: ticket.lines },
+    { name: 'ticket.items', items: ticket.items },
+    { name: 'payload.items', items: payload.items },
+    { name: 'payload.products', items: payload.products },
+    { name: 'ticket.products', items: ticket.products },
+  ]);
+  var productSource = pickLongestObjectArray_([
+    { name: 'payload.products', items: payload.products },
+    { name: 'payload.items', items: payload.items },
+    { name: 'ticket.products', items: ticket.products },
+    { name: 'ticket.items', items: ticket.items },
+    { name: lineSource.name, items: lineSource.items },
+  ]);
+  var lines = lineSource.items;
 
   if (!lines.length) throw new Error('missing-ticket-lines');
+
+  Logger.log('[ticket.confirm] linesSource=%s lines=%s productsSource=%s products=%s', lineSource.name, lines.length, productSource.name, productSource.items.length);
 
   return {
     ticket: {
@@ -187,9 +210,8 @@ function normalizeTicketSyncPayload_(rawData) {
       note: String(ticket.note || '').trim(),
       lines: lines,
     },
-    products: Array.isArray(payload.products) ? payload.products.filter(function(product) {
-      return product && typeof product === 'object';
-    }) : [],
+    products: productSource.items,
+    productsSource: productSource.name,
     summaries: Array.isArray(payload.summaries) ? payload.summaries.filter(function(summary) {
       return summary && typeof summary === 'object';
     }) : [],
@@ -249,20 +271,29 @@ function mapMovementRowFromTicket_(ticket) {
 }
 
 function mapProductRowFromTicket_(product) {
+  var safePrice = resolveProductPriceNumber_(product, 0);
+  var safeCurrency = resolveProductCurrencyCode_(product, '');
+  var safePriceEur = firstFiniteNumber_([
+    product.lastPriceEur,
+    product.priceEur,
+    product.unitPriceEur,
+    product.totalEur,
+    product.ticketTotalEur,
+  ], 0);
   return {
     id: String(product.id || '').trim(),
-    name: String(product.name || '').trim(),
-    categoryName: String(product.categoryName || '').trim(),
-    tipoProducto: String(product.tipoProducto || '').trim(),
-    pesoValor: normalizeNumber_(product.pesoValor, 0),
-    pesoUnidad: String(product.pesoUnidad || '').trim(),
-    supermarketName: String(product.supermarketName || '').trim(),
-    lastPrice: normalizeNumber_(product.lastPrice, 0),
-    lastCurrency: String(product.lastCurrency || '').trim(),
-    lastPriceEur: normalizeNumber_(product.lastPriceEur, 0),
+    name: resolveProductName_(product),
+    categoryName: String(product.categoryName || product.category || '').trim(),
+    tipoProducto: resolveProductType_(product),
+    pesoValor: resolveProductWeightValue_(product),
+    pesoUnidad: resolveProductWeightUnit_(product),
+    supermarketName: resolveProductStoreName_(product, {}),
+    lastPrice: safePrice,
+    lastCurrency: safeCurrency,
+    lastPriceEur: safePriceEur,
     purchaseCount: normalizeNumber_(product.purchaseCountDelta || product.purchaseCount || 0, 0),
-    totalOriginal: normalizeNumber_(product.ticketTotalOriginal || product.totalOriginal || 0, 0),
-    totalEur: normalizeNumber_(product.ticketTotalEur || product.totalEur || 0, 0),
+    totalOriginal: firstFiniteNumber_([product.ticketTotalOriginal, product.totalOriginal, product.totalPrice, product.total], 0),
+    totalEur: firstFiniteNumber_([product.ticketTotalEur, product.totalEur], 0),
     updatedAt: String(product.updatedAt || new Date().toISOString()).trim(),
   };
 }
@@ -280,42 +311,412 @@ function mapSummaryRowFromTicket_(summary) {
 }
 
 function ensureStructuredSupermarketBlockContract_(payload) {
-  var ticket = payload.ticket || {};
   var warnings = [];
-
-  /**
-   * TODO en el script desplegado real:
-   * - detectar supermercado ausente en la hoja estructurada,
-   * - usar CHF => zona Suiza,
-   * - clonar bloque plantilla completo (formulas, formatos, validaciones, colores, anchos),
-   * - adaptar formulas a las columnas nuevas,
-   * - incluir el nuevo bloque en medias, comparativas y calculos globales.
-   *
-   * El repo no contiene la estructura real de esa hoja, por eso aqui solo dejamos
-   * el contrato preparado y una advertencia visible.
-   */
-  if (ticket.supermarketName) {
-    warnings.push('structured-supermarket-block-pending-deployed-script');
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(REGISTRY_SHEET_NAME);
+  if (!sheet) return warnings;
+  var stores = {};
+  (payload.products || []).forEach(function(product) {
+    var store = resolveProductStoreName_(product, payload.ticket || {});
+    if (!store) return;
+    stores[normalizeLookupKey_(store)] = store;
+  });
+  Object.keys(stores).forEach(function(key) {
+    if (!resolveStoreBlockColumns_(sheet, stores[key], payload.ticket || {})) {
+      warnings.push('missing-store-block:' + stores[key]);
+    }
+  });
+  if (!Object.keys(stores).length && payload.ticket && payload.ticket.supermarketName) {
+    if (!resolveStoreBlockColumns_(sheet, payload.ticket.supermarketName, payload.ticket || {})) {
+      warnings.push('missing-store-block:' + payload.ticket.supermarketName);
+    }
   }
   return warnings;
 }
 
 function ensureStructuredCategoryVisibilityContract_(payload) {
-  var ticket = payload.ticket || {};
+  return [];
+}
+
+function syncStructuredRegistryProducts_(payload) {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = spreadsheet.getSheetByName(REGISTRY_SHEET_NAME);
   var warnings = [];
 
-  /**
-   * TODO en el script desplegado real:
-   * - insertar categorias nuevas fuera de grupos colapsables existentes,
-   * - recrear o ampliar grupos despues de la insercion,
-   * - garantizar que la fila nueva quede visible inmediatamente.
-   *
-   * Sin la hoja estructurada real no es seguro automatizar esta parte desde el repo.
-   */
-  if (Array.isArray(ticket.lines) && ticket.lines.length) {
-    warnings.push('structured-category-groups-pending-deployed-script');
+  if (!sheet) {
+    warnings.push('missing-sheet:' + REGISTRY_SHEET_NAME);
+    return { processed: 0, warnings: warnings };
   }
-  return warnings;
+
+  var processed = 0;
+  var registryMeta = buildRegistrySheetMeta_(sheet);
+  (payload.products || []).forEach(function(rawProduct) {
+    var product = normalizeRegistryProduct_(rawProduct, payload);
+    if (!product.name) {
+      warnings.push('registry-product-without-name');
+      return;
+    }
+    if (!product.productType) {
+      warnings.push('registry-product-without-type:' + product.name);
+      return;
+    }
+    if (!product.storeName) {
+      warnings.push('registry-product-without-store:' + product.name);
+      return;
+    }
+
+    try {
+      var rowIndex = ensureRegistryRowForProductType_(sheet, registryMeta, product.productType);
+      writeProductIntoRegistryRow(sheet, rowIndex, product, registryMeta);
+      registryMeta = buildRegistrySheetMeta_(sheet);
+      processed += 1;
+    } catch (error) {
+      warnings.push('registry-write-failed:' + product.name + ':' + (error && error.message ? error.message : String(error)));
+    }
+  });
+
+  Logger.log('[ticket.confirm] structured-registry productsProcessed=%s source=%s', processed, String(payload.productsSource || 'unknown'));
+  return { processed: processed, warnings: warnings };
+}
+
+function buildRegistrySheetMeta_(sheet) {
+  var lastRow = Math.max(sheet.getLastRow(), 1);
+  var lastColumn = Math.max(sheet.getLastColumn(), 1);
+  var columnA = sheet.getRange(1, 1, lastRow, 1).getDisplayValues();
+  var sectionRowsByType = {};
+
+  for (var rowIndex = 0; rowIndex < columnA.length; rowIndex += 1) {
+    var label = String(columnA[rowIndex][0] || '').trim();
+    if (!label) continue;
+    var normalizedLabel = normalizeLookupKey_(label);
+    if (!sectionRowsByType[normalizedLabel]) {
+      sectionRowsByType[normalizedLabel] = rowIndex + 1;
+    }
+  }
+
+  return {
+    lastRow: lastRow,
+    lastColumn: lastColumn,
+    sectionRowsByType: sectionRowsByType,
+    manualInputColumns: getRegistryManualInputColumns_(sheet, lastColumn),
+  };
+}
+
+function ensureRegistryRowForProductType_(sheet, registryMeta, productType) {
+  var normalizedType = normalizeLookupKey_(productType);
+  var sectionRow = registryMeta.sectionRowsByType[normalizedType];
+
+  if (!sectionRow) {
+    return createRegistrySectionAtEnd_(sheet, registryMeta, productType);
+  }
+
+  return insertRegistryProductRowBelowSection_(sheet, registryMeta, sectionRow);
+}
+
+function insertRegistryProductRowBelowSection_(sheet, registryMeta, sectionRow) {
+  var targetRow = sectionRow + 1;
+  sheet.insertRowsBefore(targetRow, 1);
+  var sourceRow = targetRow + 1;
+  var maxColumns = Math.max(registryMeta.lastColumn, sheet.getLastColumn(), 1);
+
+  if (sourceRow <= sheet.getLastRow()) {
+    sheet.getRange(sourceRow, 1, 1, maxColumns).copyTo(sheet.getRange(targetRow, 1, 1, maxColumns));
+  }
+
+  clearRegistryManualInputs_(sheet, targetRow, registryMeta.manualInputColumns);
+  return targetRow;
+}
+
+function createRegistrySectionAtEnd_(sheet, registryMeta, productType) {
+  var previousLastRow = Math.max(sheet.getLastRow(), 1);
+  sheet.insertRowsAfter(previousLastRow, 2);
+
+  var sectionRow = previousLastRow + 1;
+  var templateRow = previousLastRow + 2;
+  var maxColumns = Math.max(registryMeta.lastColumn, sheet.getLastColumn(), 1);
+
+  if (previousLastRow >= 1) {
+    sheet.getRange(previousLastRow, 1, 1, maxColumns).copyTo(sheet.getRange(templateRow, 1, 1, maxColumns));
+  }
+
+  clearRegistryManualInputs_(sheet, templateRow, registryMeta.manualInputColumns);
+  sheet.getRange(sectionRow, 1).setValue(String(productType || '').trim());
+  ensureRowIsOutsideGroups_(sheet, sectionRow);
+  ensureRowIsOutsideGroups_(sheet, templateRow);
+
+  return insertRegistryProductRowBelowSection_(sheet, buildRegistrySheetMeta_(sheet), sectionRow);
+}
+
+function clearRegistryManualInputs_(sheet, rowIndex, manualInputColumns) {
+  var uniqueCols = {};
+  var columns = Array.isArray(manualInputColumns) ? manualInputColumns : [];
+
+  columns.forEach(function(col) {
+    var safeCol = Number(col || 0);
+    if (!safeCol || uniqueCols[safeCol]) return;
+    uniqueCols[safeCol] = true;
+    sheet.getRange(rowIndex, safeCol).clearContent();
+  });
+}
+
+function getRegistryManualInputColumns_(sheet, lastColumn) {
+  var columns = [1];
+  var found = {};
+  var maxRow = Math.min(REGISTRY_HEADER_SCAN_ROWS, Math.max(sheet.getLastRow(), 1));
+  var headers = sheet.getRange(1, 1, maxRow, lastColumn).getDisplayValues();
+
+  for (var rowIndex = 0; rowIndex < headers.length; rowIndex += 1) {
+    for (var colIndex = 0; colIndex < headers[rowIndex].length; colIndex += 1) {
+      var normalized = normalizeLookupKey_(headers[rowIndex][colIndex]);
+      if (!normalized) continue;
+      if (normalized === 'CHF' || normalized === 'EUR' || normalized === 'PESO') {
+        found[colIndex + 1] = true;
+      }
+    }
+  }
+
+  Object.keys(STORE_COLS).forEach(function(storeKey) {
+    var baseCol = Number(STORE_COLS[storeKey] || 0);
+    if (!baseCol) return;
+    found[baseCol] = true;
+    found[baseCol + 1] = true;
+    found[baseCol + 4] = true;
+  });
+
+  Object.keys(found).forEach(function(colKey) {
+    var col = Number(colKey || 0);
+    if (col > 0 && col <= lastColumn && columns.indexOf(col) === -1) {
+      columns.push(col);
+    }
+  });
+
+  return columns.sort(function(a, b) { return a - b; });
+}
+
+function writeProductIntoRegistryRow(sheet, rowIndex, product, registryMeta) {
+  var storeBlock = resolveStoreBlockColumns_(sheet, product.storeName, product);
+  if (!storeBlock) {
+    throw new Error('missing-store-block:' + product.storeName);
+  }
+
+  sheet.getRange(rowIndex, 1).setValue(product.name);
+
+  if (product.price !== '' && product.currency === 'CHF' && storeBlock.chfCol) {
+    sheet.getRange(rowIndex, storeBlock.chfCol).setValue(product.price);
+  } else if (product.price !== '' && storeBlock.country === 'ES' && storeBlock.eurCol) {
+    sheet.getRange(rowIndex, storeBlock.eurCol).setValue(product.price);
+  }
+
+  if (storeBlock.pesoCol && product.weightValue !== '') {
+    sheet.getRange(rowIndex, storeBlock.pesoCol).setValue(product.weightValue);
+  }
+}
+
+function resolveStoreBlockColumns_(sheet, storeName, context) {
+  var normalizedStore = normalizeLookupKey_(storeName);
+  if (!normalizedStore) return null;
+
+  var lastColumn = Math.max(sheet.getLastColumn(), 1);
+  var maxRow = Math.min(REGISTRY_HEADER_SCAN_ROWS, Math.max(sheet.getLastRow(), 1));
+  var headers = sheet.getRange(1, 1, maxRow, lastColumn).getDisplayValues();
+  var headerMatch = null;
+
+  for (var rowIndex = 0; rowIndex < headers.length && !headerMatch; rowIndex += 1) {
+    for (var colIndex = 0; colIndex < headers[rowIndex].length; colIndex += 1) {
+      if (normalizeLookupKey_(headers[rowIndex][colIndex]) === normalizedStore) {
+        headerMatch = { row: rowIndex + 1, col: colIndex + 1 };
+        break;
+      }
+    }
+  }
+
+  var baseCol = headerMatch ? headerMatch.col : Number(STORE_COLS[normalizedStore] || 0);
+  if (!baseCol) return null;
+
+  var block = {
+    baseCol: baseCol,
+    chfCol: baseCol,
+    eurCol: baseCol + 1,
+    pesoCol: baseCol + 4,
+    country: detectStoreCountry_(sheet, normalizedStore, headerMatch, context),
+  };
+
+  var scanStartRow = headerMatch ? headerMatch.row : 1;
+  var scanEndRow = Math.min(scanStartRow + 2, maxRow);
+  var scanStartCol = Math.max(1, baseCol);
+  var scanEndCol = Math.min(lastColumn, baseCol + STORE_BLOCK_WIDTH - 1);
+
+  for (var scanRow = scanStartRow; scanRow <= scanEndRow; scanRow += 1) {
+    for (var scanCol = scanStartCol; scanCol <= scanEndCol; scanCol += 1) {
+      var normalizedHeader = normalizeLookupKey_(sheet.getRange(scanRow, scanCol).getDisplayValue());
+      if (normalizedHeader === 'CHF') block.chfCol = scanCol;
+      if (normalizedHeader === 'EUR') block.eurCol = scanCol;
+      if (normalizedHeader === 'PESO') block.pesoCol = scanCol;
+    }
+  }
+
+  return block;
+}
+
+function detectStoreCountry_(sheet, normalizedStore, headerMatch, context) {
+  if (STORE_COUNTRY_HINTS[normalizedStore]) return STORE_COUNTRY_HINTS[normalizedStore];
+  if (String(context && context.currency || '').trim().toUpperCase() === 'CHF') return 'CH';
+
+  if (headerMatch) {
+    var lastColumn = Math.max(sheet.getLastColumn(), 1);
+    var scanStartRow = 1;
+    var scanEndRow = Math.min(headerMatch.row + 1, REGISTRY_HEADER_SCAN_ROWS);
+    var scanStartCol = Math.max(1, headerMatch.col - 1);
+    var scanEndCol = Math.min(lastColumn, headerMatch.col + STORE_BLOCK_WIDTH - 1);
+    var values = sheet.getRange(scanStartRow, scanStartCol, scanEndRow - scanStartRow + 1, scanEndCol - scanStartCol + 1).getDisplayValues();
+
+    for (var rowIndex = 0; rowIndex < values.length; rowIndex += 1) {
+      for (var colIndex = 0; colIndex < values[rowIndex].length; colIndex += 1) {
+        var normalized = normalizeLookupKey_(values[rowIndex][colIndex]);
+        if (normalized === 'ESPANA' || normalized === 'SPAIN') return 'ES';
+        if (normalized === 'SUIZA' || normalized === 'SWITZERLAND' || normalized === 'SCHWEIZ') return 'CH';
+      }
+    }
+  }
+
+  if (String(context && context.currency || '').trim().toUpperCase() === 'EUR') return 'ES';
+  return '';
+}
+
+function normalizeRegistryProduct_(rawProduct, payload) {
+  var ticket = payload.ticket || {};
+  return {
+    name: resolveProductName_(rawProduct),
+    productType: resolveProductType_(rawProduct),
+    storeName: resolveProductStoreName_(rawProduct, ticket),
+    currency: resolveProductCurrencyCode_(rawProduct, ticket.currency || payload.currency || ''),
+    price: firstFiniteNumberOrBlank_([
+      rawProduct && rawProduct.lastPrice,
+      rawProduct && rawProduct.unitPrice,
+      rawProduct && rawProduct.price,
+      rawProduct && rawProduct.actualPrice,
+      rawProduct && rawProduct.totalOriginal,
+      rawProduct && rawProduct.ticketTotalOriginal,
+      rawProduct && rawProduct.totalPrice,
+      rawProduct && rawProduct.total,
+    ]),
+    weightValue: resolveRegistryWeightValue_(rawProduct),
+  };
+}
+
+function resolveProductName_(product) {
+  return String(product && (product.name || product.product || product.title || product.label) || '').trim();
+}
+
+function resolveProductType_(product) {
+  return String(product && (product.tipoProducto || product.productType || product.categoryName || product.category || product.type) || '').trim();
+}
+
+function resolveProductStoreName_(product, ticket) {
+  return String(product && (product.supermarketName || product.supermarket || product.store || product.place) || ticket.supermarketName || '').trim();
+}
+
+function resolveProductCurrencyCode_(product, fallback) {
+  return String(product && (product.lastCurrency || product.currency || product.currencyOriginal) || fallback || '').trim().toUpperCase();
+}
+
+function resolveProductPriceNumber_(product, fallback) {
+  return firstFiniteNumber_([
+    product && product.lastPrice,
+    product && product.unitPrice,
+    product && product.price,
+    product && product.actualPrice,
+    product && product.totalOriginal,
+    product && product.ticketTotalOriginal,
+    product && product.totalPrice,
+    product && product.total,
+  ], fallback);
+}
+
+function resolveProductWeightValue_(product) {
+  return firstFiniteNumber_([
+    product && product.pesoValor,
+    product && product.weightValue,
+    product && product.weight,
+  ], 0);
+}
+
+function resolveProductWeightUnit_(product) {
+  return String(product && (product.pesoUnidad || product.weightUnit || product.unitWeight) || '').trim();
+}
+
+function resolveRegistryWeightValue_(product) {
+  var value = resolveProductWeightValue_(product);
+  var unit = normalizeLookupKey_(resolveProductWeightUnit_(product));
+  if (!Number.isFinite(value) || value <= 0) return '';
+  if (unit === 'KG') return value * 1000;
+  if (unit === 'MG') return value / 1000;
+  if (unit === 'L') return value * 1000;
+  if (unit === 'CL') return value * 10;
+  return value;
+}
+
+function ensureRowIsOutsideGroups_(sheet, rowIndex) {
+  if (!sheet || typeof sheet.getRowGroupDepth !== 'function') return;
+  var attempts = 8;
+  while (attempts > 0 && sheet.getRowGroupDepth(rowIndex) > 0) {
+    try {
+      sheet.getRange(rowIndex, 1, 1, Math.max(sheet.getLastColumn(), 1)).shiftRowGroupDepth(-1);
+    } catch (error) {
+      break;
+    }
+    attempts -= 1;
+  }
+}
+
+function pickLongestObjectArray_(candidates) {
+  var best = { name: '', items: [] };
+  (candidates || []).forEach(function(candidate) {
+    var normalizedItems = normalizeObjectArrayCandidate_(candidate && candidate.items);
+    if (normalizedItems.length > best.items.length) {
+      best = {
+        name: String(candidate && candidate.name || '').trim(),
+        items: normalizedItems,
+      };
+    }
+  });
+  return best;
+}
+
+function normalizeObjectArrayCandidate_(value) {
+  var list = Array.isArray(value)
+    ? value
+    : (value && typeof value === 'object' ? Object.values(value) : []);
+  return list.filter(function(item) {
+    return item && typeof item === 'object';
+  });
+}
+
+function firstFiniteNumber_(values, fallback) {
+  var list = Array.isArray(values) ? values : [values];
+  for (var index = 0; index < list.length; index += 1) {
+    var numeric = Number(list[index]);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return Number(fallback || 0);
+}
+
+function firstFiniteNumberOrBlank_(values) {
+  var list = Array.isArray(values) ? values : [values];
+  for (var index = 0; index < list.length; index += 1) {
+    var numeric = Number(list[index]);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return '';
+}
+
+function normalizeLookupKey_(value) {
+  return String(value || '')
+    .trim()
+    .replace(/€/g, 'EUR')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
 }
 
 function getSheetForEntity(sheetName, columns) {

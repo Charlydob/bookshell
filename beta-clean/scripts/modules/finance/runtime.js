@@ -1113,6 +1113,99 @@ function normalizeProductItemLabel(value = '') {
 function normalizeProductItemKey(value = '') {
   return normalizeFoodCompareKey(value);
 }
+
+function normalizeProductName(value = '') {
+  return normalizeProductItemKey(value);
+}
+
+function resolveTicketCurrency(store = '', fallback = '') {
+  return normalizeCurrencyCode(
+    getStoreDefaultCurrency(store)
+    || fallback
+    || getDefaultCurrency(),
+  );
+}
+
+function resolveProductCatalogCurrency(product = {}, { store = '', fallbackCurrency = '' } = {}) {
+  return normalizeCurrencyCode(
+    product?.lastCurrency
+    || product?.currency
+    || getStoreDefaultCurrency(product?.preferredStore || product?.place || product?.supermarketName || store || '')
+    || fallbackCurrency
+    || getDefaultCurrency(),
+  );
+}
+
+function resolveProductCatalogName(product = {}, fallback = '') {
+  return normalizeFoodName(
+    product?.canonicalName
+    || product?.displayName
+    || product?.name
+    || product?.ticketName
+    || fallback
+    || '',
+  );
+}
+
+function listProductNameCandidates(product = {}) {
+  return [
+    product?.canonicalName,
+    product?.displayName,
+    product?.name,
+    product?.ticketName,
+    ...(Array.isArray(product?.aliases) ? product.aliases : []),
+  ]
+    .map((value) => normalizeFoodName(value))
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.findIndex((item) => item.toLowerCase() === value.toLowerCase()) === index);
+}
+
+function resolveExistingProductForTicket(seed = {}, options = {}) {
+  const explicitId = String(options?.productId || seed?.productId || seed?.id || '').trim();
+  if (explicitId) return resolveProductsCatalogSnapshot(explicitId) || state.food.itemsById?.[explicitId] || resolveFoodItemByAnyKey(explicitId) || null;
+  const normalizedName = normalizeProductName(options?.name || seed?.name || '');
+  if (!normalizedName) return null;
+  const normalizedStore = normalizeProductName(options?.store || seed?.preferredStore || seed?.place || seed?.store || seed?.supermarketName || '');
+  const candidates = Object.values(state.food.itemsById || {})
+    .filter((product) => listProductNameCandidates(product).some((candidate) => normalizeProductName(candidate) === normalizedName))
+    .map((product) => {
+      const productStore = normalizeFoodName(product?.preferredStore || product?.place || product?.supermarketName || '');
+      const productStoreKey = normalizeProductName(productStore);
+      const storeScore = normalizedStore
+        ? (productStoreKey === normalizedStore ? 1000 : (productStoreKey ? 0 : 60))
+        : (productStoreKey ? 120 : 90);
+      const metaScore = [
+        product?.tipoProducto,
+        product?.productType,
+        product?.categoryName,
+        product?.productCategory,
+        product?.brand,
+        product?.pesoValor,
+        product?.pesoUnidad,
+      ].filter(Boolean).length * 25;
+      const usageScore = Number(product?.countUsed || 0) * 5;
+      const recencyScore = Math.floor(Number(product?.updatedAt || product?.lastPurchaseAt || 0) / 100000000000);
+      return {
+        product,
+        score: storeScore + metaScore + usageScore + recencyScore,
+      };
+    })
+    .sort((left, right) => Number(right.score || 0) - Number(left.score || 0));
+  const best = candidates[0]?.product || null;
+  if (!best) return null;
+  const bestId = String(best?.id || '').trim();
+  return (bestId ? (resolveProductsCatalogSnapshot(bestId) || state.food.itemsById?.[bestId] || best) : best) || null;
+}
+
+function resolveProductsReceiptSuggestionMeta(product = {}, options = {}) {
+  const price = resolveProductsCatalogPrice(product);
+  const currency = resolveProductCatalogCurrency(product, options);
+  return {
+    price,
+    currency,
+    label: fmtCurrencyCode(price, currency),
+  };
+}
 function normalizeFinanceCategoryName(value = '') {
   const safe = normalizeFoodName(value);
   if (!safe) return '';
@@ -2153,7 +2246,7 @@ function openProductsCreateModal(seed = {}, context = {}) {
       barcode: normalizeProductText(seed?.barcode || ''),
       unit: normalizeProductUnit(seed?.unit || 'ud'),
       usualQty: normalizeProductPositiveNumber(seed?.usualQty, 1),
-      lastCurrency: normalizeCurrencyCode(seed?.lastCurrency || getStoreDefaultCurrency(seed?.preferredStore || seed?.place || '') || getDefaultCurrency()),
+      lastCurrency: resolveTicketCurrency(seed?.preferredStore || seed?.place || '', seed?.lastCurrency || ''),
       pesoValor: normalizeProductWeightValue(seed?.pesoValor, 0),
       pesoUnidad: normalizeProductWeightUnit(seed?.pesoUnidad || ''),
     },
@@ -2167,7 +2260,7 @@ function readCreateProductFormPayload(formEl) {
   const form = new FormData(formEl);
   const name = normalizeFoodName(String(form.get('name') || ''));
   const preferredStore = normalizeFoodName(String(form.get('preferredStore') || ''));
-  const lastCurrency = normalizeCurrencyCode(String(form.get('lastCurrency') || getStoreDefaultCurrency(preferredStore) || getDefaultCurrency()));
+  const lastCurrency = resolveTicketCurrency(preferredStore, String(form.get('lastCurrency') || ''));
   return {
     name,
     displayName: name,
@@ -2211,7 +2304,7 @@ function buildCreateProductSeedFromSnapshot(productSnapshot = {}, overrides = {}
     || snapshot.place
     || '',
   );
-  const fallbackCurrency = getStoreDefaultCurrency(preferredStore) || getDefaultCurrency();
+  const fallbackCurrency = resolveTicketCurrency(preferredStore, '');
   const resolvedPrice = normalizeProductPositiveNumber(
     overrides.estimatedPrice,
     normalizeProductPositiveNumber(
@@ -2333,7 +2426,7 @@ async function saveProductToCatalog(productInput = {}, options = {}) {
   payload.usualPrice = Math.max(0, Number((payload.usualPrice ?? payload.estimatedPrice) || 0));
   payload.defaultPrice = Math.max(0, Number((payload.defaultPrice ?? payload.estimatedPrice) || 0));
   payload.lastPrice = Math.max(0, Number((payload.lastPrice ?? payload.estimatedPrice) || 0));
-  payload.lastCurrency = normalizeCurrencyCode(payload.lastCurrency || getStoreDefaultCurrency(payload.preferredStore || payload.place || '') || getDefaultCurrency());
+  payload.lastCurrency = resolveTicketCurrency(payload.preferredStore || payload.place || '', payload.lastCurrency || payload.currency || '');
   payload.lastPriceEur = Number(normalizeMovementCurrencyPayload({
     amount: payload.lastPrice,
     currency: payload.lastCurrency,
@@ -2364,12 +2457,60 @@ async function saveProductToCatalog(productInput = {}, options = {}) {
 
 async function addProductToTicket(productInput = {}, options = {}) {
   const payload = typeof productInput === 'object' && productInput ? { ...productInput } : {};
-  const name = normalizeFoodName(payload.name || '');
-  const quantity = Math.max(0.01, Number((options.qty ?? payload.usualQty) || 1));
-  const unitPrice = Math.max(0, Number((options.unitPrice ?? payload.estimatedPrice ?? payload.lastPrice) || 0));
-  const productId = String(options.productId || payload.id || '').trim();
-  const preferredStore = normalizeFoodName(payload.preferredStore || payload.place || '');
-  const currency = normalizeCurrencyCode(options.currency || payload.lastCurrency || payload.currency || getStoreDefaultCurrency(preferredStore) || getDefaultCurrency());
+  const requestedName = normalizeFoodName(payload.name || '');
+  const requestedStore = normalizeFoodName(payload.preferredStore || payload.place || '');
+  const existingProduct = resolveExistingProductForTicket(
+    {
+      ...payload,
+      id: options.productId || payload.id || '',
+      name: requestedName,
+      preferredStore: requestedStore,
+    },
+    {
+      productId: options.productId || payload.id || '',
+      name: requestedName,
+      store: requestedStore,
+    },
+  );
+  const resolvedProductId = String(options.productId || existingProduct?.canonicalId || existingProduct?.id || payload.id || '').trim();
+  const resolvedName = existingProduct ? resolveProductCatalogName(existingProduct, requestedName) : requestedName;
+  const resolvedStore = normalizeFoodName(
+    payload.preferredStore
+    || payload.place
+    || existingProduct?.preferredStore
+    || existingProduct?.place
+    || '',
+  );
+  const resolvedPayload = existingProduct
+    ? {
+      ...existingProduct,
+      ...payload,
+      id: resolvedProductId || String(existingProduct?.id || '').trim(),
+      name: resolvedName,
+      displayName: resolveProductCatalogName(existingProduct, payload.displayName || resolvedName),
+      preferredStore: resolvedStore,
+      place: resolvedStore,
+      productCategory: normalizeFoodName(payload.productCategory || existingProduct?.productCategory || existingProduct?.categoryName || ''),
+      productType: normalizeFoodName(payload.productType || payload.tipoProducto || existingProduct?.productType || existingProduct?.tipoProducto || existingProduct?.mealType || ''),
+      tipoProducto: normalizeFoodName(payload.tipoProducto || payload.productType || existingProduct?.tipoProducto || existingProduct?.productType || existingProduct?.mealType || ''),
+      unit: normalizeProductUnit(payload.unit || existingProduct?.unit || 'ud'),
+      pesoValor: normalizeProductWeightValue(payload.pesoValor ?? existingProduct?.pesoValor, 0),
+      pesoUnidad: normalizeProductWeightUnit(payload.pesoUnidad || existingProduct?.pesoUnidad || ''),
+      brand: normalizeProductText(payload.brand || existingProduct?.brand || ''),
+      lastCurrency: resolveProductCatalogCurrency(existingProduct, { store: resolvedStore, fallbackCurrency: payload.lastCurrency || payload.currency || '' }),
+    }
+    : payload;
+  const name = normalizeFoodName(resolvedPayload.name || '');
+  const quantity = Math.max(0.01, Number((options.qty ?? resolvedPayload.usualQty ?? payload.usualQty) || 1));
+  const unitPrice = Math.max(0, Number((options.unitPrice ?? resolvedPayload.estimatedPrice ?? resolvedPayload.lastPrice) || 0));
+  const productId = resolvedProductId;
+  const preferredStore = resolvedStore;
+  const currency = normalizeCurrencyCode(
+    options.currency
+    || resolvedPayload.lastCurrency
+    || resolvedPayload.currency
+    || resolveTicketCurrency(preferredStore, ''),
+  );
   if (!name) {
     toast('Nombre obligatorio');
     return '';
@@ -2378,7 +2519,15 @@ async function addProductToTicket(productInput = {}, options = {}) {
     toast('Precio obligatorio');
     return '';
   }
-  const exchangeRateToEUR = currency === 'EUR' ? 1 : Number(options.exchangeRateToEUR || payload.exchangeRateToEUR || getCurrencyRates()[currency] || 1);
+  if (existingProduct) {
+    financeDebug('receipt existing product detected', {
+      productId,
+      name,
+      store: preferredStore,
+      currency,
+    });
+  }
+  const exchangeRateToEUR = currency === 'EUR' ? 1 : Number(options.exchangeRateToEUR || resolvedPayload.exchangeRateToEUR || getCurrencyRates()[currency] || 1);
   recordFinanceTestingEvent('ticket:add-requested', {
     name,
     productId,
@@ -2408,7 +2557,7 @@ async function addProductToTicket(productInput = {}, options = {}) {
     productId,
     name,
     qty: nextQty,
-    unit: normalizeProductUnit(payload.unit || previousLine.unit || 'ud'),
+    unit: normalizeProductUnit(resolvedPayload.unit || previousLine.unit || 'ud'),
     estimatedPrice: unitPrice,
     actualPrice: unitPrice,
     currency,
@@ -2416,11 +2565,11 @@ async function addProductToTicket(productInput = {}, options = {}) {
     priceEUR: Number(normalizeMovementCurrencyPayload({ amount: unitPrice, currency, exchangeRateToEUR }).amountEUR || 0),
     exchangeRateToEUR: Number.isFinite(exchangeRateToEUR) && exchangeRateToEUR > 0 ? exchangeRateToEUR : 1,
     store: preferredStore || normalizeFoodName(previousLine.store || nextList.store || ''),
-    productCategory: normalizeFoodName(payload.productCategory || previousLine.productCategory || ''),
-    productType: normalizeFoodName(payload.productType || payload.tipoProducto || previousLine.productType || previousLine.tipoProducto || ''),
-    tipoProducto: normalizeFoodName(payload.tipoProducto || payload.productType || previousLine.tipoProducto || previousLine.productType || ''),
-    pesoValor: normalizeProductWeightValue(payload.pesoValor ?? previousLine.pesoValor, 0),
-    pesoUnidad: normalizeProductWeightUnit(payload.pesoUnidad || previousLine.pesoUnidad || ''),
+    productCategory: normalizeFoodName(resolvedPayload.productCategory || previousLine.productCategory || ''),
+    productType: normalizeFoodName(resolvedPayload.productType || resolvedPayload.tipoProducto || previousLine.productType || previousLine.tipoProducto || ''),
+    tipoProducto: normalizeFoodName(resolvedPayload.tipoProducto || resolvedPayload.productType || previousLine.tipoProducto || previousLine.productType || ''),
+    pesoValor: normalizeProductWeightValue(resolvedPayload.pesoValor ?? previousLine.pesoValor, 0),
+    pesoUnidad: normalizeProductWeightUnit(resolvedPayload.pesoUnidad || previousLine.pesoUnidad || ''),
     checked: previousLine.checked !== false,
     ticketId: activeTicketId,
     note: normalizeProductText(previousLine.note || ''),
@@ -2949,10 +3098,18 @@ function cloneProductsListRecord(list = {}) {
 
 function normalizeProductsListTicketMeta(ticketId = '', payload = {}) {
   const safeId = String(ticketId || payload?.id || createFinanceRecordId('lticket')).trim();
-  const ticketCurrency = String(payload?.ticketCurrency || getDefaultCurrency()).toUpperCase();
+  const ticketCurrency = resolveTicketCurrency(payload?.store || '', payload?.ticketCurrency || payload?.currency || '');
   const ticketCountry = String(payload?.ticketCountry || payload?.country || '').trim();
   const exchangeRateToEUR = ticketCurrency === 'EUR' ? 1 : Number(payload?.exchangeRateToEUR || getCurrencyRates()[ticketCurrency] || 1);
   const exchangeRateFromEUR = ticketCurrency === 'EUR' ? 1 : (Number(payload?.exchangeRateFromEUR || (1 / Math.max(0.0000001, exchangeRateToEUR))) || 1);
+  if (DEBUG_FINANCE_PRODUCTS && normalizeFoodName(payload?.store || '') && String(payload?.ticketCurrency || payload?.currency || '').toUpperCase() !== ticketCurrency) {
+    financeDebug('receipt currency resolved', {
+      ticketId: safeId,
+      store: normalizeFoodName(payload?.store || ''),
+      requestedCurrency: String(payload?.ticketCurrency || payload?.currency || '').toUpperCase() || '',
+      resolvedCurrency: ticketCurrency,
+    });
+  }
   return {
     id: safeId,
     label: normalizeProductText(payload?.label || ''),
@@ -2992,7 +3149,15 @@ function ensureProductsListTickets(list = {}) {
     updatedAt: nextList.updatedAt,
   });
   const ticketMap = Object.entries(nextList.tickets || {}).reduce((acc, [ticketId, payload]) => {
-    const normalized = normalizeProductsListTicketMeta(ticketId, payload);
+    const normalized = normalizeProductsListTicketMeta(ticketId, {
+      store: payload?.store || nextList.store,
+      accountId: payload?.accountId || nextList.accountId,
+      paymentMethod: payload?.paymentMethod || nextList.paymentMethod,
+      ticketCategoryId: payload?.ticketCategoryId || nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '',
+      plannedFor: payload?.plannedFor || nextList.plannedFor,
+      notes: payload?.notes || nextList.notes,
+      ...(payload || {}),
+    });
     acc[normalized.id] = normalized;
     return acc;
   }, {});
@@ -3442,6 +3607,7 @@ function buildProductsViewModel(cfg = {}) {
       usualPrice: normalizeProductPositiveNumber(product?.usualPrice, normalizeProductPositiveNumber(product?.defaultPrice, 0)),
       estimatedPrice: normalizeProductPositiveNumber(product?.estimatedPrice, normalizeProductPositiveNumber(product?.usualPrice, normalizeProductPositiveNumber(product?.defaultPrice, 0))),
       lastPrice: normalizeProductPositiveNumber(product?.lastPrice, 0),
+      lastCurrency: resolveProductCatalogCurrency(product, { store: preferredStore }),
       usualQty: normalizeProductPositiveNumber(product?.usualQty, 1),
       unit: normalizeProductUnit(product?.unit || 'ud'),
       pesoValor: normalizeProductWeightValue(product?.pesoValor ?? meta.pesoValor, 0),
@@ -3538,6 +3704,7 @@ function buildProductsViewModel(cfg = {}) {
         row.lastPurchaseAt = Number(line.ts || 0);
         row.lastStore = line.vendorKey;
         row.lastPrice = Number(line.unitPrice || line.totalPrice || row.lastPrice || 0);
+        row.lastCurrency = normalizeCurrencyCode(line.currency || row.lastCurrency || getStoreDefaultCurrency(line.vendorKey || row.preferredStore || '') || getDefaultCurrency());
       }
     }
     if (bucket === 'visible') {
@@ -4205,16 +4372,19 @@ function renderProductsReceiptSuggestionList(model = null, query = '', lineId = 
   if (!rows.length) {
     return `<div class="productsWorkbench__receiptSuggestEmpty">${query ? `Sin coincidencias para "${escapeHtml(query)}"` : 'Empieza a escribir para buscar'}</div>`;
   }
-  return rows.map((row) => `
+  return rows.map((row) => {
+    const suggestionMeta = resolveProductsReceiptSuggestionMeta(row, { store: row.preferredStore || row.bestStoreKey || row.lastStore || '' });
+    return `
     <button
       type="button"
       class="productsWorkbench__receiptSuggestion"
       data-products-receipt-pick="${escapeHtml(row.canonicalId)}"
       ${safeLineId ? `data-products-receipt-pick-line="${escapeHtml(safeLineId)}"` : ''}>
       <strong>${escapeHtml(row.canonicalName || 'Producto')}</strong>
-      <small>${escapeHtml(row.productCategory || row.productType || row.preferredStore || row.bestStoreKey || 'Catalogo')} · ${fmtCurrency(resolveProductsCatalogPrice(row))}</small>
+      <small>${escapeHtml(row.productCategory || row.categoryName || row.productType || row.tipoProducto || row.preferredStore || row.bestStoreKey || 'Catalogo')} · ${suggestionMeta.label}</small>
     </button>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function renderProductsReceiptLineRow(line, model) {
@@ -6004,7 +6174,10 @@ function readProductsListDraftFromDom(root = document) {
   nextList.ticketCategoryId = String(scope.querySelector('[name="ticketCategoryId"]')?.value || nextList.ticketCategoryId || state.productsHub?.settings?.ticketCategoryId || '').trim();
   nextList.notes = normalizeProductText(formEl.querySelector('[name="notes"]')?.value || nextList.notes || '');
   const activeTicketId = String(formEl.dataset.productsActiveTicketId || nextList.activeTicketId || nextList.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
-  const ticketCurrency = normalizeCurrencyCode(scope.querySelector('[data-products-receipt-currency]')?.value || nextList.tickets?.[activeTicketId]?.ticketCurrency || getStoreDefaultCurrency(nextList.store) || getDefaultCurrency());
+  const ticketCurrency = normalizeCurrencyCode(
+    scope.querySelector('[data-products-receipt-currency]')?.value
+    || resolveTicketCurrency(nextList.store, nextList.tickets?.[activeTicketId]?.ticketCurrency || ''),
+  );
   const derivedFromEUR = ticketCurrency === 'EUR'
     ? 1
     : Number(nextList.tickets?.[activeTicketId]?.exchangeRateFromEUR || (1 / Math.max(0.0000001, Number(nextList.tickets?.[activeTicketId]?.exchangeRateToEUR || 0))));
@@ -6134,7 +6307,13 @@ function syncProductsTicketComposerDom(root = document) {
     const draft = ensureProductsListTickets(readProductsListDraftFromDom(root));
     const activeTicketId = String(draft?.activeTicketId || draft?.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
     const ticketCurrency = String(draft?.tickets?.[activeTicketId]?.ticketCurrency || getDefaultCurrency()).toUpperCase();
-    addTotal.textContent = fmtCurrencyCode(Math.max(0, parseProductsReceiptQuantity(addQty?.value || 1, 1)) * Math.max(0, parseProductsReceiptMoney(addUnit?.value || '', 0)), ticketCurrency);
+    const addSelection = resolveProductsReceiptAddSelection(root);
+    const addCurrency = normalizeCurrencyCode(addSelection?.currency || ticketCurrency || getDefaultCurrency());
+    addTotal.textContent = fmtCurrencyCode(Math.max(0, parseProductsReceiptQuantity(addQty?.value || 1, 1)) * Math.max(0, parseProductsReceiptMoney(addUnit?.value || '', 0)), addCurrency);
+    if (addUnit) {
+      addUnit.placeholder = `precio ${addCurrency === 'EUR' ? '€' : addCurrency}`;
+      addUnit.setAttribute('aria-label', `Precio unitario nuevo en ${addCurrency}`);
+    }
   }
   const storeSelect = scope.querySelector('[name="store"]');
   const storeValue = String((storeSelect?.value === '__new__' ? scope.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || 'Supermercado').trim() || 'Supermercado';
@@ -6360,6 +6539,77 @@ function resolveProductsCatalogSnapshot(productId = '') {
   return model.catalogById?.[safeId] || state.food.itemsById?.[safeId] || resolveFoodItemByAnyKey(safeId) || null;
 }
 
+function clearProductsReceiptAddSelection(root = document) {
+  const nameInput = root?.querySelector?.('[data-products-receipt-add-name]');
+  if (!nameInput) return;
+  delete nameInput.dataset.productsReceiptAddProductId;
+  delete nameInput.dataset.productsReceiptAddCurrency;
+  delete nameInput.dataset.productsReceiptAddProductName;
+  delete nameInput.dataset.productsReceiptAddStore;
+  delete nameInput.dataset.productsReceiptAddMode;
+  nameInput.removeAttribute('title');
+}
+
+function resolveProductsReceiptAddSelection(root = document) {
+  const nameInput = root?.querySelector?.('[data-products-receipt-add-name]');
+  const productId = String(nameInput?.dataset?.productsReceiptAddProductId || '').trim();
+  if (!productId) return null;
+  const product = resolveProductsCatalogSnapshot(productId);
+  if (!product) return null;
+  return {
+    productId,
+    product,
+    currency: normalizeCurrencyCode(
+      nameInput?.dataset?.productsReceiptAddCurrency
+      || resolveProductCatalogCurrency(product),
+    ),
+  };
+}
+
+function applyProductsReceiptAddSelection(productId = '', options = {}) {
+  const root = options.root || getProductsWorkbenchRoot() || document;
+  const product = resolveProductsCatalogSnapshot(productId);
+  if (!product) return false;
+  const nameInput = root?.querySelector?.('[data-products-receipt-add-name]');
+  const qtyInput = root?.querySelector?.('[data-products-receipt-add-qty]');
+  const unitInput = root?.querySelector?.('[data-products-receipt-add-unit]');
+  const totalEl = root?.querySelector?.('[data-products-receipt-add-total]');
+  if (!nameInput || !unitInput) return false;
+  const draft = ensureProductsListTickets(readProductsListDraftFromDom(root));
+  const activeTicketId = String(draft?.activeTicketId || draft?.primaryTicketId || 'ticket-1').trim() || 'ticket-1';
+  const activeTicket = draft?.tickets?.[activeTicketId] || {};
+  const productCurrency = resolveProductCatalogCurrency(product, {
+    store: activeTicket.store || draft.store || '',
+    fallbackCurrency: activeTicket.ticketCurrency || '',
+  });
+  const unitPrice = normalizeProductPositiveNumber(options.unitPrice, resolveProductsCatalogPrice(product));
+  const productName = resolveProductCatalogName(product, nameInput.value || '');
+  nameInput.value = productName;
+  nameInput.dataset.productsReceiptAddProductId = String(product?.canonicalId || product?.id || productId).trim();
+  nameInput.dataset.productsReceiptAddCurrency = productCurrency;
+  nameInput.dataset.productsReceiptAddProductName = productName;
+  nameInput.dataset.productsReceiptAddStore = normalizeFoodName(product?.preferredStore || product?.place || '');
+  nameInput.dataset.productsReceiptAddMode = 'existing';
+  nameInput.title = 'Producto existente seleccionado';
+  if (unitPrice > 0) {
+    unitInput.value = Number(unitPrice).toFixed(2);
+    unitInput.dataset.value = String(Number(unitPrice).toFixed(2));
+    unitInput.dataset.moneyLastValid = String(Number(unitPrice).toFixed(2));
+  }
+  const qty = parseProductsReceiptQuantity(qtyInput?.value || 1, 1);
+  if (totalEl) totalEl.textContent = fmtCurrencyCode(Math.max(0, qty) * Math.max(0, unitPrice), productCurrency);
+  closeProductsReceiptSuggestions(root);
+  financeDebug('receipt suggested product selected', {
+    productId: String(product?.canonicalId || product?.id || productId).trim(),
+    name: productName,
+    unitPrice,
+    currency: productCurrency,
+    store: normalizeFoodName(product?.preferredStore || product?.place || ''),
+  });
+  requestAnimationFrame(() => unitInput.focus());
+  return true;
+}
+
 function upsertProductLineIntoList(list = {}, productSnapshot = null, options = {}) {
   const product = productSnapshot || {};
   const productId = String(product?.canonicalId || product?.id || '').trim();
@@ -6464,19 +6714,23 @@ async function changeProductsReceiptLineProduct(lineId = '', productId = '') {
   const line = draft?.lines?.[safeLineId];
   if (!line) return;
   const price = resolveProductsCatalogPrice(product);
-  const lineCurrency = normalizeCurrencyCode(product.lastCurrency || line.currency || getStoreDefaultCurrency(product.preferredStore || product.place || '') || getDefaultCurrency());
+  const resolvedLinePrice = normalizeProductPositiveNumber(price, normalizeProductPositiveNumber(line.actualPrice, line.estimatedPrice || 0));
+  const lineCurrency = resolveProductCatalogCurrency(product, {
+    store: product.preferredStore || product.place || line.store || draft.store || '',
+    fallbackCurrency: line.currency || '',
+  });
   const lineExchangeRateToEUR = lineCurrency === 'EUR' ? 1 : Number(product.exchangeRateToEUR || line.exchangeRateToEUR || getCurrencyRates()[lineCurrency] || 1);
   draft.lines[safeLineId] = {
     ...line,
     productId: String(product.canonicalId || product.id || '').trim(),
     name: normalizeFoodName(product.canonicalName || product.displayName || product.name || line.name),
     unit: normalizeProductUnit(product.unit || line.unit || 'ud'),
-    estimatedPrice: normalizeProductPositiveNumber(line.estimatedPrice, price || 0),
-    actualPrice: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(price, line.estimatedPrice || 0)),
+    estimatedPrice: resolvedLinePrice,
+    actualPrice: resolvedLinePrice,
     currency: lineCurrency,
-    priceOriginal: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(price, line.estimatedPrice || 0)),
+    priceOriginal: resolvedLinePrice,
     priceEUR: Number(normalizeMovementCurrencyPayload({
-      amount: normalizeProductPositiveNumber(line.actualPrice, normalizeProductPositiveNumber(price, line.estimatedPrice || 0)),
+      amount: resolvedLinePrice,
       currency: lineCurrency,
       exchangeRateToEUR: lineExchangeRateToEUR,
     }).amountEUR || 0),
@@ -6527,27 +6781,72 @@ function closeProductsReceiptSuggestionsSoon(root = document, relatedTarget = nu
 }
 
 async function createProductFromReceiptRow() {
-  const nameInput = document.querySelector('[data-products-receipt-add-name]');
+  const root = getProductsWorkbenchRoot() || document;
+  const nameInput = root.querySelector('[data-products-receipt-add-name]');
   const name = normalizeFoodName(nameInput?.value || '');
   if (!name) {
     state.productsReceiptError = 'Escribe un nombre antes de añadir.';
     toast('Falta el nombre del producto');
     return;
   }
-  const storeSelect = document.querySelector('[data-products-store-select]');
-  const defaultStore = normalizeFoodName((storeSelect?.value === '__new__' ? document.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || state.productsHub?.settings?.defaultStore || '');
-  const unitPrice = parseProductsReceiptMoney(document.querySelector('[data-products-receipt-add-unit]')?.value || '', 0);
-  const addQty = parseProductsReceiptQuantity(document.querySelector('[data-products-receipt-add-qty]')?.value || 1, 1);
-  const normalizedName = normalizeProductItemKey(name);
-  const existing = Object.values(state.food.itemsById || {}).find((item) => normalizeProductItemKey(item?.name || item?.displayName || '') === normalizedName);
-  if (existing?.id) {
-    openProductsCreateModalForExistingProduct(existing.id, {
-      source: 'receipt-add',
-      qty: Math.max(0.01, addQty),
-      unitPrice,
+  const storeSelect = root.querySelector('[data-products-store-select]');
+  const defaultStore = normalizeFoodName((storeSelect?.value === '__new__' ? root.querySelector('[data-products-new-store-input]')?.value : storeSelect?.value) || state.productsHub?.settings?.defaultStore || '');
+  const unitPrice = parseProductsReceiptMoney(root.querySelector('[data-products-receipt-add-unit]')?.value || '', 0);
+  const addQty = parseProductsReceiptQuantity(root.querySelector('[data-products-receipt-add-qty]')?.value || 1, 1);
+  const selectedExisting = resolveProductsReceiptAddSelection(root);
+  const existing = selectedExisting?.product || resolveExistingProductForTicket({
+    id: selectedExisting?.productId || '',
+    name,
+    preferredStore: defaultStore,
+  }, {
+    productId: selectedExisting?.productId || '',
+    name,
+    store: defaultStore,
+  });
+  if (existing) {
+    const productId = String(existing?.canonicalId || existing?.id || selectedExisting?.productId || '').trim();
+    const resolvedCurrency = resolveProductCatalogCurrency(existing, {
+      store: defaultStore,
+      fallbackCurrency: resolveTicketCurrency(defaultStore, ''),
     });
+    const resolvedUnitPrice = Math.max(0, unitPrice > 0 ? unitPrice : resolveProductsCatalogPrice(existing));
+    financeDebug('receipt add decision', {
+      decision: 'add-direct',
+      productId,
+      name: resolveProductCatalogName(existing, name),
+      store: defaultStore,
+      currency: resolvedCurrency,
+    });
+    await addProductToTicket({
+      ...existing,
+      name: resolveProductCatalogName(existing, name),
+      preferredStore: normalizeFoodName(existing?.preferredStore || existing?.place || defaultStore || ''),
+      place: normalizeFoodName(existing?.preferredStore || existing?.place || defaultStore || ''),
+    }, {
+      qty: Math.max(0.01, addQty),
+      unitPrice: resolvedUnitPrice,
+      productId,
+      currency: resolvedCurrency,
+      exchangeRateToEUR: resolvedCurrency === 'EUR' ? 1 : Number(existing?.exchangeRateToEUR || getCurrencyRates()[resolvedCurrency] || 1),
+    });
+    clearProductsReceiptAddSelection(root);
+    if (nameInput) {
+      nameInput.value = '';
+      nameInput.focus();
+    }
+    const addUnitInput = root.querySelector('[data-products-receipt-add-unit]');
+    const addQtyInput = root.querySelector('[data-products-receipt-add-qty]');
+    if (addUnitInput) addUnitInput.value = '';
+    if (addQtyInput) addQtyInput.value = '1';
+    syncProductsTicketComposerDom(root);
+    toast('Producto añadido al ticket');
     return;
   }
+  financeDebug('receipt add decision', {
+    decision: 'open-create-modal',
+    name,
+    store: defaultStore,
+  });
   openProductsCreateModal({
     name,
     estimatedPrice: unitPrice,
@@ -17192,7 +17491,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
       const lineId = String(receiptPick.dataset.productsReceiptPickLine || '').trim();
       closeProductsReceiptSuggestions(view);
       if (lineId) await changeProductsReceiptLineProduct(lineId, productId);
-      else openProductsCreateModalForExistingProduct(productId, { source: 'receipt-pick' });
+      else applyProductsReceiptAddSelection(productId, { root: view });
       return;
     }
     const createFromSearch = target.closest('[data-products-create-from-search]')?.dataset.productsCreateFromSearch;
@@ -18128,7 +18427,7 @@ view.addEventListener('focusout', async (event) => {
     if (event.key === 'Enter' && event.target.matches('[data-products-receipt-add-name]')) {
       event.preventDefault();
       const first = document.querySelector('[data-products-receipt-add-suggest] [data-products-receipt-pick]');
-      if (first) openProductsCreateModalForExistingProduct(first.dataset.productsReceiptPick, { source: 'receipt-enter' });
+      if (first) applyProductsReceiptAddSelection(first.dataset.productsReceiptPick, { root: view });
       else await createProductFromReceiptRow();
       return;
     }
@@ -18219,12 +18518,16 @@ view.addEventListener('focusout', async (event) => {
       if (state.productsReceiptError) setProductsReceiptError('');
       if (event.target.matches('[data-products-store-select]')) {
         const draftForStore = readProductsListDraftFromDom(view);
-        const defaultCurrency = getStoreDefaultCurrency(draftForStore.store);
+        const defaultCurrency = resolveTicketCurrency(draftForStore.store, view.querySelector('[data-products-receipt-currency]')?.value || '');
         const currencySelect = view.querySelector('[data-products-receipt-currency]');
         if (currencySelect && defaultCurrency) {
           currencySelect.value = defaultCurrency;
           await applyTicketCurrencyRateFromApi(view, defaultCurrency);
         }
+        financeDebug('receipt initial store/currency', {
+          store: normalizeFoodName(draftForStore.store || ''),
+          resolvedCurrency: defaultCurrency,
+        });
       }
       syncProductsTicketComposerDom(view);
       syncProductsDraftListLocal(readProductsListDraftFromDom(view));
@@ -18334,6 +18637,7 @@ view.addEventListener('focusout', async (event) => {
     }
     if (event.target.matches('[data-products-receipt-add-name], [data-products-receipt-name]')) {
       closeProductsReceiptSuggestions(view, event.target.closest('.productsWorkbench__receiptNameWrap')?.querySelector('.productsWorkbench__receiptSuggest'));
+      if (event.target.matches('[data-products-receipt-add-name]')) clearProductsReceiptAddSelection(view);
       updateProductsReceiptSuggestions(event.target);
       if (event.target.matches('[data-products-receipt-name]')) {
         const lineId = String(event.target.dataset.productsReceiptName || '').trim();

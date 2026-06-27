@@ -618,13 +618,25 @@ function toIsoDay(value = '') {
   const raw = String(value || '').trim();
   if (!raw) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{4}-\d{2}-\d{2}[T\s].*$/.test(raw)) return raw.slice(0, 10);
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      const ts = numeric < 100000000000 ? numeric * 1000 : numeric;
+      return dayKeyFromTs(ts);
+    }
+  }
   const slash = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
-  if (!slash) return null;
-  const day = Number(slash[1]);
-  const month = Number(slash[2]);
-  const year = Number(slash[3]);
-  if (!day || !month || !year || month > 12 || day > 31) return null;
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  if (slash) {
+    const day = Number(slash[1]);
+    const month = Number(slash[2]);
+    const year = Number(slash[3]);
+    if (!day || !month || !year || month > 12 || day > 31) return null;
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  const parsedTs = Date.parse(raw);
+  if (Number.isFinite(parsedTs)) return dayKeyFromTs(parsedTs);
+  return null;
 }
 
 function normalizeTxAllocation(raw = {}, fallbackDate = '') {
@@ -15152,9 +15164,7 @@ function financeCsvNumber(value, fallback = '') {
   return Number.isFinite(numeric) ? String(numeric) : fallback;
 }
 function googleSheetsMovementDateValue(row = {}) {
-  const raw = String(row?.date || row?.dateISO || '').trim();
-  if (!raw) return '';
-  return raw.includes('T') ? raw.slice(0, 10) : raw;
+  return toIsoDay(String(row?.date || row?.dateISO || '').trim()) || '';
 }
 function roundGoogleSheetsAmount(value, decimals = 2) {
   const numeric = Number(value);

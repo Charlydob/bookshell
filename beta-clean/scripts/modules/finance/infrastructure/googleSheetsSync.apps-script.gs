@@ -194,7 +194,7 @@ function normalizeTicketSyncPayload_(rawData) {
       id: ticketId,
       movementId: movementId,
       txId: String(ticket.txId || movementId).trim(),
-      dateISO: String(ticket.dateISO || '').trim(),
+      dateISO: normalizeSheetDateValue_(ticket.dateISO || ticket.date || ticket.confirmedAt || payload.confirmedAt || ''),
       confirmedAt: normalizeNumber_(ticket.confirmedAt, 0),
       accountId: String(ticket.accountId || '').trim(),
       accountName: String(ticket.accountName || '').trim(),
@@ -236,7 +236,7 @@ function mapTicketLogRow_(ticket) {
     ticketId: String(ticket.id || '').trim(),
     movementId: String(ticket.movementId || ticket.txId || '').trim(),
     confirmedAt: normalizeCellValue(ticket.confirmedAt),
-    dateISO: String(ticket.dateISO || '').trim(),
+    dateISO: normalizeSheetDateValue_(ticket.dateISO || ticket.confirmedAt || ''),
     accountId: String(ticket.accountId || '').trim(),
     accountName: String(ticket.accountName || '').trim(),
     supermarketName: String(ticket.supermarketName || '').trim(),
@@ -255,7 +255,7 @@ function mapMovementRowFromTicket_(ticket) {
   var firstLine = Array.isArray(ticket.lines) && ticket.lines.length ? ticket.lines[0] : {};
   return {
     id: String(ticket.movementId || ticket.txId || '').trim(),
-    date: String(ticket.dateISO || '').trim(),
+    date: normalizeSheetDateValue_(ticket.dateISO || ticket.confirmedAt || ''),
     accountName: String(ticket.accountName || '').trim(),
     supermarketName: String(ticket.supermarketName || '').trim(),
     categoryName: String(ticket.categoryId || '').trim(),
@@ -744,7 +744,7 @@ function ensureSheetHeaders_(sheet, columns) {
 
 function upsertEntityRow(sheet, config, data, insertAtTop) {
   var row = config.columns.map(function(column) {
-    return normalizeCellValue(data[column]);
+    return normalizeSheetCellValue_(column, data[column]);
   });
 
   var existingRow = findRowByKey(sheet, config, data);
@@ -794,6 +794,48 @@ function findRowByKey(sheet, config, data) {
 function normalizeNumber_(value, fallback) {
   var numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : Number(fallback || 0);
+}
+
+function normalizeSheetCellValue_(column, value) {
+  if (column === 'date' || column === 'dateISO') {
+    return normalizeSheetDateValue_(value, '');
+  }
+  return normalizeCellValue(value);
+}
+
+function normalizeSheetDateValue_(value, fallback) {
+  if (value == null || value === '') return String(fallback || '').trim();
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return formatSheetDateFromTs_(value.getTime());
+  }
+  var raw = String(value || '').trim();
+  if (!raw) return String(fallback || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{4}-\d{2}-\d{2}[T\s].*$/.test(raw)) return raw.slice(0, 10);
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    var numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return formatSheetDateFromTs_(numeric < 100000000000 ? numeric * 1000 : numeric);
+    }
+  }
+  var slash = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (slash) {
+    var day = Number(slash[1]);
+    var month = Number(slash[2]);
+    var year = Number(slash[3]);
+    if (day > 0 && month > 0 && month <= 12 && year > 0 && day <= 31) {
+      return year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    }
+  }
+  var parsed = new Date(raw);
+  if (!isNaN(parsed.getTime())) return formatSheetDateFromTs_(parsed.getTime());
+  return String(fallback || raw).trim();
+}
+
+function formatSheetDateFromTs_(ts) {
+  var numeric = Number(ts);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '';
+  return Utilities.formatDate(new Date(numeric), Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
 function normalizeCellValue(value) {

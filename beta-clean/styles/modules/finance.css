@@ -8707,6 +8707,10 @@ grid-template-columns: 1fr auto;
   background: rgba(255, 255, 255, .035);
 }
 
+.financeTab .financeCurrencyWealth__viewToggle--panel {
+  margin-top: 8px;
+}
+
 .financeTab .financeCurrencyWealth__viewBtn {
   min-height: 26px;
   padding: 4px 8px;
@@ -8900,6 +8904,8 @@ grid-template-columns: 1fr auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 26px;
   padding: 5px 8px;
   border: 1px solid rgba(125, 190, 255, .14);
@@ -8910,6 +8916,14 @@ grid-template-columns: 1fr auto;
   font-size: 11px;
   font-weight: 800;
   cursor: pointer;
+}
+
+.financeTab .financeCurrencyWealth__legendItem span {
+  min-width: 0;
+  max-width: 116px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .financeTab .financeCurrencyWealth__legendItem.is-active,
@@ -8998,6 +9012,27 @@ grid-template-columns: 1fr auto;
   text-align: right;
 }
 
+.financeTab .financeCurrencyWealth__emptyState {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 18px 14px;
+  border: 1px dashed rgba(125, 190, 255, .22);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .02);
+  text-align: center;
+}
+
+.financeTab .financeCurrencyWealth__emptyState strong {
+  font-size: 13px;
+}
+
+.financeTab .financeCurrencyWealth__emptyState small {
+  color: var(--fin-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 @media (max-width: 420px) {
   .financeTab .financeCurrencyWealth__donutWrap {
     width: min(272px, 100%);
@@ -9013,6 +9048,9 @@ grid-template-columns: 1fr auto;
   .financeTab .financeCurrencyWealth__breakdownRow {
     grid-template-columns: minmax(52px, .72fr) minmax(0, 1.28fr) minmax(38px, auto);
     padding: 8px;
+  }
+  .financeTab .financeCurrencyWealth__legendItem span {
+    max-width: 92px;
   }
 }
 

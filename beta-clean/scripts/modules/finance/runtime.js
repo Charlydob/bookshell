@@ -67,6 +67,8 @@ let financeSubscriptionsStarted = false;
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
 const GOOGLE_SHEETS_PRODUCT_SUMMARY_KEYS_KEY = 'bookshell_finance_gs_product_summary_keys_v1';
+const ACCOUNT_HISTORY_MIGRATION_META_KEY = 'accountHistorySheetsV1';
+const ACCOUNT_HISTORY_MIGRATION_BATCH_SIZE = 25;
 const FINANCE_OFFLINE_SNAPSHOT_MODULE = 'finance';
 const FINANCE_OFFLINE_SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const GLOBAL_PRODUCTS_PATH = PUBLIC_PATHS.foodItems;
@@ -351,7 +353,18 @@ function fmtCurrencyCode(value, currency = 'EUR') { return formatCurrency(Number
 function fmtSignedCurrency(value) { const num = Number(value || 0); return `${num > 0 ? '+' : ''}${fmtCurrency(num)}`; }
 
 const FINANCE_TOTAL_CURRENCY_KEY = 'bookshell_finance_total_currency';
+const FINANCE_BALANCE_CHART_VIEW_KEY = 'bookshell_finance_balance_chart_view';
 const MIN_FINANCE_TOTAL_CURRENCIES = Object.freeze(['EUR', 'CHF', 'USD', 'PEN', 'BRL']);
+function normalizeBalanceChartView(value = '') {
+  return value === 'accounts' ? 'accounts' : 'currency';
+}
+function readFinanceBalanceChartView() {
+  try { return normalizeBalanceChartView(localStorage.getItem(FINANCE_BALANCE_CHART_VIEW_KEY) || 'currency'); } catch (_) { return 'currency'; }
+}
+function setFinanceBalanceChartView(nextView = 'currency') {
+  state.balanceChartView = normalizeBalanceChartView(nextView);
+  try { localStorage.setItem(FINANCE_BALANCE_CHART_VIEW_KEY, state.balanceChartView); } catch (_) {}
+}
 function readFinanceTotalCurrency() {
   try { return normalizeCurrencyCode(localStorage.getItem(FINANCE_TOTAL_CURRENCY_KEY) || getDefaultCurrency()); } catch (_) { return getDefaultCurrency(); }
 }
@@ -448,6 +461,13 @@ function isFinanceTestingLocalOnly() {
     return false;
   }
 }
+function isFinanceDevAdminVisible() {
+  try {
+    return Boolean(window?.__BOOKSHELL_DEV__);
+  } catch (_) {
+    return false;
+  }
+}
 function recordFinanceTestingEvent(type = '', payload = {}) {
   try {
     if (!window.__bookshellFinanceTesting || typeof window.__bookshellFinanceTesting !== 'object') return;
@@ -519,6 +539,7 @@ function getStoreDefaultCurrency(store = '') {
   return raw ? normalizeCurrencyCode(raw) : '';
 }
 state.financeTotalCurrency = readFinanceTotalCurrency();
+state.balanceChartView = readFinanceBalanceChartView();
 
 async function persistStoreDefaultCurrency(store = '', currency = getDefaultCurrency()) {
   const key = storeCurrencyKey(store);
@@ -12104,6 +12125,52 @@ function getAccountOriginalBalanceForCurrencyComparison(account = {}, scope = st
   return Number.isFinite(value) ? value : 0;
 }
 
+function buildAccountDistributionData(accounts = [], selectedCurrency = state.financeTotalCurrency || getDefaultCurrency(), exchangeRates = getFinanceCurrencyRates(), scope = state.balanceAggScope === 'total' ? 'total' : 'my') {
+  const referenceCurrency = normalizeCurrencyCode(selectedCurrency || getDefaultCurrency());
+  const rows = (Array.isArray(accounts) ? accounts : [])
+    .map((account) => {
+      const accountId = String(account?.id || '').trim();
+      const name = normalizeFoodName(account?.name || account?.title || accountId) || 'Cuenta sin nombre';
+      const currency = accountCurrency(account);
+      const originalBalance = getAccountOriginalBalanceForCurrencyComparison(account, scope);
+      const converted = convertCurrency(originalBalance, currency, referenceCurrency, exchangeRates);
+      return {
+        _key: `account:${accountId || name}`,
+        accountId,
+        name,
+        currency,
+        originalBalance,
+        converted: Number.isFinite(converted) ? converted : NaN,
+        missingRate: !Number.isFinite(converted),
+      };
+    })
+    .filter((row) => row.name);
+
+  const positiveRows = rows
+    .filter((row) => !row.missingRate && Number(row.converted || 0) > 0)
+    .sort((a, b) => Number(b.converted || 0) - Number(a.converted || 0) || a.name.localeCompare(b.name, 'es'));
+
+  const total = positiveRows.reduce((sum, row) => sum + Number(row.converted || 0), 0);
+  const chartRows = total > 0
+    ? positiveRows.map((row, index) => {
+        const sameCurrency = row.currency === referenceCurrency;
+        return {
+          ...row,
+          value: Number(row.converted || 0),
+          pct: (Number(row.converted || 0) / total) * 100,
+          color: categoryColor(index),
+          primaryText: fmtCurrencyCode(row.converted, referenceCurrency),
+          secondaryText: sameCurrency ? '' : fmtCurrencyCode(row.originalBalance, row.currency),
+        };
+      })
+    : [];
+
+  return {
+    rows: chartRows,
+    total,
+  };
+}
+
 function buildWealthByCurrencyRows(accounts = [], targetCurrency = state.financeTotalCurrency || getDefaultCurrency(), scope = state.balanceAggScope === 'total' ? 'total' : 'my') {
   const rates = getFinanceCurrencyRates();
   const grouped = new Map();
@@ -12218,8 +12285,12 @@ function buildWealthChartTypeData(assetTypeRows = [], referenceCurrency = getDef
   });
 }
 
-function renderWealthChartBreakdown(chartRows = []) {
-  if (!chartRows.length) return '<p class="finance-empty">Sin desglose convertible.</p>';
+function buildWealthChartAccountData(accounts = [], referenceCurrency = getDefaultCurrency(), scope = state.balanceAggScope === 'total' ? 'total' : 'my') {
+  return buildAccountDistributionData(accounts, referenceCurrency, getFinanceCurrencyRates(), scope).rows;
+}
+
+function renderWealthChartBreakdown(chartRows = [], emptyMessage = 'Sin desglose convertible.') {
+  if (!chartRows.length) return `<p class="finance-empty">${escapeHtml(emptyMessage)}</p>`;
   return `<div class="financeCurrencyWealth__breakdown" aria-label="Desglose del gráfico visible">
     ${chartRows.map((row) => `<button type="button" class="financeCurrencyWealth__breakdownRow ${String(state.wealthChartSelectedKey || '') === String(row._key || '') ? 'is-active' : ''}" data-finance-wealth-segment="${escapeHtml(row._key)}">
       <span class="financeCurrencyWealth__breakdownName"><i style="background:${row.color}"></i>${escapeHtml(row.name)}</span>
@@ -12232,11 +12303,14 @@ function renderWealthChartBreakdown(chartRows = []) {
   </div>`;
 }
 
-function renderWealthByCurrencyChart(rows = [], assetTypeRows = [], referenceCurrency = getDefaultCurrency()) {
-  const mode = state.wealthChartMode === 'types' ? 'types' : 'currencies';
-  const chartRows = mode === 'types'
-    ? buildWealthChartTypeData(assetTypeRows, referenceCurrency)
-    : buildWealthChartCurrencyData(rows, referenceCurrency);
+function renderWealthChartShell({
+  chartRows = [],
+  referenceCurrency = getDefaultCurrency(),
+  controls = '',
+  ariaLabel = `Distribución del patrimonio en ${referenceCurrency}`,
+  emptyMessage = 'Sin datos convertibles para el gráfico.',
+  breakdownEmptyMessage = 'Sin desglose convertible.',
+} = {}) {
   const total = chartRows.reduce((sum, row) => sum + Number(row.value || 0), 0);
   const hasSelected = chartRows.some((row) => String(row._key || '') === String(state.wealthChartSelectedKey || ''));
   if (!hasSelected) state.wealthChartSelectedKey = null;
@@ -12252,10 +12326,7 @@ function renderWealthByCurrencyChart(rows = [], assetTypeRows = [], referenceCur
   const legend = chartRows.map((row) => `<button type="button" class="financeCurrencyWealth__legendItem ${String(state.wealthChartSelectedKey || '') === String(row._key || '') ? 'is-active' : ''}" data-finance-wealth-segment="${escapeHtml(row._key)}"><i style="background:${row.color}"></i><span>${escapeHtml(row.name)}</span><small>${Number(row.pct || 0).toFixed(1)}%</small></button>`).join('');
 
   return `<div class="financeCurrencyWealth__chartView">
-    <div class="financeCurrencyWealth__chartModeToggle" role="group" aria-label="Datos del gráfico de patrimonio">
-      <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${mode === 'currencies' ? 'is-active' : ''}" data-finance-wealth-chart-mode="currencies" aria-pressed="${mode === 'currencies'}">Divisas</button>
-      <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${mode === 'types' ? 'is-active' : ''}" data-finance-wealth-chart-mode="types" aria-pressed="${mode === 'types'}">Tipos</button>
-    </div>
+    ${controls}
     ${total > 0 ? `<div class="financeCurrencyWealth__donutShell">
       <div class="financeCurrencyWealth__donutWrap">
         <div
@@ -12263,37 +12334,76 @@ function renderWealthByCurrencyChart(rows = [], assetTypeRows = [], referenceCur
           data-finance-wealth-donut="${escapeHtml(JSON.stringify(chartPayload))}"
           style="min-height:260px;width:100%;"
           role="img"
-          aria-label="Distribución del patrimonio por ${mode === 'types' ? 'tipos' : 'divisas'} en ${escapeHtml(referenceCurrency)}"
+          aria-label="${escapeHtml(ariaLabel)}"
         ></div>
         <div class="financeCurrencyWealth__donutCenter"><strong>${fmtCurrencyCode(total, referenceCurrency)}</strong><small>Total</small></div>
       </div>
       <div class="financeCurrencyWealth__legend">${legend}</div>
-    </div>` : '<p class="finance-empty">Sin datos convertibles para el gráfico.</p>'}
-    ${renderWealthChartBreakdown(chartRows)}
+    </div>` : `<div class="financeCurrencyWealth__emptyState"><strong>${escapeHtml(emptyMessage)}</strong><small>Prueba otra moneda o añade saldo a alguna cuenta.</small></div>`}
+    ${chartRows.length ? renderWealthChartBreakdown(chartRows, breakdownEmptyMessage) : ''}
   </div>`;
+}
+
+function renderWealthCurrencyChart(rows = [], assetTypeRows = [], referenceCurrency = getDefaultCurrency()) {
+  const mode = state.wealthChartMode === 'types' ? 'types' : 'currencies';
+  const chartRows = mode === 'types'
+    ? buildWealthChartTypeData(assetTypeRows, referenceCurrency)
+    : buildWealthChartCurrencyData(rows, referenceCurrency);
+  return renderWealthChartShell({
+    chartRows,
+    referenceCurrency,
+    controls: `<div class="financeCurrencyWealth__chartModeToggle" role="group" aria-label="Datos del gráfico de patrimonio">
+      <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${mode === 'currencies' ? 'is-active' : ''}" data-finance-wealth-chart-mode="currencies" aria-pressed="${mode === 'currencies'}">Divisas</button>
+      <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${mode === 'types' ? 'is-active' : ''}" data-finance-wealth-chart-mode="types" aria-pressed="${mode === 'types'}">Tipos</button>
+    </div>`,
+    ariaLabel: `Distribución del patrimonio por ${mode === 'types' ? 'tipos' : 'divisas'} en ${referenceCurrency}`,
+  });
+}
+
+function renderWealthAccountsChart(accounts = [], referenceCurrency = getDefaultCurrency(), scope = state.balanceAggScope === 'total' ? 'total' : 'my') {
+  const chartRows = buildWealthChartAccountData(accounts, referenceCurrency, scope);
+  return renderWealthChartShell({
+    chartRows,
+    referenceCurrency,
+    ariaLabel: `Distribución del patrimonio por cuentas en ${referenceCurrency}`,
+    emptyMessage: 'No hay cuentas con saldo para representar.',
+    breakdownEmptyMessage: 'No hay cuentas con saldo convertido en esta moneda.',
+  });
+}
+
+function renderWealthByCurrencyChart(rows = [], assetTypeRows = [], accounts = [], referenceCurrency = getDefaultCurrency(), scope = state.balanceAggScope === 'total' ? 'total' : 'my') {
+  const balanceChartView = normalizeBalanceChartView(state.balanceChartView);
+  return balanceChartView === 'accounts'
+    ? renderWealthAccountsChart(accounts, referenceCurrency, scope)
+    : renderWealthCurrencyChart(rows, assetTypeRows, referenceCurrency);
 }
 
 function renderWealthByCurrencyCard(accounts = []) {
   const referenceCurrency = state.financeTotalCurrency || getDefaultCurrency();
   const scope = state.balanceAggScope === 'total' ? 'total' : 'my';
   const view = state.wealthPanelView === 'chart' ? 'chart' : 'list';
+  const balanceChartView = normalizeBalanceChartView(state.balanceChartView);
   const rows = buildWealthByCurrencyRows(accounts, referenceCurrency, scope);
   const assetTypeRows = buildWealthByAssetTypeRows(accounts, referenceCurrency, scope);
   return `<article class="financeGlassCard financeCurrencyWealthCard">
     <div class="financeCurrencyWealth__header">
       <div>
-        <h3>Patrimonio por divisa</h3>
+        <h3>Patrimonio por divisas</h3>
         <small>Comparativa en ${escapeHtml(referenceCurrency)} · ${scope === 'total' ? 'total' : 'mi parte'}</small>
+        ${view === 'chart' ? `<div class="financeCurrencyWealth__viewToggle financeCurrencyWealth__viewToggle--panel" role="group" aria-label="Vista principal del gráfico de patrimonio">
+          <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${balanceChartView === 'currency' ? 'is-active' : ''}" data-finance-balance-chart-view="currency" aria-pressed="${balanceChartView === 'currency'}">Por divisas</button>
+          <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${balanceChartView === 'accounts' ? 'is-active' : ''}" data-finance-balance-chart-view="accounts" aria-pressed="${balanceChartView === 'accounts'}">Por cuentas</button>
+        </div>` : ''}
       </div>
       <div class="financeCurrencyWealth__actions">
-        <div class="financeCurrencyWealth__viewToggle" role="group" aria-label="Vista patrimonio por divisa y tipo">
+        <div class="financeCurrencyWealth__viewToggle" role="group" aria-label="Vista general del panel de patrimonio">
           <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${view === 'list' ? 'is-active' : ''}" data-finance-wealth-view="list" aria-pressed="${view === 'list'}">Lista</button>
           <button type="button" class="finance-pill financeCurrencyWealth__viewBtn ${view === 'chart' ? 'is-active' : ''}" data-finance-wealth-view="chart" aria-pressed="${view === 'chart'}">Gráfico</button>
         </div>
-        <select class="finance-pill financeTotalCurrencySelect" data-finance-total-currency aria-label="Moneda de referencia patrimonio por divisa">${renderCurrencyOptions(referenceCurrency)}</select>
+        <select class="finance-pill financeTotalCurrencySelect" data-finance-total-currency aria-label="Moneda de referencia del panel de patrimonio">${renderCurrencyOptions(referenceCurrency)}</select>
       </div>
     </div>
-    ${view === 'chart' ? renderWealthByCurrencyChart(rows, assetTypeRows, referenceCurrency) : renderWealthByCurrencyList(rows, assetTypeRows, referenceCurrency, scope)}
+    ${view === 'chart' ? renderWealthByCurrencyChart(rows, assetTypeRows, accounts, referenceCurrency, scope) : renderWealthByCurrencyList(rows, assetTypeRows, referenceCurrency, scope)}
   </article>`;
 }
 
@@ -12513,6 +12623,7 @@ function renderFinanceHome(accounts, totalSeries) {
       <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
         <div style="margin:0 0 12px 0;padding:12px 14px;border:2px solid #ff3b30;border-radius:14px;background:#fff3cd;color:#7a1c00;font-weight:800;text-align:center;letter-spacing:.04em;">DEBUG FINANCE FASE2 CARGADO</div>
         ${primaryPanel}
+        ${renderAccountHistoryMigrationDevTools()}
         <article class="finance__accounts">
         <div class="finance__sectionHeader">
         <h2></h2>
@@ -12538,6 +12649,7 @@ function renderFinanceHome(accounts, totalSeries) {
         <button class="finance-pill" data-history>Historial</button>
         <select class="finance-pill" data-compare><option value="month" ${state.compareMode === 'month' ? 'selected' : ''}>Mes vs Mes</option><option value="week" ${state.compareMode === 'week' ? 'selected' : ''}>Semana vs Semana</option></select></article>
       <article class="finance__compareRow"><div class="finance-chip ${toneClass(compareCurrent.delta)}">Actual: ${fmtSignedFinanceTotal(compareCurrent.delta)} (${fmtSignedPercent(compareCurrent.deltaPct)})</div><div class="finance-chip ${toneClass(comparePrev.delta)}">Anterior: ${fmtSignedFinanceTotal(comparePrev.delta)} (${fmtSignedPercent(comparePrev.deltaPct)})</div></article>
+      ${renderAccountHistoryMigrationDevTools()}
       <article class="finance__accounts"><div class="finance__sectionHeader"><h2></h2><div class="finance-row-cuenta"><button class="finance-pill finance-pill--mini" id="fusionar-cuentas" data-account-merge-open>Fusionar</button><button id="export-finance" class="finance-pill finance-pill--mini" data-finance-export-csv>Exportar CSV</button><button class="finance-pill" data-new-account>+ Cuenta TEST FASE2</button></div></div>
       <div id="finance-accountsList">${accounts.map((account) => renderFinanceAccountCard(account, { deleteLabel: '🗑️' })).join('') || '<p class="finance-empty">Sin cuentas todavía.</p>'}</div></article>
     </section>`;
@@ -12742,6 +12854,7 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
   const aggScope = state.balanceAggScope === 'total' ? 'total' : 'my';
 
   return `<section class="financeBalanceView"><header class="financeViewHeader"><h2>Balance</h2></header>
+  ${renderAccountHistoryMigrationDevTools()}
   <article class="financeGlassCard">
   <div class="finance-row-balance">
   <button type="button" class="boton-calendario" data-balance-month="-1">◀</button>
@@ -13899,6 +14012,10 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
     </div>
   </details>
 </section>`;
+    return;
+  }
+  if (state.modal.type === 'account-history-migration') {
+    backdrop.innerHTML = renderAccountHistoryMigrationModal();
     return;
   }
   if (state.modal.type === 'categories') {
@@ -15566,6 +15683,580 @@ function buildAccountGoogleSheetsHistoryRecord(accountId = '', recordTs = nowTs(
     currency,
     balanceEur: roundGoogleSheetsAmount(Number.isFinite(convertedBalanceEur) ? convertedBalanceEur : 0),
   };
+}
+function accountHistoryMigrationMetaPath(suffix = '') {
+  const safeSuffix = String(suffix || '').replace(/^\/+/, '');
+  const base = `${state.financePath}/meta/migrations/${ACCOUNT_HISTORY_MIGRATION_META_KEY}`;
+  return safeSuffix ? `${base}/${safeSuffix}` : base;
+}
+function setAccountHistoryMigrationModalState(patch = {}, { rerender = true } = {}) {
+  if (state.modal?.type !== 'account-history-migration') return;
+  state.modal = {
+    ...state.modal,
+    migration: {
+      ...(state.modal.migration || {}),
+      ...(patch && typeof patch === 'object' ? patch : {}),
+    },
+  };
+  if (rerender) triggerRender();
+}
+function accountHistoryMigrationLog(message = '', detail = null, level = 'info') {
+  const safeMessage = String(message || '').trim();
+  if (!safeMessage) return;
+  const logger = level === 'error'
+    ? console.error
+    : level === 'warn'
+      ? console.warn
+      : console.info;
+  if (detail && typeof detail === 'object') logger('[finance:account-history-migration]', safeMessage, detail);
+  else logger('[finance:account-history-migration]', safeMessage);
+}
+function pushAccountHistoryMigrationLog(message = '', detail = null, { rerender = false, level = 'info' } = {}) {
+  const safeMessage = String(message || '').trim();
+  if (!safeMessage) return;
+  accountHistoryMigrationLog(safeMessage, detail, level);
+  if (state.modal?.type !== 'account-history-migration') return;
+  const currentLogs = Array.isArray(state.modal.migration?.logs) ? state.modal.migration.logs : [];
+  const line = `[${new Date().toLocaleTimeString('es-ES', { hour12: false })}] ${safeMessage}`;
+  setAccountHistoryMigrationModalState({ logs: [...currentLogs, line].slice(-48) }, { rerender });
+}
+function normalizeAccountHistoryDay(value = '') {
+  return toIsoDay(String(value || '')) || String(value || '').slice(0, 10);
+}
+function accountHistorySourceRank(source = '') {
+  const safeSource = financeCsvText(source, 'derived').toLowerCase();
+  if (safeSource === 'snapshot') return 400;
+  if (safeSource === 'legacy') return 300;
+  if (safeSource === 'merged') return 250;
+  if (safeSource !== 'derived') return 220;
+  return 100;
+}
+function isAccountHistoryAnchorSource(source = '') {
+  return financeCsvText(source, 'derived').toLowerCase() !== 'derived';
+}
+function upsertAccountHistoryCandidate(targetMap = new Map(), row = {}) {
+  const day = normalizeAccountHistoryDay(row?.day || row?.date || '');
+  const value = Number(row?.value);
+  if (!day || !Number.isFinite(value)) return false;
+  const source = financeCsvText(row?.source, 'derived').toLowerCase();
+  const current = targetMap.get(day);
+  const nextRow = {
+    day,
+    value,
+    source,
+    updatedAt: Number(row?.updatedAt || row?.ts || parseDayKey(day) || 0),
+    priority: Number(row?.priority || accountHistorySourceRank(source)),
+  };
+  if (
+    !current
+    || nextRow.priority > Number(current.priority || 0)
+    || (nextRow.priority === Number(current.priority || 0) && nextRow.updatedAt >= Number(current.updatedAt || 0))
+  ) {
+    targetMap.set(day, nextRow);
+  }
+  return true;
+}
+function buildAccountHistoryMigrationPayload(account = {}, row = {}, migratedAt = nowTs()) {
+  const accountId = financeCsvText(account?.id, '');
+  const accountName = financeCsvText(account?.name, '');
+  const day = normalizeAccountHistoryDay(row?.day || row?.date || '');
+  const currency = accountCurrency(account);
+  const balance = Number(row?.value);
+  if (!accountId || !accountName || !day || !Number.isFinite(balance)) {
+    return {
+      ok: false,
+      reason: 'missing-critical-data',
+      meta: { accountId, accountName, day, source: financeCsvText(row?.source, 'derived') },
+    };
+  }
+  const balanceEurRaw = currency === 'EUR'
+    ? balance
+    : convertCurrency(balance, currency, 'EUR', getFinanceCurrencyRates());
+  if (!Number.isFinite(balanceEurRaw)) {
+    return {
+      ok: false,
+      reason: 'missing-eur-rate',
+      meta: { accountId, accountName, day, source: financeCsvText(row?.source, 'derived'), currency },
+    };
+  }
+  const stableId = `accountHistory__${accountId}__${financeCsvText(row?.movementId, '') || day}`;
+  return {
+    ok: true,
+    record: {
+      entity: 'account',
+      action: 'create',
+      data: {
+        id: stableId,
+        date: day,
+        name: accountName,
+        type: financeCsvText(account?.assetType, 'cash'),
+        balance: roundGoogleSheetsAmount(balance, currency === 'BTC' ? 8 : 2),
+        currency,
+        balanceEur: roundGoogleSheetsAmount(balanceEurRaw),
+        updatedAt: financeCsvTimestampValue(migratedAt),
+      },
+      __meta: {
+        accountId,
+        accountName,
+        source: financeCsvText(row?.source, 'derived'),
+        day,
+      },
+    },
+  };
+}
+function buildAccountHistoryMigrationInventory(accounts = buildAccountModels()) {
+  const records = [];
+  const invalid = [];
+  (Array.isArray(accounts) ? accounts : []).forEach((account) => {
+    const accountId = financeCsvText(account?.id, '');
+    const accountName = financeCsvText(account?.name, accountId || 'Sin cuenta');
+    if (!accountId) return;
+
+    const candidateRows = new Map();
+    const snapshotRows = normalizeSnapshots(account?.snapshots || {}).map((row) => ({
+      day: row.day,
+      value: Number(row.value),
+      updatedAt: Number(row.updatedAt || parseDayKey(row.day) || 0),
+      source: 'snapshot',
+      priority: accountHistorySourceRank('snapshot'),
+    }));
+    const legacyRows = Object.entries(normalizeLegacyEntries(state.legacyEntries?.[accountId] || {})).map(([day, row]) => ({
+      day,
+      value: Number(row?.value),
+      updatedAt: Number(row?.ts || parseDayKey(day) || 0),
+      source: 'legacy',
+      priority: accountHistorySourceRank('legacy'),
+    }));
+    const dailyRows = Array.isArray(account?.dailyReal) ? account.dailyReal : [];
+    const anchorDays = new Set([
+      ...snapshotRows.map((row) => row.day),
+      ...legacyRows.map((row) => row.day),
+      ...dailyRows
+        .filter((row) => isAccountHistoryAnchorSource(row?.source))
+        .map((row) => normalizeAccountHistoryDay(row?.day)),
+    ].filter(Boolean));
+    const firstAnchorDay = [...anchorDays].sort()[0] || '';
+
+    dailyRows.forEach((row) => {
+      const day = normalizeAccountHistoryDay(row?.day);
+      const value = Number(row?.value);
+      const source = financeCsvText(row?.source, 'derived').toLowerCase();
+      if (!day || !Number.isFinite(value)) {
+        invalid.push({ accountId, accountName, day, source, reason: 'daily-invalid' });
+        return;
+      }
+      if (!isAccountHistoryAnchorSource(source) && (!firstAnchorDay || day < firstAnchorDay)) {
+        invalid.push({
+          accountId,
+          accountName,
+          day,
+          source,
+          reason: firstAnchorDay ? `derived-before-anchor:${firstAnchorDay}` : 'missing-anchor',
+        });
+        return;
+      }
+      upsertAccountHistoryCandidate(candidateRows, {
+        day,
+        value,
+        source,
+        updatedAt: Number(row?.updatedAt || row?.ts || parseDayKey(day) || 0),
+      });
+    });
+
+    legacyRows.forEach((row) => { upsertAccountHistoryCandidate(candidateRows, row); });
+    snapshotRows.forEach((row) => { upsertAccountHistoryCandidate(candidateRows, row); });
+
+    [...candidateRows.values()]
+      .sort((left, right) => parseDayKey(left.day) - parseDayKey(right.day))
+      .forEach((row) => {
+        const payload = buildAccountHistoryMigrationPayload(account, row);
+        if (!payload.ok) {
+          invalid.push({
+            accountId,
+            accountName,
+            day: row.day,
+            source: financeCsvText(row?.source, 'derived'),
+            reason: payload.reason || 'payload-invalid',
+          });
+          return;
+        }
+        records.push(payload.record);
+      });
+  });
+
+  records.sort((left, right) => {
+    const dateDiff = parseDayKey(left?.data?.date || '') - parseDayKey(right?.data?.date || '');
+    if (dateDiff !== 0) return dateDiff;
+    return String(left?.data?.id || '').localeCompare(String(right?.data?.id || ''));
+  });
+  invalid.sort((left, right) => {
+    const dateDiff = parseDayKey(left?.day || '') - parseDayKey(right?.day || '');
+    if (dateDiff !== 0) return dateDiff;
+    return String(left?.accountName || '').localeCompare(String(right?.accountName || ''));
+  });
+  return { records, invalid };
+}
+async function readAccountHistoryMigrationLedger() {
+  const sentIds = new Set();
+  const snap = await safeFirebase(() => get(ref(db, accountHistoryMigrationMetaPath('sentRecords'))), null);
+  const raw = snap?.val?.() || {};
+  Object.values(raw || {}).forEach((row) => {
+    const id = financeCsvText(row?.id, '');
+    if (id) sentIds.add(id);
+  });
+  return { sentIds, raw };
+}
+function summarizeAccountHistoryMigrationPreview(preview = {}) {
+  const allRecords = Array.isArray(preview?.records) ? preview.records : [];
+  const newRecords = Array.isArray(preview?.newRecords) ? preview.newRecords : [];
+  const invalid = Array.isArray(preview?.invalid) ? preview.invalid : [];
+  const detectedDates = allRecords.map((row) => financeCsvText(row?.data?.date, '')).filter(Boolean).sort();
+  const accountsMap = new Map();
+  newRecords.forEach((row) => {
+    const key = financeCsvText(row?.__meta?.accountId, '');
+    if (!key) return;
+    const current = accountsMap.get(key) || {
+      id: key,
+      name: financeCsvText(row?.__meta?.accountName, key),
+      count: 0,
+      invalidCount: 0,
+      sources: new Set(),
+    };
+    current.count += 1;
+    current.sources.add(financeCsvText(row?.__meta?.source, 'derived'));
+    accountsMap.set(key, current);
+  });
+  invalid.forEach((row) => {
+    const key = financeCsvText(row?.accountId, '');
+    if (!key) return;
+    const current = accountsMap.get(key) || {
+      id: key,
+      name: financeCsvText(row?.accountName, key),
+      count: 0,
+      invalidCount: 0,
+      sources: new Set(),
+    };
+    current.invalidCount += 1;
+    if (row?.source) current.sources.add(financeCsvText(row.source, 'derived'));
+    accountsMap.set(key, current);
+  });
+  const affectedAccounts = [...accountsMap.values()]
+    .map((row) => ({ ...row, sources: [...row.sources].filter(Boolean).sort() }))
+    .sort((left, right) => Number(right.count || 0) - Number(left.count || 0) || String(left.name || '').localeCompare(String(right.name || '')));
+  return {
+    generatedAt: nowTs(),
+    totalDetected: allRecords.length + invalid.length,
+    newEstimated: newRecords.length,
+    alreadySent: Math.max(0, allRecords.length - newRecords.length),
+    invalidCount: invalid.length,
+    dateRange: {
+      start: detectedDates[0] || '',
+      end: detectedDates.at(-1) || '',
+    },
+    affectedAccounts,
+  };
+}
+async function prepareAccountHistoryMigrationDryRun() {
+  const inventory = buildAccountHistoryMigrationInventory(buildAccountModels());
+  const ledger = await readAccountHistoryMigrationLedger();
+  const newRecords = inventory.records.filter((row) => !ledger.sentIds.has(String(row?.data?.id || '')));
+  const preview = {
+    records: inventory.records,
+    newRecords,
+    invalid: inventory.invalid,
+    ledgerSize: ledger.sentIds.size,
+  };
+  preview.summary = summarizeAccountHistoryMigrationPreview(preview);
+  return preview;
+}
+function buildAccountHistoryMigrationLedgerUpdates(records = [], sentAt = nowTs()) {
+  const updatesMap = {};
+  (Array.isArray(records) ? records : []).forEach((row) => {
+    const id = financeCsvText(row?.data?.id, '');
+    if (!id) return;
+    const hashKey = hashString(id);
+    updatesMap[`${accountHistoryMigrationMetaPath('sentRecords')}/${hashKey}`] = firebaseClean({
+      id,
+      accountId: financeCsvText(row?.__meta?.accountId, ''),
+      accountName: financeCsvText(row?.__meta?.accountName, ''),
+      date: financeCsvText(row?.data?.date, ''),
+      source: financeCsvText(row?.__meta?.source, 'derived'),
+      sentAt,
+      updatedAt: sentAt,
+    });
+  });
+  updatesMap[`${accountHistoryMigrationMetaPath()}/updatedAt`] = sentAt;
+  return updatesMap;
+}
+function chunkAccountHistoryMigrationRecords(records = [], size = ACCOUNT_HISTORY_MIGRATION_BATCH_SIZE) {
+  const safeSize = Math.max(1, Number(size || ACCOUNT_HISTORY_MIGRATION_BATCH_SIZE));
+  const output = [];
+  for (let index = 0; index < records.length; index += safeSize) {
+    output.push(records.slice(index, index + safeSize));
+  }
+  return output;
+}
+function renderAccountHistoryMigrationDevTools() {
+  if (!isFinanceDevAdminVisible()) return '';
+  const migration = state.modal?.type === 'account-history-migration' ? (state.modal.migration || {}) : {};
+  const previewSummary = migration?.preview?.summary || null;
+  const result = migration?.result || null;
+  const statusText = migration?.phase === 'running'
+    ? `Migrando ${Number(migration?.progress?.attempted || 0)}/${Number(migration?.progress?.total || 0)}`
+    : result
+      ? `Último resumen: ${Number(result.sent || 0)} enviados · ${Number(result.failed || 0)} fallidos`
+      : previewSummary
+        ? `Dry-run: ${previewSummary.newEstimated}/${previewSummary.totalDetected} nuevos`
+        : 'Manual · dry-run obligatorio · no automático';
+  return `<article class="financeGlassCard">
+    <div class="financePanelTopbar">
+      <div class="financePanelHeading">
+        <h3>Dev / Admin</h3>
+        <p class="finance__eyebrow">Google Sheets · Cuentas</p>
+      </div>
+    </div>
+    <p>${escapeHtml(statusText)}</p>
+    <div class="finance-row">
+      <button type="button" class="finance-pill finance-pill--mini" data-account-history-migration-open ${migration?.phase === 'running' ? 'disabled' : ''}>Migrar histórico de cuentas a Sheets</button>
+    </div>
+  </article>`;
+}
+function renderAccountHistoryMigrationModal() {
+  const migration = state.modal?.migration || {};
+  const preview = migration.preview || null;
+  const summary = preview?.summary || null;
+  const progress = migration.progress || {};
+  const result = migration.result || null;
+  const logs = Array.isArray(migration.logs) ? migration.logs : [];
+  const affectedAccounts = Array.isArray(summary?.affectedAccounts) ? summary.affectedAccounts : [];
+  const canExecute = Boolean(preview?.newRecords?.length) && migration.phase !== 'running';
+  return `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1" data-account-history-migration-modal>
+    <header>
+      <h3>Migración manual · histórico de cuentas</h3>
+      <div class="finance-row">
+        <button class="finance-pill finance-pill--mini" data-account-history-migration-refresh ${migration.phase === 'running' ? 'disabled' : ''}>Recalcular dry-run</button>
+        <button class="finance-pill" data-close-modal>Cerrar</button>
+      </div>
+    </header>
+    <p>Este flujo no se ejecuta al cargar la app. Solo prepara un dry-run y, si lo confirmas, envía lotes manuales a Google Sheets.</p>
+    ${migration.error ? `<p class="is-negative">${escapeHtml(migration.error)}</p>` : ''}
+    ${migration.phase === 'loading' && !preview ? '<p class="finance-empty">Analizando snapshots, entries y ledger de migración...</p>' : ''}
+    ${summary ? `
+      <div class="finance-table-wrap">
+        <table>
+          <tbody>
+            <tr><th>Total detectados</th><td>${Number(summary.totalDetected || 0)}</td></tr>
+            <tr><th>Nuevos estimados</th><td>${Number(summary.newEstimated || 0)}</td></tr>
+            <tr><th>Ya migrados</th><td>${Number(summary.alreadySent || 0)}</td></tr>
+            <tr><th>Inválidos</th><td>${Number(summary.invalidCount || 0)}</td></tr>
+            <tr><th>Rango de fechas</th><td>${escapeHtml(summary.dateRange?.start || '—')} → ${escapeHtml(summary.dateRange?.end || '—')}</td></tr>
+            <tr><th>Cuentas afectadas</th><td>${affectedAccounts.length}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="finance-table-wrap">
+        <table>
+          <thead>
+            <tr><th>Cuenta</th><th>Nuevos</th><th>Inválidos</th><th>Fuentes</th></tr>
+          </thead>
+          <tbody>
+            ${affectedAccounts.map((row) => `<tr><td>${escapeHtml(row.name || row.id || 'Sin cuenta')}</td><td>${Number(row.count || 0)}</td><td>${Number(row.invalidCount || 0)}</td><td>${escapeHtml((row.sources || []).join(', ') || '—')}</td></tr>`).join('') || '<tr><td colspan="4">Sin cuentas afectadas.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    ` : ''}
+    ${migration.phase === 'running' ? `<p>Migrando lote ${Number(progress.batchIndex || 0)}/${Number(progress.batchCount || 0)} · enviados ${Number(progress.sent || 0)} · fallidos ${Number(progress.failed || 0)}</p>` : ''}
+    ${result ? `<p><strong>Resumen final:</strong> enviados ${Number(result.sent || 0)} · fallidos ${Number(result.failed || 0)} · omitidos ${Number(result.omitted || 0)} · cuentas afectadas ${Number(result.accountsAffected || 0)}</p>` : ''}
+    <div class="finance-row">
+      <button type="button" class="finance-pill" data-account-history-migration-execute ${canExecute ? '' : 'disabled'}>${migration.phase === 'running' ? 'Migrando...' : 'Ejecutar migración'}</button>
+      ${preview && !preview.newRecords?.length ? '<small>No hay snapshots nuevos pendientes.</small>' : '<small>Batch size: 25 registros</small>'}
+    </div>
+    <div class="finance-table-wrap">
+      <table>
+        <thead><tr><th>Logs</th></tr></thead>
+        <tbody><tr><td><pre style="margin:0;white-space:pre-wrap;max-height:220px;overflow:auto;">${escapeHtml(logs.join('\n') || 'Sin logs todavía.')}</pre></td></tr></tbody>
+      </table>
+    </div>
+  </div>`;
+}
+async function openAccountHistoryMigrationModal() {
+  state.modal = {
+    type: 'account-history-migration',
+    migration: {
+      phase: 'loading',
+      logs: [],
+      preview: null,
+      error: '',
+      progress: null,
+      result: null,
+    },
+  };
+  triggerRender();
+  pushAccountHistoryMigrationLog('Preparando dry-run de histórico de cuentas...', null, { rerender: true });
+  try {
+    const preview = await prepareAccountHistoryMigrationDryRun();
+    setAccountHistoryMigrationModalState({
+      phase: 'ready',
+      preview,
+      error: '',
+      progress: null,
+      result: null,
+    }, { rerender: true });
+    pushAccountHistoryMigrationLog(`Dry-run listo: ${preview.summary.newEstimated} nuevos de ${preview.summary.totalDetected} detectados; inválidos ${preview.summary.invalidCount}.`, preview.summary, { rerender: true });
+  } catch (error) {
+    const message = error?.message || 'No se pudo preparar el dry-run.';
+    setAccountHistoryMigrationModalState({ phase: 'error', error: message }, { rerender: true });
+    pushAccountHistoryMigrationLog(message, { error }, { rerender: true, level: 'error' });
+    toast('No se pudo preparar la migración');
+  }
+}
+async function refreshAccountHistoryMigrationDryRun() {
+  setAccountHistoryMigrationModalState({
+    phase: 'loading',
+    error: '',
+    progress: null,
+    result: null,
+  }, { rerender: true });
+  pushAccountHistoryMigrationLog('Recalculando dry-run...', null, { rerender: true });
+  try {
+    const preview = await prepareAccountHistoryMigrationDryRun();
+    setAccountHistoryMigrationModalState({
+      phase: 'ready',
+      preview,
+      error: '',
+      progress: null,
+      result: null,
+    }, { rerender: true });
+    pushAccountHistoryMigrationLog(`Dry-run actualizado: ${preview.summary.newEstimated} nuevos; ${preview.summary.alreadySent} ya migrados; ${preview.summary.invalidCount} inválidos.`, preview.summary, { rerender: true });
+  } catch (error) {
+    const message = error?.message || 'No se pudo recalcular el dry-run.';
+    setAccountHistoryMigrationModalState({ phase: 'error', error: message }, { rerender: true });
+    pushAccountHistoryMigrationLog(message, { error }, { rerender: true, level: 'error' });
+    toast('No se pudo recalcular la migración');
+  }
+}
+async function executeAccountHistoryMigration() {
+  const preview = state.modal?.migration?.preview || null;
+  const records = Array.isArray(preview?.newRecords) ? preview.newRecords : [];
+  if (!records.length) {
+    pushAccountHistoryMigrationLog('No hay snapshots nuevos para migrar.', null, { rerender: true, level: 'warn' });
+    toast('No hay snapshots nuevos para migrar');
+    return;
+  }
+  if (isFinanceTestingLocalOnly()) {
+    pushAccountHistoryMigrationLog('Modo localOnly activo: no se envía nada a Google Sheets.', null, { rerender: true, level: 'warn' });
+    toast('Modo localOnly: migración no enviada');
+    return;
+  }
+  const chunks = chunkAccountHistoryMigrationRecords(records, ACCOUNT_HISTORY_MIGRATION_BATCH_SIZE);
+  setAccountHistoryMigrationModalState({
+    phase: 'running',
+    error: '',
+    progress: {
+      total: records.length,
+      attempted: 0,
+      sent: 0,
+      failed: 0,
+      batchIndex: 0,
+      batchCount: chunks.length,
+    },
+    result: null,
+  }, { rerender: true });
+  pushAccountHistoryMigrationLog(`Inicio de migración manual: ${records.length} registros en ${chunks.length} lotes.`, {
+    total: records.length,
+    batches: chunks.length,
+    batchSize: ACCOUNT_HISTORY_MIGRATION_BATCH_SIZE,
+  }, { rerender: true });
+
+  let sent = 0;
+  let failed = 0;
+  const successfulRecords = [];
+  const failedRecords = [];
+
+  for (let batchIndex = 0; batchIndex < chunks.length; batchIndex += 1) {
+    const batch = chunks[batchIndex];
+    pushAccountHistoryMigrationLog(`Lote ${batchIndex + 1}/${chunks.length}: ${batch.length} registros.`, {
+      batchIndex: batchIndex + 1,
+      batchCount: chunks.length,
+      batchSize: batch.length,
+    }, { rerender: true });
+
+    const batchResults = await Promise.all(batch.map(async (row) => {
+      try {
+        const response = await syncAccountCreateToGoogleSheets(row.data);
+        if (response?.ok === false) {
+          return { ok: false, row, error: response?.error || new Error('Google Sheets devolvió ok=false') };
+        }
+        return { ok: true, row };
+      } catch (error) {
+        return { ok: false, row, error };
+      }
+    }));
+
+    const batchSuccesses = batchResults.filter((row) => row.ok).map((row) => row.row);
+    const batchFailures = batchResults.filter((row) => !row.ok);
+    sent += batchSuccesses.length;
+    failed += batchFailures.length;
+    successfulRecords.push(...batchSuccesses);
+    failedRecords.push(...batchFailures);
+
+    if (batchSuccesses.length) {
+      const ledgerUpdates = buildAccountHistoryMigrationLedgerUpdates(batchSuccesses, nowTs());
+      if (Object.keys(ledgerUpdates).length) await safeFirebase(() => update(ref(db), ledgerUpdates));
+    }
+
+    batchFailures.forEach((row) => {
+      pushAccountHistoryMigrationLog(`Fallo al enviar ${financeCsvText(row?.row?.data?.id, 'snapshot')}.`, {
+        id: financeCsvText(row?.row?.data?.id, ''),
+        error: row?.error?.message || String(row?.error || ''),
+      }, { rerender: false, level: 'warn' });
+    });
+
+    setAccountHistoryMigrationModalState({
+      progress: {
+        total: records.length,
+        attempted: sent + failed,
+        sent,
+        failed,
+        batchIndex: batchIndex + 1,
+        batchCount: chunks.length,
+      },
+    }, { rerender: true });
+    pushAccountHistoryMigrationLog(`Lote ${batchIndex + 1}/${chunks.length} completado: enviados ${batchSuccesses.length}, fallidos ${batchFailures.length}.`, {
+      sent,
+      failed,
+      batchIndex: batchIndex + 1,
+      batchCount: chunks.length,
+    }, { rerender: true, level: batchFailures.length ? 'warn' : 'info' });
+  }
+
+  const refreshedPreview = await prepareAccountHistoryMigrationDryRun();
+  const affectedAccountIds = new Set([
+    ...successfulRecords.map((row) => financeCsvText(row?.__meta?.accountId, '')),
+    ...failedRecords.map((row) => financeCsvText(row?.row?.__meta?.accountId, '')),
+  ].filter(Boolean));
+  const result = {
+    sent,
+    failed,
+    omitted: Number(preview?.summary?.alreadySent || 0) + Number(preview?.summary?.invalidCount || 0),
+    accountsAffected: affectedAccountIds.size,
+  };
+  setAccountHistoryMigrationModalState({
+    phase: failed ? 'done-with-errors' : 'done',
+    preview: refreshedPreview,
+    progress: {
+      total: records.length,
+      attempted: sent + failed,
+      sent,
+      failed,
+      batchIndex: chunks.length,
+      batchCount: chunks.length,
+    },
+    result,
+    error: failed ? `${failed} registros fallaron.` : '',
+  }, { rerender: true });
+  pushAccountHistoryMigrationLog(`Migración terminada: enviados ${sent}, fallidos ${failed}, omitidos ${result.omitted}, cuentas afectadas ${result.accountsAffected}.`, result, { rerender: true, level: failed ? 'warn' : 'info' });
+  toast(`Migración cuentas: ${sent} enviados, ${failed} fallidos`);
 }
 function collectProductIdsForGoogleSheets(row = {}) {
   const ids = new Set();
@@ -18153,6 +18844,9 @@ if (txDelete && window.confirm('¿Eliminar movimiento?')) {
       return;
     }
     if (target.closest('[data-history]')) { state.modal = { type: 'history' }; triggerRender(); return; }
+    if (target.closest('[data-account-history-migration-open]')) { await openAccountHistoryMigrationModal(); return; }
+    if (target.closest('[data-account-history-migration-refresh]')) { await refreshAccountHistoryMigrationDryRun(); return; }
+    if (target.closest('[data-account-history-migration-execute]')) { await executeAccountHistoryMigration(); return; }
     if (target.closest('[data-finance-export-csv]')) { exportFinanceCsv(); return; }
     if (target.closest('[data-finance-export]')) { exportFinanceData(); return; }
     if (target.closest('[data-new-account]')) { state.modal = { type: 'new-account' }; triggerRender(); return; }
@@ -18291,6 +18985,13 @@ if (target.closest('[data-test-fixed-expense]')) {
     const wealthView = target.closest('[data-finance-wealth-view]')?.dataset.financeWealthView;
     if (wealthView) {
       state.wealthPanelView = wealthView === 'chart' ? 'chart' : 'list';
+      state.wealthChartSelectedKey = null;
+      triggerRender();
+      return;
+    }
+    const balanceChartView = target.closest('[data-finance-balance-chart-view]')?.dataset.financeBalanceChartView;
+    if (balanceChartView) {
+      setFinanceBalanceChartView(balanceChartView);
       state.wealthChartSelectedKey = null;
       triggerRender();
       return;

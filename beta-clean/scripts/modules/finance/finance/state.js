@@ -41,6 +41,7 @@ export const state = {
   balanceFilterUnlinedOnly: false,
   balanceAggScope: 'my',
   wealthPanelView: 'list',
+  balanceChartView: 'currency',
   wealthChartMode: 'currencies',
   wealthChartSelectedKey: null,
   balanceTrendMode: 'expense',

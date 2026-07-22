@@ -10111,16 +10111,23 @@ function financeDeepLinkCompareKey(value = '') {
 function readFinanceNewMovementDeepLink() {
   try {
     const params = new URLSearchParams(window.location.search || '');
-    const action = String(params.get('action') || '').trim().toLowerCase();
-    if (action !== FINANCE_NEW_MOVEMENT_ACTION) return null;
-    return {
-      type: String(params.get('type') || '').trim(),
-      amount: String(params.get('amount') || '').trim(),
-      currency: String(params.get('currency') || '').trim(),
-      account: String(params.get('account') || '').trim(),
-      category: String(params.get('category') || '').trim(),
-      destinationAccount: String(params.get('destinationAccount') || '').trim(),
+    const readParam = (name) => {
+      // URLSearchParams decodifica una sola vez (incluyendo + como espacio). No aplicar decodeURIComponent aquí.
+      const value = params.get(name);
+      return value == null ? '' : String(value).trim();
     };
+    const action = readParam('action').toLowerCase();
+    if (action !== FINANCE_NEW_MOVEMENT_ACTION) return null;
+    const payload = {
+      type: readParam('type'),
+      amount: readParam('amount'),
+      currency: readParam('currency'),
+      account: readParam('account'),
+      category: readParam('category'),
+      destinationAccount: readParam('destinationAccount'),
+    };
+    console.info('[finance:deeplink] parámetros recibidos', payload);
+    return payload;
   } catch (error) {
     console.warn('[finance:deeplink] no se pudo leer la URL', error);
     return null;
@@ -10140,7 +10147,7 @@ function cleanFinanceNewMovementUrl() {
 }
 
 function resolveDeepLinkAccountId(value = '', accounts = buildAccountModels()) {
-  const raw = normalizeFoodName(value);
+  const raw = String(value || '').trim();
   if (!raw) return '';
   const exact = (accounts || []).find((account) => String(account?.id || '').trim() === raw);
   if (exact?.id) return String(exact.id);
@@ -10158,7 +10165,7 @@ function resolveDeepLinkAccountId(value = '', accounts = buildAccountModels()) {
 }
 
 function resolveDeepLinkCategory(value = '') {
-  const raw = normalizeFoodName(value);
+  const raw = String(value || '').trim();
   if (!raw) return { category: '', categoryNew: '' };
   const wantedKey = financeDeepLinkCompareKey(raw);
   const categoryRows = categoriesMetaList().map((row) => ({
@@ -10175,14 +10182,13 @@ function resolveDeepLinkCategory(value = '') {
     return candidates.some((candidate) => financeDeepLinkCompareKey(candidate) === wantedKey);
   });
   if (match?.name) return { category: match.name, categoryNew: '' };
-  const normalized = normalizeFinanceCategoryName(raw);
-  return { category: '', categoryNew: normalized };
+  return { category: '', categoryNew: raw };
 }
 
 function buildMovementDraftFromDeepLink(payload = {}) {
   const accounts = buildAccountModels();
   const type = normalizeTxType(payload.type || 'expense');
-  const amount = parseMoney(payload.amount || '');
+  const amount = parseMoney(String(payload.amount || '').replace(',', '.'));
   const sourceAccountId = resolveDeepLinkAccountId(payload.account, accounts);
   const destinationAccountId = resolveDeepLinkAccountId(payload.destinationAccount, accounts);
   const categoryResolution = type === 'transfer'
@@ -10190,10 +10196,13 @@ function buildMovementDraftFromDeepLink(payload = {}) {
     : resolveDeepLinkCategory(payload.category);
   const amountText = Number.isFinite(amount) && amount > 0 ? String(amount) : '';
   const currency = normalizeCurrencyCode(payload.currency || getDefaultCurrency());
+  const currencySupported = SUPPORTED_CURRENCIES.some((row) => row.code === currency);
+  const finalCurrency = currencySupported ? currency : getDefaultCurrency();
   return {
     type,
     amount: amountText,
-    currency,
+    currency: finalCurrency,
+    deeplinkCurrency: finalCurrency,
     accountId: type === 'transfer' ? '' : sourceAccountId,
     fromAccountId: type === 'transfer' ? sourceAccountId : '',
     toAccountId: type === 'transfer' ? destinationAccountId : '',
@@ -10201,6 +10210,29 @@ function buildMovementDraftFromDeepLink(payload = {}) {
     categoryNew: categoryResolution.categoryNew,
     txWizardStep: 'base',
   };
+}
+
+
+function applyDeepLinkCurrencyToOpenMovementForm(expectedCurrency = '') {
+  const currency = normalizeCurrencyCode(expectedCurrency || state.balanceFormState?.deeplinkCurrency || state.balanceFormState?.currency || getDefaultCurrency());
+  const form = document.querySelector('#finance-modal [data-balance-form]');
+  const select = form?.querySelector('select[name="currency"]');
+  if (!form || !select) return false;
+  const optionExists = Array.from(select.options || []).some((option) => option.value === currency);
+  if (!optionExists) return false;
+  select.value = currency;
+  state.balanceFormState = { ...(state.balanceFormState || {}), currency, deeplinkCurrency: currency };
+  console.info('[finance:deeplink] valores finales del formulario', {
+    type: form.querySelector('[name="type"]')?.value || '',
+    amount: form.querySelector('[name="amount"]')?.value || '',
+    currency: select.value,
+    accountId: form.querySelector('[name="accountId"]')?.value || '',
+    fromAccountId: form.querySelector('[name="fromAccountId"]')?.value || '',
+    toAccountId: form.querySelector('[name="toAccountId"]')?.value || '',
+    category: form.querySelector('[name="category"]')?.value || '',
+    categoryNew: form.querySelector('[data-category-new]')?.value || '',
+  });
+  return true;
 }
 
 async function processFinanceNewMovementDeepLink() {
@@ -10211,6 +10243,9 @@ async function processFinanceNewMovementDeepLink() {
   const draft = buildMovementDraftFromDeepLink(payload);
   cleanFinanceNewMovementUrl();
   await openCreateMovementModal(draft);
+  applyDeepLinkCurrencyToOpenMovementForm(draft.deeplinkCurrency || draft.currency);
+  queueMicrotask(() => applyDeepLinkCurrencyToOpenMovementForm(draft.deeplinkCurrency || draft.currency));
+  window.setTimeout(() => applyDeepLinkCurrencyToOpenMovementForm(draft.deeplinkCurrency || draft.currency), 0);
   return true;
 }
 
@@ -15318,7 +15353,9 @@ function persistBalanceFormState(form) {
     recurringStart: String(fd.get('recurringStart') || ''),
     recurringEnd: String(fd.get('recurringEnd') || ''),
     foodExtrasOpen: !!form.querySelector('[data-section="food-extras"]')?.open,
-    foodResultsScrollTop: Number(form.querySelector('[data-food-item-results]')?.scrollTop || 0)
+    foodResultsScrollTop: Number(form.querySelector('[data-food-item-results]')?.scrollTop || 0),
+    currency: String(fd.get('currency') || prev.currency || getDefaultCurrency()).toUpperCase(),
+    deeplinkCurrency: prev.deeplinkCurrency || '',
   };
 
   // Preserva campos del wizard/import que no existen como inputs del form

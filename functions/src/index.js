@@ -1,5 +1,5 @@
 import { onRequest } from 'firebase-functions/v2/https';
-import { defineString } from 'firebase-functions/params';
+import { defineSecret, defineString } from 'firebase-functions/params';
 import admin from 'firebase-admin';
 import {
   SUPPORTED_CURRENCIES,
@@ -12,8 +12,8 @@ import {
 admin.initializeApp({ databaseURL: 'https://bookshell-59703-default-rtdb.europe-west1.firebasedatabase.app' });
 const db = admin.database();
 const REGION = 'europe-west1';
-const SHORTCUTS_TOKEN = defineString('SHORTCUTS_TOKEN', { default: '' });
-const SHORTCUTS_UID = defineString('SHORTCUTS_UID', { default: '' });
+const SHORTCUTS_TOKEN = defineSecret('SHORTCUTS_TOKEN');
+const SHORTCUTS_UID = defineSecret('SHORTCUTS_UID');
 const SHORTCUTS_TOKEN_MAP = defineString('SHORTCUTS_TOKEN_MAP', { default: '{}' });
 
 function parseTokenMap() {
@@ -68,7 +68,7 @@ async function createMovement(uid, input = {}) {
   return { id: txRef.key, movement: payload };
 }
 
-export const shortcutsApi = onRequest({ region: REGION, cors: false, secrets: [] }, async (req, res) => {
+export const shortcutsApi = onRequest({ region: REGION, cors: false, secrets: [SHORTCUTS_TOKEN, SHORTCUTS_UID] }, async (req, res) => {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(204).send('');
   try {

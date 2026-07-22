@@ -72,6 +72,16 @@ const ACCOUNT_HISTORY_MIGRATION_BATCH_SIZE = 25;
 const FINANCE_OFFLINE_SNAPSHOT_MODULE = 'finance';
 const FINANCE_OFFLINE_SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const GLOBAL_PRODUCTS_PATH = PUBLIC_PATHS.foodItems;
+const FINANCE_NEW_MOVEMENT_ACTION = 'newmovement';
+const FINANCE_NEW_MOVEMENT_QUERY_PARAMS = Object.freeze([
+  'action',
+  'type',
+  'amount',
+  'currency',
+  'account',
+  'category',
+  'destinationAccount',
+]);
 const DEFAULT_PRODUCT_TYPE_OPTIONS = Object.freeze([
   'CARNE',
   'CONGELADO',
@@ -204,6 +214,7 @@ state.financeGoalsSortMode = normalizeFinanceGoalsSortMode(state.financeGoalsSor
 
 let financeEchartsPromise = null;
 let financeSnapshotSaveTimer = 0;
+let financeNewMovementDeepLinkProcessed = false;
 
 function financeReceiptLog(event, detail = {}) {
   try {
@@ -10024,6 +10035,7 @@ function getEmptyMovementForm(overrides = {}) {
     foodPlace: '',
     foodItem: '',
     foodId: '',
+    categoryNew: '',
     foodExtrasOpen: false,
     foodResultsScrollTop: 0,
     importedFoodItems: [],
@@ -10088,6 +10100,118 @@ function openCreateMovementModal(overrides = {}) {
   resetMovementForm({ ...overrides, mode: 'create' });
   state.modal = { type: 'tx', txType: state.balanceFormState.type || 'expense' };
   return triggerRender({ preserveUi: false, force: true });
+}
+
+function financeDeepLinkCompareKey(value = '') {
+  return normalizeFoodCompareKey(value)
+    .replace(/[\s_\-]+/g, ' ')
+    .trim();
+}
+
+function readFinanceNewMovementDeepLink() {
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    const action = String(params.get('action') || '').trim().toLowerCase();
+    if (action !== FINANCE_NEW_MOVEMENT_ACTION) return null;
+    return {
+      type: String(params.get('type') || '').trim(),
+      amount: String(params.get('amount') || '').trim(),
+      currency: String(params.get('currency') || '').trim(),
+      account: String(params.get('account') || '').trim(),
+      category: String(params.get('category') || '').trim(),
+      destinationAccount: String(params.get('destinationAccount') || '').trim(),
+    };
+  } catch (error) {
+    console.warn('[finance:deeplink] no se pudo leer la URL', error);
+    return null;
+  }
+}
+
+function cleanFinanceNewMovementUrl() {
+  try {
+    const url = new URL(window.location.href);
+    FINANCE_NEW_MOVEMENT_QUERY_PARAMS.forEach((paramName) => url.searchParams.delete(paramName));
+    const nextSearch = url.searchParams.toString();
+    const nextUrl = `${url.pathname}${nextSearch ? `?${nextSearch}` : ''}${url.hash || ''}`;
+    window.history.replaceState(window.history.state, '', nextUrl);
+  } catch (error) {
+    console.warn('[finance:deeplink] no se pudo limpiar la URL', error);
+  }
+}
+
+function resolveDeepLinkAccountId(value = '', accounts = buildAccountModels()) {
+  const raw = normalizeFoodName(value);
+  if (!raw) return '';
+  const exact = (accounts || []).find((account) => String(account?.id || '').trim() === raw);
+  if (exact?.id) return String(exact.id);
+
+  const wantedKey = financeDeepLinkCompareKey(raw);
+  const match = (accounts || []).find((account) => {
+    const candidates = [
+      account?.id,
+      account?.name,
+      account?.title,
+    ];
+    return candidates.some((candidate) => financeDeepLinkCompareKey(candidate) === wantedKey);
+  });
+  return match?.id ? String(match.id) : '';
+}
+
+function resolveDeepLinkCategory(value = '') {
+  const raw = normalizeFoodName(value);
+  if (!raw) return { category: '', categoryNew: '' };
+  const wantedKey = financeDeepLinkCompareKey(raw);
+  const categoryRows = categoriesMetaList().map((row) => ({
+    name: String(row?.name || '').trim(),
+    id: String(state.balance?.categories?.[row?.name]?.id || '').trim(),
+  }));
+  const categoryMapRows = Object.entries(state.balance?.categories || {}).map(([key, row]) => ({
+    name: String(row?.name || key || '').trim(),
+    id: String(row?.id || key || '').trim(),
+    key: String(key || '').trim(),
+  }));
+  const match = [...categoryRows, ...categoryMapRows].find((row) => {
+    const candidates = [row.name, row.id, row.key];
+    return candidates.some((candidate) => financeDeepLinkCompareKey(candidate) === wantedKey);
+  });
+  if (match?.name) return { category: match.name, categoryNew: '' };
+  const normalized = normalizeFinanceCategoryName(raw);
+  return { category: '', categoryNew: normalized };
+}
+
+function buildMovementDraftFromDeepLink(payload = {}) {
+  const accounts = buildAccountModels();
+  const type = normalizeTxType(payload.type || 'expense');
+  const amount = parseMoney(payload.amount || '');
+  const sourceAccountId = resolveDeepLinkAccountId(payload.account, accounts);
+  const destinationAccountId = resolveDeepLinkAccountId(payload.destinationAccount, accounts);
+  const categoryResolution = type === 'transfer'
+    ? { category: '', categoryNew: '' }
+    : resolveDeepLinkCategory(payload.category);
+  const amountText = Number.isFinite(amount) && amount > 0 ? String(amount) : '';
+  const currency = normalizeCurrencyCode(payload.currency || getDefaultCurrency());
+  return {
+    type,
+    amount: amountText,
+    currency,
+    accountId: type === 'transfer' ? '' : sourceAccountId,
+    fromAccountId: type === 'transfer' ? sourceAccountId : '',
+    toAccountId: type === 'transfer' ? destinationAccountId : '',
+    category: categoryResolution.category,
+    categoryNew: categoryResolution.categoryNew,
+    txWizardStep: 'base',
+  };
+}
+
+async function processFinanceNewMovementDeepLink() {
+  if (financeNewMovementDeepLinkProcessed) return false;
+  const payload = readFinanceNewMovementDeepLink();
+  if (!payload) return false;
+  financeNewMovementDeepLinkProcessed = true;
+  const draft = buildMovementDraftFromDeepLink(payload);
+  cleanFinanceNewMovementUrl();
+  await openCreateMovementModal(draft);
+  return true;
 }
 
 function openEditMovementModal(movement = null) {
@@ -14354,7 +14478,7 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
             </select>
             <button type="button" class="finance-pill finance-pill--mini finMoveCategoryCreateBtn" data-category-create disabled>+ Añadir</button>
           </div>
-          <input class="fm-control finMoveCategoryNewInput" type="text" placeholder="Nueva categoría" value="" data-category-new aria-label="Nueva categoría" />
+          <input class="fm-control finMoveCategoryNewInput" type="text" placeholder="Nueva categoría" value="${escapeHtml(state.balanceFormState.categoryNew || '')}" data-category-new aria-label="Nueva categoría" />
         </div>
 
         <div class="fm-field fm-field--note">
@@ -14500,7 +14624,12 @@ if (form) {
   if (acc) acc.value = defaultAccountId || '';
 
   const cat = form.querySelector('select[name="category"]');
-  if (cat) cat.value = defaultCategory || '';
+  const categoryNewInput = form.querySelector('[data-category-new]');
+  const categoryExists = defaultCategory && [...(cat?.options || [])].some((option) => String(option.value || '') === String(defaultCategory));
+  if (cat) cat.value = categoryExists ? defaultCategory : '';
+  if (categoryNewInput && !categoryExists) {
+    categoryNewInput.value = state.balanceFormState.categoryNew || defaultCategory || '';
+  }
 
   const from = form.querySelector('select[name="fromAccountId"]');
   if (from) from.value = defaultFrom || '';
@@ -15155,6 +15284,7 @@ function persistBalanceFormState(form) {
   if (!form) return;
   const prev = state.balanceFormState || {};
   const fd = new FormData(form);
+  const categoryNew = normalizeFoodName(form.querySelector('[data-category-new]')?.value || '');
   const next = {
     type: String(fd.get('type') || ''),
     amount: String(fd.get('amount') || ''),
@@ -15162,7 +15292,8 @@ function persistBalanceFormState(form) {
     accountId: String(fd.get('accountId') || ''),
     fromAccountId: String(fd.get('fromAccountId') || ''),
     toAccountId: String(fd.get('toAccountId') || ''),
-    category: String(fd.get('category') || ''),
+    category: String(fd.get('category') || categoryNew || ''),
+    categoryNew,
     title: String(fd.get('title') || ''),
     note: String(fd.get('note') || ''),
     linkedHabitId: String(fd.get('linkedHabitId') || ''),
@@ -19799,7 +19930,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
       const accountAmount = targetAccountForMovement ? convertCurrency(amount, movementCurrency, movementAccountCurrency) : Number(currencyPayload.amountEUR || amount);
       if (targetAccountForMovement && !Number.isFinite(accountAmount)) { toast('No hay tasa para convertir a la moneda de la cuenta'); return; }
       const dateISO = toIsoDay(String(form.get('dateISO') || dayKeyFromTs(Date.now()))) || dayKeyFromTs(Date.now());
-      const pickedCategory = String(form.get('category') || '').trim();
+      const pickedCategory = String(form.get('category') || formEl.querySelector('[data-category-new]')?.value || '').trim();
       const category = resolveMovementCategoryValue(type, pickedCategory);
       const title = String(form.get('title') || '').trim();
       const note = String(form.get('note') || '').trim();
@@ -20250,7 +20381,8 @@ async function boot() {
   await loadDataOnce();
   await ensurePersonalRatioMigrationV1();
   subscribe();
-  await render();
+  const openedFromDeepLink = await processFinanceNewMovementDeepLink();
+  if (!openedFromDeepLink) await render();
 }
 
 function bootFinance() {

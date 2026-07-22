@@ -88,7 +88,7 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
-const FINANCE_MODULE_VERSION = "2026-06-23-finance-index-cachebust-1";
+const FINANCE_MODULE_VERSION = "2026-07-22-finance-deeplink-v1";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
@@ -1833,7 +1833,18 @@ function isValidView(viewId) {
   return Boolean(viewId && document.getElementById(viewId)?.classList.contains("view"));
 }
 
+function hasFinanceNewMovementDeepLink() {
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    return String(params.get("action") || "").trim().toLowerCase() === "newmovement";
+  } catch (_) {
+    return false;
+  }
+}
+
 function getInitialView() {
+  if (hasFinanceNewMovementDeepLink() && isValidView("view-finance")) return "view-finance";
+
   const hashViewId = (window.location.hash || "").replace(/^#/, "");
   if (isValidView(hashViewId)) return hashViewId;
 

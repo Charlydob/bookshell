@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-06-23-finance-debug-v2";
+const APP_VERSION = "2026-07-22-finance-deeplink-sw-v2";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -151,6 +151,22 @@ async function staleWhileRevalidate(request) {
   return networkResponse || (await caches.match(APP_INDEX_URL)) || Response.error();
 }
 
+async function navigationShellFirst(request) {
+  const cachedShell = await caches.match(APP_INDEX_URL);
+  const networkPromise = fetch(request)
+    .then((response) => putInCache(STATIC_CACHE, new Request(APP_INDEX_URL), response))
+    .catch(() => null);
+
+  if (cachedShell) {
+    console.info('[sw:navigation:shell-cache]', new URL(request.url).pathname);
+    void networkPromise;
+    return cachedShell;
+  }
+
+  const networkResponse = await networkPromise;
+  return networkResponse || Response.error();
+}
+
 async function networkFirst(request) {
   try {
     const response = await fetch(request);
@@ -214,8 +230,8 @@ self.addEventListener("fetch", (event) => {
   if (!isCacheableAsset(request, url)) return;
 
   if (request.mode === "navigate") {
-    console.debug("[sw:fetch] nav", url.pathname);
-    event.respondWith(networkFirst(request));
+    console.debug("[sw:fetch] nav-shell", url.pathname);
+    event.respondWith(navigationShellFirst(request));
     return;
   }
 

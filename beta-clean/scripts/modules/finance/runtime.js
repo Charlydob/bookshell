@@ -10126,6 +10126,7 @@ function readFinanceNewMovementDeepLink() {
       category: readParam('category'),
       destinationAccount: readParam('destinationAccount'),
     };
+    console.info('[finance:deeplink] parámetros originales', window.location.search || '');
     console.info('[finance:deeplink] parámetros recibidos', payload);
     return payload;
   } catch (error) {
@@ -10213,25 +10214,92 @@ function buildMovementDraftFromDeepLink(payload = {}) {
 }
 
 
-function applyDeepLinkCurrencyToOpenMovementForm(expectedCurrency = '') {
+function dispatchFinanceDeepLinkManualEvents(element, eventNames = ['input', 'change']) {
+  if (!element) return;
+  eventNames.forEach((eventName) => element.dispatchEvent(new Event(eventName, { bubbles: true })));
+}
+
+function getFinanceDeepLinkCurrencySnapshot(form) {
+  const select = form?.querySelector('select[name="currency"]');
+  return {
+    stateCurrency: normalizeCurrencyCode(state.balanceFormState?.currency || ''),
+    deeplinkCurrency: normalizeCurrencyCode(state.balanceFormState?.deeplinkCurrency || ''),
+    visibleCurrency: normalizeCurrencyCode(select?.value || ''),
+  };
+}
+
+function applyDeepLinkCurrencyToOpenMovementForm(expectedCurrency = '', { logFinal = true } = {}) {
   const currency = normalizeCurrencyCode(expectedCurrency || state.balanceFormState?.deeplinkCurrency || state.balanceFormState?.currency || getDefaultCurrency());
   const form = document.querySelector('#finance-modal [data-balance-form]');
   const select = form?.querySelector('select[name="currency"]');
   if (!form || !select) return false;
-  const optionExists = Array.from(select.options || []).some((option) => option.value === currency);
+  const optionExists = Array.from(select.options || []).some((option) => normalizeCurrencyCode(option.value) === currency);
   if (!optionExists) return false;
+  console.info('[finance:deeplink] moneda antes de aplicarla', getFinanceDeepLinkCurrencySnapshot(form));
   select.value = currency;
   state.balanceFormState = { ...(state.balanceFormState || {}), currency, deeplinkCurrency: currency };
-  console.info('[finance:deeplink] valores finales del formulario', {
-    type: form.querySelector('[name="type"]')?.value || '',
-    amount: form.querySelector('[name="amount"]')?.value || '',
-    currency: select.value,
-    accountId: form.querySelector('[name="accountId"]')?.value || '',
-    fromAccountId: form.querySelector('[name="fromAccountId"]')?.value || '',
-    toAccountId: form.querySelector('[name="toAccountId"]')?.value || '',
-    category: form.querySelector('[name="category"]')?.value || '',
-    categoryNew: form.querySelector('[data-category-new]')?.value || '',
-  });
+  dispatchFinanceDeepLinkManualEvents(select);
+  state.balanceFormState = { ...(state.balanceFormState || {}), currency, deeplinkCurrency: currency };
+  if (logFinal) {
+    console.info('[finance:deeplink] moneda final del estado', state.balanceFormState.currency);
+    console.info('[finance:deeplink] moneda visible en el selector', normalizeCurrencyCode(select.value || ''));
+  }
+  return true;
+}
+
+function waitFinanceDeepLinkFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+async function waitForFinanceMovementFormReady() {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const form = document.querySelector('#finance-modal [data-balance-form]');
+    if (form
+      && form.querySelector('[name="type"]')
+      && form.querySelector('[name="amount"]')
+      && form.querySelector('select[name="currency"]')
+      && form.querySelector('select[name="accountId"]')
+      && form.querySelector('select[name="category"]')) return form;
+    await waitFinanceDeepLinkFrame();
+  }
+  return document.querySelector('#finance-modal [data-balance-form]');
+}
+
+function setFinanceDeepLinkControlValue(form, selector, value, eventNames = ['input', 'change']) {
+  const control = form?.querySelector(selector);
+  if (!control) return false;
+  control.value = String(value || '');
+  dispatchFinanceDeepLinkManualEvents(control, eventNames);
+  return true;
+}
+
+async function applyFinanceDeepLinkDraftToOpenMovementForm(draft = {}) {
+  const form = await waitForFinanceMovementFormReady();
+  if (!form) return false;
+  setFinanceDeepLinkControlValue(form, '[name="type"]', draft.type || 'expense', ['change']);
+  syncTxTypeFields(form);
+  if (draft.type === 'transfer') {
+    setFinanceDeepLinkControlValue(form, '[name="fromAccountId"]', draft.fromAccountId || '', ['change']);
+    setFinanceDeepLinkControlValue(form, '[name="toAccountId"]', draft.toAccountId || '', ['change']);
+  } else {
+    setFinanceDeepLinkControlValue(form, '[name="accountId"]', draft.accountId || '', ['change']);
+  }
+  setFinanceDeepLinkControlValue(form, '[name="amount"]', draft.amount || '', ['input', 'change']);
+  const categorySelect = form.querySelector('select[name="category"]');
+  const hasCategoryOption = draft.category && Array.from(categorySelect?.options || []).some((option) => String(option.value || '') === String(draft.category));
+  setFinanceDeepLinkControlValue(form, 'select[name="category"]', hasCategoryOption ? draft.category : '', ['change']);
+  setFinanceDeepLinkControlValue(form, '[data-category-new]', hasCategoryOption ? '' : (draft.categoryNew || ''), ['input', 'change']);
+  persistBalanceFormState(form);
+  applyDeepLinkCurrencyToOpenMovementForm(draft.deeplinkCurrency || draft.currency);
+  await waitFinanceDeepLinkFrame();
+  const requestedCurrency = normalizeCurrencyCode(draft.deeplinkCurrency || draft.currency);
+  let snapshot = getFinanceDeepLinkCurrencySnapshot(form);
+  if (requestedCurrency && (snapshot.stateCurrency !== requestedCurrency || snapshot.visibleCurrency !== requestedCurrency)) {
+    applyDeepLinkCurrencyToOpenMovementForm(requestedCurrency, { logFinal: false });
+    snapshot = getFinanceDeepLinkCurrencySnapshot(form);
+  }
+  console.info('[finance:deeplink] moneda final del estado', snapshot.stateCurrency || state.balanceFormState?.currency || '');
+  console.info('[finance:deeplink] moneda visible en el selector', snapshot.visibleCurrency || '');
   return true;
 }
 
@@ -10241,11 +10309,10 @@ async function processFinanceNewMovementDeepLink() {
   if (!payload) return false;
   financeNewMovementDeepLinkProcessed = true;
   const draft = buildMovementDraftFromDeepLink(payload);
+  console.info('[finance:deeplink] moneda solicitada', draft.deeplinkCurrency || draft.currency || '');
   cleanFinanceNewMovementUrl();
-  await openCreateMovementModal(draft);
-  applyDeepLinkCurrencyToOpenMovementForm(draft.deeplinkCurrency || draft.currency);
-  queueMicrotask(() => applyDeepLinkCurrencyToOpenMovementForm(draft.deeplinkCurrency || draft.currency));
-  window.setTimeout(() => applyDeepLinkCurrencyToOpenMovementForm(draft.deeplinkCurrency || draft.currency), 0);
+  await openCreateMovementModal({ mode: 'create' });
+  await applyFinanceDeepLinkDraftToOpenMovementForm(draft);
   return true;
 }
 
@@ -15319,7 +15386,7 @@ function persistBalanceFormState(form) {
   if (!form) return;
   const prev = state.balanceFormState || {};
   const fd = new FormData(form);
-  const categoryNew = normalizeFoodName(form.querySelector('[data-category-new]')?.value || '');
+  const categoryNew = String(form.querySelector('[data-category-new]')?.value || '').trim();
   const next = {
     type: String(fd.get('type') || ''),
     amount: String(fd.get('amount') || ''),

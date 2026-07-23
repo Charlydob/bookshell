@@ -10108,13 +10108,19 @@ function financeDeepLinkCompareKey(value = '') {
     .trim();
 }
 
+function stripFinanceDeepLinkOuterBrackets(value = '') {
+  const text = String(value || '').trim();
+  if (text.length >= 2 && text.startsWith('[') && text.endsWith(']')) return text.slice(1, -1).trim();
+  return text;
+}
+
 function readFinanceNewMovementDeepLink() {
   try {
     const params = new URLSearchParams(window.location.search || '');
     const readParam = (name) => {
       // URLSearchParams decodifica una sola vez (incluyendo + como espacio). No aplicar decodeURIComponent aquí.
       const value = params.get(name);
-      return value == null ? '' : String(value).trim();
+      return value == null ? '' : stripFinanceDeepLinkOuterBrackets(value);
     };
     const action = readParam('action').toLowerCase();
     if (action !== FINANCE_NEW_MOVEMENT_ACTION) return null;
@@ -10228,16 +10234,30 @@ function getFinanceDeepLinkCurrencySnapshot(form) {
   };
 }
 
+function findFinanceCurrencyOptionByCanonicalCode(select, currency = '') {
+  const code = normalizeCurrencyCode(currency || '');
+  if (!select || !code) return null;
+  return Array.from(select.options || []).find((option) => {
+    const candidates = [
+      option.value,
+      option.getAttribute('value'),
+      option.dataset?.currency,
+      option.dataset?.code,
+      option.dataset?.value,
+    ];
+    return candidates.some((candidate) => normalizeCurrencyCode(candidate || '') === code);
+  }) || null;
+}
+
 function applyDeepLinkCurrencyToOpenMovementForm(expectedCurrency = '', { logFinal = true } = {}) {
   const currency = normalizeCurrencyCode(expectedCurrency || state.balanceFormState?.deeplinkCurrency || state.balanceFormState?.currency || getDefaultCurrency());
   const form = document.querySelector('#finance-modal [data-balance-form]');
   const select = form?.querySelector('select[name="currency"]');
   if (!form || !select) return false;
-  const optionExists = Array.from(select.options || []).some((option) => normalizeCurrencyCode(option.value) === currency);
-  if (!optionExists) return false;
+  const option = findFinanceCurrencyOptionByCanonicalCode(select, currency);
+  if (!option) return false;
   console.info('[finance:deeplink] moneda antes de aplicarla', getFinanceDeepLinkCurrencySnapshot(form));
-  select.value = currency;
-  state.balanceFormState = { ...(state.balanceFormState || {}), currency, deeplinkCurrency: currency };
+  select.value = option.value;
   dispatchFinanceDeepLinkManualEvents(select);
   state.balanceFormState = { ...(state.balanceFormState || {}), currency, deeplinkCurrency: currency };
   if (logFinal) {
@@ -10249,6 +10269,10 @@ function applyDeepLinkCurrencyToOpenMovementForm(expectedCurrency = '', { logFin
 
 function waitFinanceDeepLinkFrame() {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function waitFinanceDeepLinkMs(ms = 100) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function waitForFinanceMovementFormReady() {
@@ -10278,20 +10302,20 @@ async function applyFinanceDeepLinkDraftToOpenMovementForm(draft = {}) {
   if (!form) return false;
   setFinanceDeepLinkControlValue(form, '[name="type"]', draft.type || 'expense', ['change']);
   syncTxTypeFields(form);
+  setFinanceDeepLinkControlValue(form, '[name="amount"]', draft.amount || '', ['input', 'change']);
+  const categorySelect = form.querySelector('select[name="category"]');
+  const hasCategoryOption = draft.category && Array.from(categorySelect?.options || []).some((option) => String(option.value || '') === String(draft.category));
+  setFinanceDeepLinkControlValue(form, 'select[name="category"]', hasCategoryOption ? draft.category : '', ['change']);
+  setFinanceDeepLinkControlValue(form, '[data-category-new]', hasCategoryOption ? '' : (draft.categoryNew || ''), ['input', 'change']);
   if (draft.type === 'transfer') {
     setFinanceDeepLinkControlValue(form, '[name="fromAccountId"]', draft.fromAccountId || '', ['change']);
     setFinanceDeepLinkControlValue(form, '[name="toAccountId"]', draft.toAccountId || '', ['change']);
   } else {
     setFinanceDeepLinkControlValue(form, '[name="accountId"]', draft.accountId || '', ['change']);
   }
-  setFinanceDeepLinkControlValue(form, '[name="amount"]', draft.amount || '', ['input', 'change']);
-  const categorySelect = form.querySelector('select[name="category"]');
-  const hasCategoryOption = draft.category && Array.from(categorySelect?.options || []).some((option) => String(option.value || '') === String(draft.category));
-  setFinanceDeepLinkControlValue(form, 'select[name="category"]', hasCategoryOption ? draft.category : '', ['change']);
-  setFinanceDeepLinkControlValue(form, '[data-category-new]', hasCategoryOption ? '' : (draft.categoryNew || ''), ['input', 'change']);
   persistBalanceFormState(form);
   applyDeepLinkCurrencyToOpenMovementForm(draft.deeplinkCurrency || draft.currency);
-  await waitFinanceDeepLinkFrame();
+  await waitFinanceDeepLinkMs(100);
   const requestedCurrency = normalizeCurrencyCode(draft.deeplinkCurrency || draft.currency);
   let snapshot = getFinanceDeepLinkCurrencySnapshot(form);
   if (requestedCurrency && (snapshot.stateCurrency !== requestedCurrency || snapshot.visibleCurrency !== requestedCurrency)) {
@@ -10301,6 +10325,23 @@ async function applyFinanceDeepLinkDraftToOpenMovementForm(draft = {}) {
   console.info('[finance:deeplink] moneda final del estado', snapshot.stateCurrency || state.balanceFormState?.currency || '');
   console.info('[finance:deeplink] moneda visible en el selector', snapshot.visibleCurrency || '');
   return true;
+}
+
+
+function verifyFinanceDeepLinkModalState(form = document.querySelector('#finance-modal [data-balance-form]')) {
+  const currencySelect = form?.querySelector('select[name="currency"]');
+  const categoryNew = form?.querySelector('[data-category-new]');
+  const categorySelect = form?.querySelector('select[name="category"]');
+  return {
+    currencyVisible: normalizeCurrencyCode(currencySelect?.value || ''),
+    categoryVisible: String(categoryNew?.value || categorySelect?.value || ''),
+    currencyChfVisible: normalizeCurrencyCode(currencySelect?.value || '') === 'CHF',
+    categoryPruebaSVisible: String(categoryNew?.value || categorySelect?.value || '') === 'Prueba S',
+  };
+}
+
+if (typeof window !== 'undefined') {
+  window.__bookshellVerifyFinanceDeepLinkModalState = verifyFinanceDeepLinkModalState;
 }
 
 async function processFinanceNewMovementDeepLink() {

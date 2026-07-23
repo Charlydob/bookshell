@@ -88,7 +88,9 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
-const FINANCE_MODULE_VERSION = "2026-07-22-finance-deeplink-v1";
+const APP_PUBLISHED_COMMIT = "3560924";
+const SERVICE_WORKER_VERSION = "2026-07-23-cache-refresh-3560924";
+const FINANCE_MODULE_VERSION = "2026-07-23-cache-refresh-3560924";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
@@ -99,6 +101,7 @@ const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
 
 registerPublicCatalogMigrationDebugApi();
 const __originalConsole = { ...console };
+window.__BOOKSHELL_PUBLISHED_COMMIT__ = APP_PUBLISHED_COMMIT;
 window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ = String(window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ || "");
 window.__BOOKSHELL_LAST_BOOT_PHASE__ = String(window.__BOOKSHELL_LAST_BOOT_PHASE__ || "boot:init");
 window.__BOOKSHELL_LAST_ERROR_DETAILS__ = window.__BOOKSHELL_LAST_ERROR_DETAILS__ && typeof window.__BOOKSHELL_LAST_ERROR_DETAILS__ === "object"
@@ -1397,6 +1400,8 @@ async function registerAppServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   try {
     const swUrl = new URL("../../service-worker.js", import.meta.url);
+    swUrl.searchParams.set("v", SERVICE_WORKER_VERSION);
+    swUrl.searchParams.set("commit", APP_PUBLISHED_COMMIT);
     const scope = new URL("../../", import.meta.url).pathname;
     console.info("[offline:init] service-worker", { swUrl: swUrl.href, scope });
     const registration = await navigator.serviceWorker.register(swUrl, { scope });

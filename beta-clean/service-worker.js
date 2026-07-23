@@ -1,4 +1,5 @@
-const APP_VERSION = "2026-07-22-finance-deeplink-sw-v2";
+const APP_VERSION = "2026-07-23-cache-refresh-3560924";
+const PUBLISHED_COMMIT = "3560924";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -151,25 +152,27 @@ async function staleWhileRevalidate(request) {
   return networkResponse || (await caches.match(APP_INDEX_URL)) || Response.error();
 }
 
-async function navigationShellFirst(request) {
-  const cachedShell = await caches.match(APP_INDEX_URL);
-  const networkPromise = fetch(request)
-    .then((response) => putInCache(STATIC_CACHE, new Request(APP_INDEX_URL), response))
-    .catch(() => null);
+async function navigationNetworkFirst(request) {
+  const appIndexRequest = new Request(APP_INDEX_URL, { cache: "no-store" });
 
-  if (cachedShell) {
-    console.info('[sw:navigation:shell-cache]', new URL(request.url).pathname);
-    void networkPromise;
-    return cachedShell;
+  try {
+    const response = await fetch(request, { cache: "no-store" });
+    console.info("[sw:navigation:network]", new URL(request.url).pathname, { status: response.status });
+    await putInCache(STATIC_CACHE, appIndexRequest, response);
+    return response;
+  } catch (_) {
+    const cachedShell = await caches.match(appIndexRequest) || await caches.match(APP_INDEX_URL);
+    if (cachedShell) {
+      console.warn("[sw:navigation:cache-fallback]", new URL(request.url).pathname);
+      return cachedShell;
+    }
+    return Response.error();
   }
-
-  const networkResponse = await networkPromise;
-  return networkResponse || Response.error();
 }
 
 async function networkFirst(request) {
   try {
-    const response = await fetch(request);
+    const response = await fetch(request, { cache: "no-store" });
     console.info("[sw:network-first:network]", new URL(request.url).pathname, { status: response.status });
     await putInCache(STATIC_CACHE, request, response);
     return response;
@@ -202,14 +205,13 @@ function shouldBypassModuleCache(url) {
 }
 
 self.addEventListener("install", (event) => {
-  console.info("[offline:boot]", { phase: "sw-install", version: APP_VERSION });
-  event.waitUntil(
-    precacheLocalAssets().then(() => self.skipWaiting()),
-  );
+  console.info("[offline:boot]", { phase: "sw-install", version: APP_VERSION, commit: PUBLISHED_COMMIT });
+  self.skipWaiting();
+  event.waitUntil(precacheLocalAssets());
 });
 
 self.addEventListener("activate", (event) => {
-  console.info("[offline:boot]", { phase: "sw-activate", version: APP_VERSION });
+  console.info("[offline:boot]", { phase: "sw-activate", version: APP_VERSION, commit: PUBLISHED_COMMIT });
   event.waitUntil(
     caches.keys().then(async (keys) => {
       await Promise.all(
@@ -230,8 +232,8 @@ self.addEventListener("fetch", (event) => {
   if (!isCacheableAsset(request, url)) return;
 
   if (request.mode === "navigate") {
-    console.debug("[sw:fetch] nav-shell", url.pathname);
-    event.respondWith(navigationShellFirst(request));
+    console.debug("[sw:fetch] nav-network-first", url.pathname);
+    event.respondWith(navigationNetworkFirst(request));
     return;
   }
 
@@ -243,7 +245,7 @@ self.addEventListener("fetch", (event) => {
 
   if (isLocalCodeRequest(request, url)) {
     console.debug("[sw:fetch] local", url.pathname);
-    event.respondWith(staleWhileRevalidate(request));
+    event.respondWith(networkFirst(request));
     return;
   }
 

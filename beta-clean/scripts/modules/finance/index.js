@@ -1,6 +1,6 @@
 console.info("[finance/index] parsed ok");
 
-const FINANCE_RUNTIME_VERSION = "2026-07-22-finance-deeplink-v1";
+const FINANCE_RUNTIME_VERSION = "2026-07-23-cache-refresh-3560924";
 const FINANCE_RUNTIME_URL = "./runtime.js?v=" + FINANCE_RUNTIME_VERSION;
 let runtimeModule = null;
 

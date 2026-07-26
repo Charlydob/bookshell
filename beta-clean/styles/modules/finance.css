@@ -21,6 +21,7 @@
 
 .financeTab .finance-home {
   max-width: 500px;
+  min-width: 0;
   margin: 0 auto;
   display: grid;
   gap: 14px;
@@ -39,8 +40,15 @@
 
 .financeTab .finance__hero,
 .financeTab .finance__calendarPreview {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
   border-radius: 28px;
   padding: 18px;
+}
+
+.financeTab .finance__hero {
+  container-type: inline-size;
 }
 
 .financeTab .financePanelTopbar {
@@ -119,7 +127,19 @@
 }
 
 .financeTab .finance__eyebrow { margin: 0; color: var(--fin-muted); letter-spacing: .12em; font-size: .76rem; }
-.financeTab #finance-totalValue { margin: 8px 0 2px; font-size: clamp(2.2rem, 10vw, 4.3rem); letter-spacing: .02em; }
+.financeTab #finance-totalValue {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin: 8px 0 2px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: clamp(2.2rem, 10vw, 4.3rem);
+  font-size: clamp(2.2rem, min(10vw, 13.75cqi), 4.3rem);
+  line-height: 1;
+  letter-spacing: .02em;
+}
 .financeTab #finance-totalDelta { margin: 0; font-size: 1.1rem; }
 
 .financeTab #finance-lineChart {
@@ -2919,10 +2939,18 @@ header.food-sheet-header h3{
 .financeTab #finance-main {
   width: 100%;
   max-width: 500px;
+  min-width: 0;
   margin: 0 auto;
   display: grid;
   gap: 14px;
   align-content: start;
+}
+
+.financeTab #finance-content {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .financeTab #finance-topnav {

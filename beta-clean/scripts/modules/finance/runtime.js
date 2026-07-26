@@ -72,6 +72,9 @@ let financePendingPreserveUi = true;
 let financeEditDraftLogTimer = 0;
 let financeRemoteApplyTimer = 0;
 let financeSubscriptionsStarted = false;
+let financeTotalValueResizeObserver = null;
+let financeTotalValueResizeTarget = null;
+let financeTotalValueFitRaf = 0;
 let financeShortcutReconcilePromise = null;
 let financeShortcutDiagnosticSnapshot = {
   version: SHORTCUT_INTEGRATION_VERSION,
@@ -18321,6 +18324,68 @@ function restoreFinanceUiState(snapshot) {
   });
 }
 
+function fitFinanceTotalValue(el = document.getElementById('finance-totalValue')) {
+  if (!el || !el.isConnected) return;
+  el.style.fontSize = '';
+  el.style.letterSpacing = '';
+
+  const availableWidth = el.clientWidth;
+  if (!availableWidth || el.scrollWidth <= availableWidth) return;
+
+  el.style.letterSpacing = '-0.04em';
+  if (el.scrollWidth <= availableWidth) return;
+
+  const baseFontSize = parseFloat(window.getComputedStyle(el).fontSize) || 0;
+  if (!baseFontSize) return;
+
+  const minFontSize = 1;
+  let nextFontSize = Math.max(minFontSize, Math.floor(baseFontSize * (availableWidth / el.scrollWidth)));
+  el.style.fontSize = `${nextFontSize}px`;
+
+  while (el.scrollWidth > availableWidth && nextFontSize > minFontSize) {
+    nextFontSize -= 1;
+    el.style.fontSize = `${nextFontSize}px`;
+  }
+}
+
+function scheduleFinanceTotalValueFit(el = document.getElementById('finance-totalValue')) {
+  if (financeTotalValueFitRaf) cancelAnimationFrame(financeTotalValueFitRaf);
+  financeTotalValueFitRaf = requestAnimationFrame(() => {
+    financeTotalValueFitRaf = 0;
+    fitFinanceTotalValue(el);
+  });
+}
+
+function disconnectFinanceTotalValueObserver() {
+  if (financeTotalValueFitRaf) {
+    cancelAnimationFrame(financeTotalValueFitRaf);
+    financeTotalValueFitRaf = 0;
+  }
+  if (financeTotalValueResizeObserver) {
+    financeTotalValueResizeObserver.disconnect();
+    financeTotalValueResizeObserver = null;
+  }
+  financeTotalValueResizeTarget = null;
+}
+
+function observeFinanceTotalValue() {
+  const el = document.getElementById('finance-totalValue');
+  if (!el) {
+    disconnectFinanceTotalValueObserver();
+    return;
+  }
+  if (financeTotalValueResizeTarget !== el) {
+    disconnectFinanceTotalValueObserver();
+    financeTotalValueResizeTarget = el;
+    if ('ResizeObserver' in window) {
+      financeTotalValueResizeObserver = new ResizeObserver(() => scheduleFinanceTotalValueFit(el));
+      const container = el.closest('.finance__hero') || el.parentElement;
+      if (container && container !== el) financeTotalValueResizeObserver.observe(container);
+    }
+  }
+  scheduleFinanceTotalValueFit(el);
+}
+
 function triggerRender(options = {}) {
   if (!options.force && (receiptEditSession.active || isActiveTicketInput(document.activeElement))) {
     return Promise.resolve(null);
@@ -18410,6 +18475,7 @@ async function render() {
       else host.innerHTML = renderFinanceHome(accounts, totalSeries);
     }
     await renderFixedExpenseCharts();
+    observeFinanceTotalValue();
     renderModal({ accounts, categories, txRows });
     renderToast();
     ensureFinanceAddTxFab();
@@ -21136,6 +21202,7 @@ export async function init() {
 export async function onShow() {
   void reconcileShortcutTransactions({ apply: true, reason: 'shortcut-reconcile:on-show' });
   requestAnimationFrame(() => {
+    scheduleFinanceTotalValueFit();
     try { financeStatsDonutChart?.resize?.(); } catch (_) {}
     try { financeWealthDonutChart?.resize?.(); } catch (_) {}
   });
@@ -21143,6 +21210,7 @@ export async function onShow() {
 
 export function destroy() {
   cleanupFinanceSubscriptions();
+  disconnectFinanceTotalValueObserver();
   if (state.aggregateRebuildTimer) {
     clearTimeout(state.aggregateRebuildTimer);
     state.aggregateRebuildTimer = null;

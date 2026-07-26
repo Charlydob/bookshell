@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-07-23-cache-refresh-3560924";
-const PUBLISHED_COMMIT = "3560924";
+const APP_VERSION = "2026-07-26-shortcut-reconcile-debug";
+const PUBLISHED_COMMIT = "local-shortcut-reconcile-debug";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -37,6 +37,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/finance/index.js",
   "./scripts/modules/finance/runtime.js",
   "./scripts/modules/finance/finance/data.js",
+  "./scripts/modules/finance/finance/shortcut-integration.js",
   
   
   "./scripts/modules/gym/index.js",

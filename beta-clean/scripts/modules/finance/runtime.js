@@ -43,6 +43,14 @@ import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
 import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, normalizeCurrencyCode } from './finance/currency-utils.js';
 import {
+  DEFAULT_SHORTCUT_INTEGRATION_START_AT,
+  SHORTCUT_INTEGRATION_VERSION,
+  buildShortcutTransactionDiagnostics,
+  normalizeShortcutIntegrationStartAt,
+  resolveShortcutAccountDeltaAmount,
+  resolveShortcutTotalEURAmount,
+} from './finance/shortcut-integration.js';
+import {
   flushPendingTicketSyncToGoogleSheets,
   syncTicketConfirmToGoogleSheets,
   syncAccountCreateToGoogleSheets,
@@ -64,6 +72,18 @@ let financePendingPreserveUi = true;
 let financeEditDraftLogTimer = 0;
 let financeRemoteApplyTimer = 0;
 let financeSubscriptionsStarted = false;
+let financeShortcutReconcilePromise = null;
+let financeShortcutDiagnosticSnapshot = {
+  version: SHORTCUT_INTEGRATION_VERSION,
+  visible: true,
+  status: 'idle',
+  summary: null,
+  rows: [],
+  latest: null,
+  write: null,
+  error: null,
+  updatedAt: 0,
+};
 const FINANCE_GOALS_SORT_MODE_KEY = 'financeGoalsSortMode';
 const PRODUCTS_DRAFT_LOCAL_KEY = 'bookshell_finance_products_draft_v1';
 const GOOGLE_SHEETS_PRODUCT_SUMMARY_KEYS_KEY = 'bookshell_finance_gs_product_summary_keys_v1';
@@ -960,7 +980,7 @@ function personalRatioForTx(tx = {}, accountsById = {}) {
 }
 function personalDeltaForTx(tx = {}, accountsById = {}) {
   const safeType = normalizeTxType(tx?.type);
-  const amount = Number(tx?.amount || 0);
+  const amount = resolveShortcutAccountDeltaAmount(tx, tx?.accountId, state.shortcutIntegrationStartAt || DEFAULT_SHORTCUT_INTEGRATION_START_AT);
   if (!Number.isFinite(amount)) return 0;
   const ratio = personalRatioForTx(tx, accountsById);
 if (safeType === 'income') {
@@ -976,6 +996,11 @@ function txCurrency(tx = {}, accountsById = {}) {
   return normalizeCurrencyCode(tx?.accountCurrency || tx?.currency || accountsById?.[tx?.accountId]?.currency || getDefaultCurrency());
 }
 function txAmountInCurrency(tx = {}, accountsById = {}, targetCurrency = state.financeTotalCurrency || getDefaultCurrency()) {
+  const shortcutTotalEUR = resolveShortcutTotalEURAmount(tx, state.shortcutIntegrationStartAt || DEFAULT_SHORTCUT_INTEGRATION_START_AT);
+  if (Number.isFinite(shortcutTotalEUR)) {
+    const convertedShortcutTotal = convertCurrency(shortcutTotalEUR, 'EUR', targetCurrency, getFinanceCurrencyRates());
+    return Number.isFinite(convertedShortcutTotal) ? convertedShortcutTotal : shortcutTotalEUR;
+  }
   const converted = convertCurrency(Number(tx?.amount || 0), txCurrency(tx, accountsById), targetCurrency, getFinanceCurrencyRates());
   return Number.isFinite(converted) ? converted : Number(tx?.convertedAmountEUR ?? tx?.totalEUR ?? tx?.amount ?? 0);
 }
@@ -9256,8 +9281,9 @@ function buildFinanceAccountEntriesUpdates(root = {}, accountId = '', fromDay = 
     const day = String(row.date || isoToDay(row.dateISO || ''));
     if (!day) return;
     let delta = 0;
-    if (row.type === 'income' && row.accountId === accountId) delta = Number(row.amount || 0);
-    else if (row.type === 'expense' && row.accountId === accountId) delta = -Number(row.amount || 0);
+    const accountDeltaAmount = resolveShortcutAccountDeltaAmount(row, accountId, state.shortcutIntegrationStartAt || DEFAULT_SHORTCUT_INTEGRATION_START_AT);
+    if (row.type === 'income' && row.accountId === accountId) delta = accountDeltaAmount;
+    else if (row.type === 'expense' && row.accountId === accountId) delta = -accountDeltaAmount;
     else if (row.type === 'transfer') {
       if (row.fromAccountId === accountId) delta = -Number(row.amount || 0);
       if (row.toAccountId === accountId) delta += Number(row.amount || 0);
@@ -9974,6 +10000,531 @@ async function rebuildAggregates() {
     });
   });
   if (Object.keys(updates).length) await safeFirebase(() => update(ref(db), updates));
+}
+
+function aggregateBucketKeysForTx(row = {}) {
+  const keys = {};
+  AGG_MODES.forEach((mode) => {
+    const key = bucketKeyForTx(row, mode);
+    if (key) keys[mode] = key;
+  });
+  keys.total = 'all';
+  return keys;
+}
+
+function mergeAggregateBucketKeys(rows = []) {
+  const bucketKeysByMode = {};
+  rows.forEach((row) => {
+    Object.entries(aggregateBucketKeysForTx(row)).forEach(([mode, bucketKey]) => {
+      if (!bucketKeysByMode[mode]) bucketKeysByMode[mode] = new Set();
+      bucketKeysByMode[mode].add(bucketKey);
+    });
+  });
+  return bucketKeysByMode;
+}
+
+function buildAggregateUpdatesForBucketKeys(bucketKeysByMode = {}, accounts = state.accounts, rows = balanceTxList()) {
+  const accountsById = Object.fromEntries((accounts || []).map((account) => [account.id, account]));
+  const updates = {};
+  Object.entries(bucketKeysByMode || {}).forEach(([mode, bucketKeys]) => {
+    [...(bucketKeys || [])].forEach((bucketKey) => {
+      const list = mode === 'total'
+        ? rows
+        : rows.filter((tx) => bucketKeyForTx(tx, mode) === bucketKey);
+      const agg = calcAggForBucket(list, accountsById);
+      const accountsDeltaReal = calcAccountsDeltaForBucket(mode, bucketKey, accounts);
+      updates[`${state.financePath}/aggregates/${mode}/${bucketKey}`] = {
+        ...agg,
+        accountsDeltaReal,
+        updatedAt: nowTs()
+      };
+    });
+  });
+  return updates;
+}
+
+function shortcutIntegrationPath(relativePath = '') {
+  const suffix = String(relativePath || '').replace(/^\/+/g, '');
+  return `${state.financePath}/integrations/shortcut${suffix ? `/${suffix}` : ''}`;
+}
+
+function shortcutProcessedPath(transactionId = '') {
+  return `${state.financePath}/integrations/shortcutProcessed/${String(transactionId || '').trim()}`;
+}
+
+function ensureShortcutIntegrationBadge() {
+  const view = document.getElementById('view-finance') || resolveFinanceRoot();
+  if (!view) return null;
+  let badge = document.getElementById('shortcut-integration-active-v1');
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'shortcut-integration-active-v1';
+    badge.textContent = 'SHORTCUT INTEGRATION ACTIVE v1';
+    badge.style.cssText = [
+      'display:none'
+    ].join(';');
+    document.body.appendChild(badge);
+  }
+  console.info('[ShortcutIntegration] UI indicator mounted', { id: badge.id });
+  return badge;
+}
+
+function shortcutDiagnosticSummary(diagnostics = [], transactions = {}, startAt = DEFAULT_SHORTCUT_INTEGRATION_START_AT) {
+  const allRows = Array.isArray(diagnostics) ? diagnostics : [];
+  const totalTransactions = Object.keys(transactions || {}).length;
+  const afterStartRows = allRows.filter((item) => Number(item.createdAt || 0) >= Number(startAt || 0));
+  const compatibleRows = afterStartRows.filter((item) => !item.schemaReasons?.length && !item.internalMarkers?.length);
+  const processedRows = afterStartRows.filter((item) => item.status === 'processed');
+  const pendingRows = afterStartRows.filter((item) => item.status === 'pending');
+  const rejectedRows = afterStartRows.filter((item) => item.status === 'rejected');
+  return {
+    totalTransactions,
+    afterStart: afterStartRows.length,
+    compatible: compatibleRows.length,
+    processed: processedRows.length,
+    pending: pendingRows.length,
+    rejected: rejectedRows.length,
+  };
+}
+
+function formatShortcutDiagnosticTime(ts = 0) {
+  const value = Number(ts || 0);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  try { return new Date(value).toLocaleString('es-ES'); } catch (_) { return String(value); }
+}
+
+function findShortcutDiagnosticEntry(row = {}) {
+  const account = findFinanceAccountById(row.accountId) || {};
+  const entry = account?.entries?.[row.date] || account?.daily?.[row.date] || null;
+  return { account, entry };
+}
+
+function normalizeShortcutDiagnosticRows(diagnostics = []) {
+  return (diagnostics || [])
+    .filter((item) => Number(item.createdAt || 0) >= Number(state.shortcutIntegrationStartAt || DEFAULT_SHORTCUT_INTEGRATION_START_AT))
+    .sort((left, right) => Number(right.createdAt || 0) - Number(left.createdAt || 0))
+    .slice(0, 12)
+    .map((item) => {
+      const { account, entry } = findShortcutDiagnosticEntry(item);
+      return {
+        transactionId: item.transactionId,
+        status: item.status,
+        reason: item.reason || '',
+        type: item.type,
+        accountId: item.accountId,
+        accountExists: Boolean(account?.id),
+        accountAmount: item.accountAmount,
+        createdAt: item.createdAt,
+        date: item.date,
+        entryPath: `${state.financePath}/accounts/${item.accountId}/entries/${item.date}`,
+        updatedAtPath: `${state.financePath}/accounts/${item.accountId}/updatedAt`,
+        entryExists: Boolean(entry),
+        entryValue: entry ? Number(entry.value || 0) : null,
+        processedPath: item.processedPath,
+      };
+    });
+}
+
+function setShortcutDiagnosticSnapshot(patch = {}) {
+  financeShortcutDiagnosticSnapshot = {
+    ...financeShortcutDiagnosticSnapshot,
+    ...patch,
+    updatedAt: nowTs(),
+  };
+  renderShortcutDiagnosticPanel();
+}
+
+function renderShortcutDiagnosticPanel() {
+  const view = document.getElementById('view-finance') || resolveFinanceRoot();
+  if (!view && !document.body) return null;
+  let panel = document.getElementById('shortcut-integration-diagnostic-panel');
+  if (!panel) {
+    panel = document.createElement('section');
+    panel.id = 'shortcut-integration-diagnostic-panel';
+    panel.style.cssText = [
+      'display:none'
+    ].join(';');
+    document.body.appendChild(panel);
+  }
+
+  const snap = financeShortcutDiagnosticSnapshot || {};
+  const summary = snap.summary || {};
+  const rows = snap.rows || [];
+  const write = snap.write || {};
+  const error = snap.error || write.error || null;
+  const writePaths = [
+    ...(write.entryPaths || []),
+    ...(write.aggregatePaths || []),
+    ...(write.markerPaths || []),
+    ...(write.configPathWritten ? [write.configPathWritten] : []),
+  ];
+  const summaryItems = [
+    ['Transacciones leidas', summary.totalTransactions ?? 0],
+    ['Posteriores a startAt', summary.afterStart ?? 0],
+    ['Compatibles Atajos', summary.compatible ?? 0],
+    ['Ya procesadas', summary.processed ?? 0],
+    ['Pendientes', summary.pending ?? 0],
+    ['Rechazadas', summary.rejected ?? 0],
+  ];
+  const finalItems = [
+    ['Procesados correctamente', write.processedOk ?? 0],
+    ['Ya procesados', summary.processed ?? 0],
+    ['Rechazados', summary.rejected ?? 0],
+    ['Errores', error ? 1 : 0],
+  ];
+  panel.innerHTML = `
+    <div style="display:none;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+      <strong>SHORTCUT INTEGRATION ACTIVE v1</strong>
+      <button type="button" data-shortcut-diagnostic-close style="border:1px solid rgba(148,163,184,.45);background:transparent;color:#f8fafc;border-radius:6px;padding:3px 7px;">Cerrar</button>
+    </div>
+    <button type="button" data-shortcut-process-now style="width:100%;margin:0 0 8px;padding:8px;border-radius:7px;border:1px solid rgba(34,197,94,.75);background:rgba(22,163,74,.22);color:#dcfce7;font-weight:700;">Procesar movimientos de Atajos ahora</button>
+    <div style="display:grid;grid-template-columns:1fr 72px;gap:4px 8px;margin-bottom:8px;">
+      ${summaryItems.map(([label, value]) => `<span>${escapeHtml(label)}</span><strong style="text-align:right;">${escapeHtml(String(value))}</strong>`).join('')}
+    </div>
+    <div style="margin-bottom:8px;">
+      <div><strong>startAt</strong>: ${escapeHtml(String(state.shortcutIntegrationStartAt || DEFAULT_SHORTCUT_INTEGRATION_START_AT))} (${escapeHtml(typeof (state.shortcutIntegrationStartAt || DEFAULT_SHORTCUT_INTEGRATION_START_AT))})</div>
+      <div><strong>Estado</strong>: ${escapeHtml(String(snap.status || 'idle'))}</div>
+      <div><strong>Ultima actualizacion</strong>: ${escapeHtml(formatShortcutDiagnosticTime(snap.updatedAt))}</div>
+      <div><strong>Escritura atomica</strong>: ${write.executed ? (write.ok ? 'ejecutada OK' : 'ejecutada con error') : 'no ejecutada'}</div>
+      <div><strong>Firebase error</strong>: ${escapeHtml(error ? String(error.message || error.code || error) : 'sin error')}</div>
+    </div>
+    <details style="margin-bottom:8px;" ${writePaths.length ? 'open' : ''}>
+      <summary>Rutas del update atomico (${escapeHtml(String(writePaths.length))})</summary>
+      <div style="display:grid;gap:3px;margin-top:5px;">
+        ${writePaths.length ? writePaths.map((path) => `<code style="white-space:normal;word-break:break-word;color:#bbf7d0;">${escapeHtml(path)}</code>`).join('') : '<span style="color:#cbd5e1;">Aun no hay plan de escritura.</span>'}
+      </div>
+    </details>
+    <div style="display:grid;grid-template-columns:1fr 72px;gap:4px 8px;margin-bottom:8px;border-top:1px solid rgba(148,163,184,.25);padding-top:8px;">
+      ${finalItems.map(([label, value]) => `<span>${escapeHtml(label)}</span><strong style="text-align:right;">${escapeHtml(String(value))}</strong>`).join('')}
+    </div>
+    <div style="display:grid;gap:6px;">
+      ${rows.length ? rows.map((row) => `
+        <article style="border:1px solid rgba(148,163,184,.28);border-radius:7px;padding:7px;background:rgba(15,23,42,.72);">
+          <div><strong>${escapeHtml(row.transactionId)}</strong> · ${escapeHtml(row.status)} ${row.reason ? `· ${escapeHtml(row.reason)}` : ''}</div>
+          <div>type=${escapeHtml(row.type)} · createdAt=${escapeHtml(String(row.createdAt))} · date=${escapeHtml(row.date)}</div>
+          <div>accountId=${escapeHtml(row.accountId)} · existe=${row.accountExists ? 'si' : 'no'} · accountAmount=${escapeHtml(String(row.accountAmount))}</div>
+          <div>entryPath=${escapeHtml(row.entryPath)}</div>
+          <div>updatedAtPath=${escapeHtml(row.updatedAtPath)}</div>
+          <div>entryExists=${row.entryExists ? 'si' : 'no'}${row.entryExists ? ` · entryValue=${escapeHtml(String(row.entryValue))}` : ''}</div>
+          <div>processedPath=${escapeHtml(row.processedPath)}</div>
+        </article>
+      `).join('') : '<p style="margin:0;color:#cbd5e1;">Sin transacciones recientes posteriores al startAt.</p>'}
+    </div>
+  `;
+  panel.querySelector('[data-shortcut-process-now]')?.addEventListener('click', () => {
+    setShortcutDiagnosticSnapshot({ status: 'manual-apply-started', error: null });
+    void diagnoseShortcutTransactions({ apply: true, reason: 'shortcut-diagnostic-button' });
+  });
+  panel.querySelector('[data-shortcut-diagnostic-close]')?.addEventListener('click', () => {
+    panel.remove();
+  });
+  return panel;
+}
+
+function serializeShortcutError(error = null) {
+  if (!error) return null;
+  return {
+    name: String(error?.name || ''),
+    code: String(error?.code || ''),
+    message: String(error?.message || error || ''),
+    stack: String(error?.stack || ''),
+  };
+}
+
+async function readShortcutIntegrationStartAt() {
+  const path = shortcutIntegrationPath('config/shortcutIntegrationStartAt');
+  try {
+    const snap = await get(ref(db, path));
+    const config = {
+      path,
+      configured: Boolean(snap?.exists?.()),
+      startAt: normalizeShortcutIntegrationStartAt(snap?.val()),
+    };
+    console.info('[ShortcutIntegration] config read', config);
+    return config;
+  } catch (error) {
+    console.error('[ShortcutIntegration] could not read shortcutIntegrationStartAt; using default', {
+      path,
+      defaultStartAt: DEFAULT_SHORTCUT_INTEGRATION_START_AT,
+      error,
+    });
+    return { path, configured: false, startAt: DEFAULT_SHORTCUT_INTEGRATION_START_AT };
+  }
+}
+
+async function readShortcutProcessedMap() {
+  const path = `${state.financePath}/integrations/shortcutProcessed`;
+  try {
+    const snap = await get(ref(db, path));
+    const value = snap?.val();
+    const processedMap = value && typeof value === 'object' ? value : {};
+    console.info('[ShortcutIntegration] processed marks read', {
+      path,
+      count: Object.keys(processedMap).length,
+      ids: Object.keys(processedMap),
+    });
+    return processedMap;
+  } catch (error) {
+    console.error('[ShortcutIntegration] could not read processed marks', { path, error });
+    throw error;
+  }
+}
+
+function logShortcutDiagnostics(diagnostics = [], { apply = false, startAt = DEFAULT_SHORTCUT_INTEGRATION_START_AT } = {}) {
+  const rows = diagnostics.map((item) => ({
+    transactionId: item.transactionId,
+    status: item.status,
+    reason: item.reason || '',
+    processed: item.processed,
+    type: item.type,
+    accountId: item.accountId,
+    accountAmount: item.accountAmount,
+    date: item.date,
+    createdAt: item.createdAt,
+    processedPath: item.processedPath,
+    routes: item.routes.join(' | '),
+  }));
+  const counts = rows.reduce((acc, row) => {
+    acc[row.status] = (acc[row.status] || 0) + 1;
+    return acc;
+  }, {});
+  const candidateCount = rows.filter((row) => ['pending', 'processed', 'rejected'].includes(row.status)).length;
+  console.groupCollapsed(`[ShortcutIntegration] dry-run ${apply ? '+ apply' : 'only'} startAt=${startAt} transactions=${rows.length} candidates=${candidateCount}`);
+  console.info('[ShortcutIntegration] candidate counts', { totalTransactions: rows.length, candidateCount, counts });
+  if (rows.length) console.table(rows);
+  else console.info('[finance:shortcut] no compatible external movements detected');
+  console.groupEnd();
+}
+
+function buildShortcutAggregateUpdatesAfterEntries(pendingDiagnostics = [], recomputeUpdates = {}) {
+  const simulatedRoot = clonePlain(buildMergedFinanceSnapshotRoot()) || {};
+  applyFinanceAbsoluteUpdatesToRoot(simulatedRoot, recomputeUpdates, state.financePath);
+  const simulatedAccounts = Object.values(simulatedRoot.accounts || {})
+    .map(normalizeFinanceAccountRecord)
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  const bucketKeysByMode = mergeAggregateBucketKeys(pendingDiagnostics.map((item) => item.row));
+  return buildAggregateUpdatesForBucketKeys(bucketKeysByMode, simulatedAccounts, balanceTxList());
+}
+
+async function reconcileShortcutTransactionsNow({ apply = true, reason = 'shortcut-reconcile' } = {}) {
+  if (!state.financePath || !db || !get || !ref || !update) return { applied: 0, pending: 0, diagnostics: [] };
+  ensureShortcutIntegrationBadge();
+  renderShortcutDiagnosticPanel();
+  setShortcutDiagnosticSnapshot({
+    status: apply ? 'diagnosing-apply' : 'diagnosing',
+    error: null,
+    write: { executed: false, ok: false, processedOk: 0 },
+  });
+  console.info('[ShortcutIntegration] boot started', {
+    apply,
+    reason,
+    financePath: state.financePath,
+    transactionCount: Object.keys(state.balance?.transactions || {}).length,
+    accountCount: (state.accounts || []).length,
+    serviceWorkerControlled: !!navigator.serviceWorker?.controller,
+    locationHref: window.location.href,
+  });
+  const config = await readShortcutIntegrationStartAt();
+  state.shortcutIntegrationStartAt = config.startAt;
+  const processed = await readShortcutProcessedMap();
+  const accountsById = Object.fromEntries((state.accounts || []).map((account) => [String(account.id || '').trim(), account]));
+  const diagnostics = buildShortcutTransactionDiagnostics({
+    transactions: state.balance?.transactions || {},
+    accountsById,
+    processed,
+    financePath: state.financePath,
+    startAt: config.startAt,
+  });
+  setShortcutDiagnosticSnapshot({
+    status: 'diagnosed',
+    summary: shortcutDiagnosticSummary(diagnostics, state.balance?.transactions || {}, config.startAt),
+    rows: normalizeShortcutDiagnosticRows(diagnostics),
+    latest: normalizeShortcutDiagnosticRows(diagnostics)[0] || null,
+  });
+  logShortcutDiagnostics(diagnostics, { apply, startAt: config.startAt });
+  const pending = diagnostics.filter((item) => item.status === 'pending');
+  console.info('[ShortcutIntegration] pending candidates', {
+    count: pending.length,
+    ids: pending.map((item) => item.transactionId),
+    rejected: diagnostics.filter((item) => item.status === 'rejected').map((item) => ({ id: item.transactionId, reason: item.reason })),
+    processed: diagnostics.filter((item) => item.status === 'processed').map((item) => ({ id: item.transactionId, processedPath: item.processedPath })),
+  });
+  const processedAudit = diagnostics.filter((item) => item.status === 'processed').map((item) => {
+    const account = findFinanceAccountById(item.accountId) || {};
+    const entry = account?.entries?.[item.date] || account?.daily?.[item.date] || null;
+    return {
+      transactionId: item.transactionId,
+      processedPath: item.processedPath,
+      accountId: item.accountId,
+      entryPath: `${state.financePath}/accounts/${item.accountId}/entries/${item.date}`,
+      entryExists: Boolean(entry),
+      entryValue: entry ? Number(entry.value || 0) : null,
+    };
+  });
+  if (processedAudit.length) {
+    console.warn('[ShortcutIntegration] processed mark audit', processedAudit);
+  }
+  if (!apply || !pending.length) {
+    setShortcutDiagnosticSnapshot({
+      status: pending.length ? 'pending-dry-run' : 'no-pending',
+      summary: shortcutDiagnosticSummary(diagnostics, state.balance?.transactions || {}, config.startAt),
+      rows: normalizeShortcutDiagnosticRows(diagnostics),
+      write: { executed: false, ok: false, processedOk: 0 },
+    });
+    return { applied: 0, pending: pending.length, diagnostics };
+  }
+
+  const accountIds = [...new Set(pending.map((item) => item.accountId).filter(Boolean))];
+  const recomputeStart = pending.map((item) => item.date).filter(Boolean).sort()[0] || dayKeyFromTs(nowTs());
+  const recomputeUpdates = buildRecomputedFinanceAccountEntriesUpdates(accountIds, recomputeStart);
+  const entryPathsByAccount = Object.fromEntries(accountIds.map((accountId) => [
+    accountId,
+    Object.keys(recomputeUpdates).filter((path) => path.startsWith(`${state.financePath}/accounts/${accountId}/entries/`)),
+  ]));
+  const missingEntryAccounts = accountIds.filter((accountId) => !entryPathsByAccount[accountId]?.length);
+  if (missingEntryAccounts.length) {
+    const error = {
+      code: 'shortcut-entry-update-missing',
+      message: `No se generaron updates de entries para: ${missingEntryAccounts.join(', ')}`,
+    };
+    console.error('[ShortcutIntegration] entry guard blocked processed marks', { missingEntryAccounts, recomputeUpdates });
+    setShortcutDiagnosticSnapshot({
+      status: 'blocked-no-entry-update',
+      summary: shortcutDiagnosticSummary(diagnostics, state.balance?.transactions || {}, config.startAt),
+      rows: normalizeShortcutDiagnosticRows(diagnostics),
+      write: { executed: false, ok: false, processedOk: 0, entryPathsByAccount },
+      error: serializeShortcutError(error),
+    });
+    return { applied: 0, pending: pending.length, diagnostics, error };
+  }
+  const processedAt = nowTs();
+  const markerUpdates = Object.fromEntries(pending.map((item) => [
+    shortcutProcessedPath(item.transactionId),
+    {
+      processedAt,
+      version: SHORTCUT_INTEGRATION_VERSION,
+      accountId: item.accountId,
+      type: item.type,
+    },
+  ]));
+  if (!config.configured) {
+    markerUpdates[config.path] = config.startAt;
+  }
+  const aggregateUpdates = buildShortcutAggregateUpdatesAfterEntries(pending, recomputeUpdates);
+  const entryPaths = Object.keys(recomputeUpdates).filter((path) => path.includes('/accounts/') && path.includes('/entries/'));
+  const markerPaths = Object.keys(markerUpdates).filter((path) => path.includes('/integrations/shortcutProcessed/'));
+  console.info('[ShortcutIntegration] atomic write plan', {
+    accounts: accountIds,
+    recomputeStart,
+    entryPaths,
+    markerPaths,
+    aggregatePaths: Object.keys(aggregateUpdates),
+    configPathWritten: config.configured ? '' : config.path,
+  });
+  setShortcutDiagnosticSnapshot({
+    status: 'atomic-write-planned',
+    summary: shortcutDiagnosticSummary(diagnostics, state.balance?.transactions || {}, config.startAt),
+    rows: normalizeShortcutDiagnosticRows(diagnostics),
+    write: {
+      executed: false,
+      ok: false,
+      processedOk: 0,
+      entryPaths,
+      markerPaths,
+      aggregatePaths: Object.keys(aggregateUpdates),
+      configPathWritten: config.configured ? '' : config.path,
+    },
+  });
+
+  try {
+    await persistRecomputedFinanceAccountEntries(accountIds, recomputeStart, reason, {
+      precomputedUpdates: recomputeUpdates,
+      extraUpdates: {
+        ...aggregateUpdates,
+        ...markerUpdates,
+      },
+      applyLocalBeforeWrite: false,
+      throwOnError: true,
+    });
+    const writeResult = {
+      executed: true,
+      ok: true,
+      processedOk: pending.length,
+      updateCount: Object.keys({ ...recomputeUpdates, ...aggregateUpdates, ...markerUpdates }).length,
+      entryPaths,
+      markerPaths,
+      aggregatePaths: Object.keys(aggregateUpdates),
+      configPathWritten: config.configured ? '' : config.path,
+    };
+    console.info('[ShortcutIntegration] atomic write result', {
+      ok: true,
+      updateCount: writeResult.updateCount,
+      markerPaths,
+      entryPaths,
+    });
+    setShortcutDiagnosticSnapshot({
+      status: 'atomic-write-ok',
+      summary: shortcutDiagnosticSummary(diagnostics, state.balance?.transactions || {}, config.startAt),
+      rows: normalizeShortcutDiagnosticRows(diagnostics),
+      write: writeResult,
+      error: null,
+    });
+  } catch (error) {
+    console.error('[ShortcutIntegration] atomic write result', {
+      ok: false,
+      pending: pending.map((item) => item.transactionId),
+      markerPaths,
+      entryPaths,
+      error,
+    });
+    setShortcutDiagnosticSnapshot({
+      status: 'atomic-write-error',
+      summary: shortcutDiagnosticSummary(diagnostics, state.balance?.transactions || {}, config.startAt),
+      rows: normalizeShortcutDiagnosticRows(diagnostics),
+      write: {
+        executed: true,
+        ok: false,
+        processedOk: 0,
+        entryPaths,
+        markerPaths,
+        aggregatePaths: Object.keys(aggregateUpdates),
+        configPathWritten: config.configured ? '' : config.path,
+      },
+      error: serializeShortcutError(error),
+    });
+    return { applied: 0, pending: pending.length, diagnostics, error };
+  }
+
+  accountIds.forEach((accountId) => queueAccountGoogleSheetsHistoryCreate(accountId));
+  applyPatchedFinanceCaches(reason);
+  setShortcutDiagnosticSnapshot({
+    status: 'applied',
+    rows: normalizeShortcutDiagnosticRows(diagnostics),
+  });
+  console.info('[ShortcutIntegration] applied external movements', {
+    count: pending.length,
+    transactionIds: pending.map((item) => item.transactionId),
+    accounts: accountIds,
+    recomputeStart,
+  });
+  return { applied: pending.length, pending: pending.length, diagnostics };
+}
+
+function reconcileShortcutTransactions(options = {}) {
+  if (financeShortcutReconcilePromise) return financeShortcutReconcilePromise;
+  financeShortcutReconcilePromise = reconcileShortcutTransactionsNow(options)
+    .catch((error) => {
+      console.error('[finance:shortcut] reconciliation crashed', error);
+      return { applied: 0, pending: 0, diagnostics: [], error };
+    })
+    .finally(() => {
+      financeShortcutReconcilePromise = null;
+    });
+  return financeShortcutReconcilePromise;
+}
+
+function diagnoseShortcutTransactions(options = {}) {
+  return reconcileShortcutTransactions(options);
 }
 
 function metricValue(row, scope = 'my', metric = 'netOperative') {
@@ -12888,7 +13439,7 @@ function renderFinanceHome(accounts, totalSeries) {
     console.warn("[FINANCE_EXPORT_BUTTON] renderizado");
     return `
       <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
-        <div style="margin:0 0 12px 0;padding:12px 14px;border:2px solid #ff3b30;border-radius:14px;background:#fff3cd;color:#7a1c00;font-weight:800;text-align:center;letter-spacing:.04em;">DEBUG FINANCE FASE2 CARGADO</div>
+        
         ${primaryPanel}
         ${renderAccountHistoryMigrationDevTools()}
         <article class="finance__accounts">
@@ -12906,7 +13457,7 @@ function renderFinanceHome(accounts, totalSeries) {
   console.warn("[FINANCE_EXPORT_BUTTON] renderizado");
   return `
     <section class="finance-home ${toneClass(totalRange.delta)} finance-home--${homePanelView}">
-      <div style="margin:0 0 12px 0;padding:12px 14px;border:2px solid #ff3b30;border-radius:14px;background:#fff3cd;color:#7a1c00;font-weight:800;text-align:center;letter-spacing:.04em;">DEBUG FINANCE FASE2 CARGADO</div>
+      
       <article class="finance__hero"><div class="financePanelTopbar"><div class="financePanelHeading"><p class="finance__eyebrow">TOTAL</p></div><select class="finance-pill financeTotalCurrencySelect" data-finance-total-currency aria-label="Moneda del total">${renderCurrencyOptions(state.financeTotalCurrency || getDefaultCurrency())}</select>${renderFinanceHomePanelToggle('hero')}</div><h2 id="finance-totalValue">${formatFinanceTotal(total)}</h2>
         <p id="finance-totalDelta" class="${toneClass(totalRange.delta)}">${fmtSignedFinanceTotal(totalRange.delta)} · ${fmtSignedPercent(totalRange.deltaPct)}</p>
         <p>Saldo real: <strong>${formatFinanceTotal(totalReal)}</strong> · Mi parte: <strong>${formatFinanceTotal(total)}</strong></p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos para este rango.</div>'}</div></article>
@@ -17097,18 +17648,30 @@ function buildMergedFinanceSnapshotRoot() {
   return mergeFinanceRoots(financeRootsCache.newRoot, financeRootsCache.legacyRoot);
 }
 
-async function persistRecomputedFinanceAccountEntries(accountIds = [], fromDay = '', reason = 'finance-account-recompute') {
+function buildRecomputedFinanceAccountEntriesUpdates(accountIds = [], fromDay = '') {
   const uniqueAccountIds = [...new Set((Array.isArray(accountIds) ? accountIds : [accountIds]).map((value) => String(value || '').trim()).filter(Boolean))];
-  if (!uniqueAccountIds.length) return {};
   const root = buildMergedFinanceSnapshotRoot();
   const updatesMap = {};
   uniqueAccountIds.forEach((accountId) => {
     Object.assign(updatesMap, buildFinanceAccountEntriesUpdates(root, accountId, fromDay));
   });
+  return updatesMap;
+}
+
+async function persistRecomputedFinanceAccountEntries(accountIds = [], fromDay = '', reason = 'finance-account-recompute', options = {}) {
+  const uniqueAccountIds = [...new Set((Array.isArray(accountIds) ? accountIds : [accountIds]).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (!uniqueAccountIds.length) return {};
+  const updatesMap = { ...(options?.precomputedUpdates || buildRecomputedFinanceAccountEntriesUpdates(uniqueAccountIds, fromDay)) };
+  Object.entries(options?.extraUpdates || {}).forEach(([path, value]) => {
+    if (String(path || '').trim()) updatesMap[path] = value;
+  });
   if (!Object.keys(updatesMap).length) return {};
-  applyFinanceAbsoluteUpdatesToCaches(updatesMap);
-  syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
-  clearFinanceDerivedCaches();
+  const shouldApplyLocalBeforeWrite = options?.applyLocalBeforeWrite !== false;
+  if (shouldApplyLocalBeforeWrite) {
+    applyFinanceAbsoluteUpdatesToCaches(updatesMap);
+    syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
+    clearFinanceDerivedCaches();
+  }
   logFirebaseWrite({
     module: 'finance',
     path: `${state.financePath}/accounts`,
@@ -17121,9 +17684,16 @@ async function persistRecomputedFinanceAccountEntries(accountIds = [], fromDay =
     },
   });
   try {
-    await safeFirebase(() => update(ref(db), updatesMap));
+    if (options?.throwOnError) await update(ref(db), updatesMap);
+    else await safeFirebase(() => update(ref(db), updatesMap));
   } catch (error) {
     console.warn('[finance] no se pudo persistir la recomputacion puntual de cuenta', error);
+    if (options?.throwOnError) throw error;
+  }
+  if (!shouldApplyLocalBeforeWrite) {
+    applyFinanceAbsoluteUpdatesToCaches(updatesMap);
+    syncLocalAccountsFromRoot(buildMergedFinanceSnapshotRoot());
+    clearFinanceDerivedCaches();
   }
   return updatesMap;
 }
@@ -20489,6 +21059,7 @@ function financeDomReady() {
 
 async function boot() {
   if (state.booted) return;
+  console.info('[ShortcutIntegration] boot started', { stage: 'finance-boot-entry', moduleUrl: import.meta.url });
   await ensureFinanceLoaded();
   if (!auth?.currentUser) {
     log('boot deferred: auth not ready yet');
@@ -20524,6 +21095,7 @@ async function boot() {
   log('init ok', { financePath: state.financePath });
   bindEvents();
   await loadDataOnce();
+  await reconcileShortcutTransactions({ apply: true, reason: 'shortcut-reconcile:boot' });
   await ensurePersonalRatioMigrationV1();
   subscribe();
   const openedFromDeepLink = await processFinanceNewMovementDeepLink();
@@ -20562,6 +21134,7 @@ export async function init() {
 }
 
 export async function onShow() {
+  void reconcileShortcutTransactions({ apply: true, reason: 'shortcut-reconcile:on-show' });
   requestAnimationFrame(() => {
     try { financeStatsDonutChart?.resize?.(); } catch (_) {}
     try { financeWealthDonutChart?.resize?.(); } catch (_) {}

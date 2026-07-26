@@ -1,8 +1,9 @@
 console.info("[finance/index] parsed ok");
 
-const FINANCE_RUNTIME_VERSION = "2026-07-23-cache-refresh-3560924";
+const FINANCE_RUNTIME_VERSION = "2026-07-26-shortcut-reconcile-debug";
 const FINANCE_RUNTIME_URL = "./runtime.js?v=" + FINANCE_RUNTIME_VERSION;
 let runtimeModule = null;
+console.info("[ShortcutIntegration] finance index loaded", { runtimeUrl: FINANCE_RUNTIME_URL, moduleUrl: import.meta.url });
 
 async function importFinanceModule(modulePath) {
   console.info("[finance import start]", modulePath);

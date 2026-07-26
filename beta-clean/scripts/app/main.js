@@ -89,8 +89,8 @@ const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
 const APP_PUBLISHED_COMMIT = "3560924";
-const SERVICE_WORKER_VERSION = "2026-07-23-cache-refresh-3560924";
-const FINANCE_MODULE_VERSION = "2026-07-23-cache-refresh-3560924";
+const SERVICE_WORKER_VERSION = "2026-07-26-shortcut-reconcile-debug";
+const FINANCE_MODULE_VERSION = "2026-07-26-shortcut-reconcile-debug";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
@@ -1398,6 +1398,21 @@ function scheduleLikelyVendorWarmup(viewId) {
 
 async function registerAppServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
+  const isLocalhost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+  if (isLocalhost) {
+    console.warn("[offline:init] service-worker disabled on localhost/Go Live", {
+      hostname: window.location.hostname,
+      controller: !!navigator.serviceWorker.controller,
+    });
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((reg) => reg.unregister()));
+      console.warn("[offline:init] localhost service-workers unregistered", { count: regs.length });
+    } catch (error) {
+      console.warn("[offline:init] localhost service-worker cleanup failed", error);
+    }
+    return null;
+  }
   try {
     const swUrl = new URL("../../service-worker.js", import.meta.url);
     swUrl.searchParams.set("v", SERVICE_WORKER_VERSION);

@@ -121,6 +121,7 @@ const DEFAULT_PRODUCT_TYPE_OPTIONS = Object.freeze([
 const PRODUCT_WEIGHT_UNIT_OPTIONS = Object.freeze(['g', 'kg', 'ml', 'l', 'ud']);
 const FINANCE_CORE_BRANCHES = Object.freeze([
   { key: 'accounts', path: 'accounts', fallback: {} },
+  { key: 'preferences', path: 'preferences', fallback: {} },
   { key: 'transactions', path: 'transactions', fallback: {} },
   { key: 'tx', path: 'tx', fallback: {} },
   { key: 'movements', path: 'movements', fallback: {} },
@@ -147,7 +148,7 @@ const financeDerivedCache = {
   txList: { balanceRef: null, financePath: '', rows: [] },
   recurring: { recurringRef: null, monthMap: new Map() },
   categories: { categoriesKey: '', txRowsRef: null, rows: [] },
-  accountModels: { accountsRef: null, legacyEntriesRef: null, btcEurPrice: Number.NaN, rangeMode: '', rows: [] },
+  accountModels: { accountsRef: null, legacyEntriesRef: null, accountOrderKey: '', btcEurPrice: Number.NaN, rangeMode: '', rows: [] },
   accountMerge: { accountsRef: null, balanceRef: null, goalsRef: null, model: null },
   totalSeries: { accountsRef: null, rows: [] },
 };
@@ -202,6 +203,7 @@ function clearFinanceDerivedCaches() {
   financeDerivedCache.categories.rows = [];
   financeDerivedCache.accountModels.accountsRef = null;
   financeDerivedCache.accountModels.legacyEntriesRef = null;
+  financeDerivedCache.accountModels.accountOrderKey = '';
   financeDerivedCache.accountModels.btcEurPrice = Number.NaN;
   financeDerivedCache.accountModels.rangeMode = '';
   financeDerivedCache.accountModels.rows = [];
@@ -9359,6 +9361,52 @@ function normalizeLegacyEntries(entriesMap = {}) {
   return grouped;
 }
 
+function normalizeFinanceAccountOrder(value = {}) {
+  const order = {};
+  if (Array.isArray(value)) {
+    value.forEach((id, index) => {
+      const safeId = String(id || '').trim();
+      if (safeId) order[safeId] = index;
+    });
+    return order;
+  }
+  if (!value || typeof value !== 'object') return order;
+  Object.entries(value).forEach(([id, rank]) => {
+    const safeId = String(id || '').trim();
+    const safeRank = Number(rank);
+    if (safeId && Number.isFinite(safeRank)) order[safeId] = safeRank;
+  });
+  return order;
+}
+
+function buildFinanceAccountOrderMap(accountIds = []) {
+  return Object.fromEntries(
+    (Array.isArray(accountIds) ? accountIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+      .map((id, index) => [id, index])
+  );
+}
+
+function getFinanceAccountOrderKey(order = state.financePreferences?.accountOrder || {}) {
+  return JSON.stringify(
+    Object.entries(normalizeFinanceAccountOrder(order))
+      .sort((a, b) => (a[1] - b[1]) || a[0].localeCompare(b[0]))
+  );
+}
+
+function sortFinanceAccountsByPreference(accounts = [], order = state.financePreferences?.accountOrder || {}) {
+  const normalizedOrder = normalizeFinanceAccountOrder(order);
+  return accounts
+    .map((account, index) => ({ account, index, rank: normalizedOrder[String(account?.id || '').trim()] }))
+    .sort((a, b) => {
+      const rankA = Number.isFinite(a.rank) ? a.rank : Number.POSITIVE_INFINITY;
+      const rankB = Number.isFinite(b.rank) ? b.rank : Number.POSITIVE_INFINITY;
+      return (rankA - rankB) || (a.index - b.index);
+    })
+    .map((item) => item.account);
+}
+
 function getRangeBounds(mode, anchorDate = new Date()) {
   const now = new Date(anchorDate);
   if (mode === 'total') return { start: -Infinity, end: Infinity };
@@ -9449,9 +9497,11 @@ async function ensureBtcEurPrice(force = false) {
 
 function buildAccountModels() {
   const cache = financeDerivedCache.accountModels;
+  const accountOrderKey = getFinanceAccountOrderKey();
   if (
     cache.accountsRef === state.accounts &&
     cache.legacyEntriesRef === state.legacyEntries &&
+    cache.accountOrderKey === accountOrderKey &&
     cache.btcEurPrice === state.btcEurPrice &&
     cache.rangeMode === state.rangeMode
   ) {
@@ -9502,10 +9552,11 @@ function buildAccountModels() {
 
   cache.accountsRef = state.accounts;
   cache.legacyEntriesRef = state.legacyEntries;
+  cache.accountOrderKey = accountOrderKey;
   cache.btcEurPrice = state.btcEurPrice;
   cache.rangeMode = state.rangeMode;
-  cache.rows = rows;
-  return rows;
+  cache.rows = sortFinanceAccountsByPreference(rows);
+  return cache.rows;
 }
 
 function buildTotalSeries(accounts) {
@@ -13395,7 +13446,7 @@ function renderFinanceAccountCard(account = {}, { deleteLabel = '🗑️' } = {}
   const sharedPart = account.shared ? Number(account.current || 0) : 0;
   const assetType = normalizeAccountAssetType(account);
   const assetLabel = assetType === 'investment' ? '<span class="finance-pill finance-pill--mini financeAccountCard__assetTag">Inversión</span>' : (assetType === 'crypto' ? '<span class="finance-pill finance-pill--mini financeAccountCard__assetTag">Crypto</span>' : '');
-  return `<article class="financeAccountCard ${toneClass(account.range.delta)}" data-open-detail="${escapeHtml(account.id)}">
+  return `<article class="financeAccountCard finance-account-card ${toneClass(account.range.delta)}" data-open-detail="${escapeHtml(account.id)}" data-account-id="${escapeHtml(account.id)}" tabindex="0" role="button" aria-grabbed="false">
     <div class="financeAccountCard__main">
       <strong class="financeAccountCard__title">${escapeHtml(account.name)}</strong>
       ${assetLabel}
@@ -17633,6 +17684,11 @@ function applyRemoteData(val = {}, replace = false) {
     lastSeenMonthKey: root.balance?.lastSeenMonthKey || (replace ? '' : state.balance.lastSeenMonthKey)
   };
   state.goals = { goals: root.goals?.goals || (replace ? {} : state.goals.goals) };
+  state.financePreferences = {
+    ...(replace ? {} : state.financePreferences || {}),
+    ...(root.preferences && typeof root.preferences === 'object' ? root.preferences : {}),
+    accountOrder: normalizeFinanceAccountOrder(root.preferences?.accountOrder || (replace ? {} : state.financePreferences?.accountOrder || {})),
+  };
   state.productsHub = normalizeProductsHub(root.shoppingHub || (replace ? {} : state.productsHub));
   syncFinanceAchievementsApi();
   financeDebug('sample tx', balanceTxList().slice(0, 5));
@@ -17834,6 +17890,7 @@ function mergeFinanceRoots(newRoot = {}, legacyRoot = {}) {
     foodItems: pick('foodItems', true),
     shoppingHub: pick('shoppingHub', true),
     goals: pick('goals', true),
+    preferences: pick('preferences', true),
     accountsEntries: pick('accountsEntries', true),
     entries: pick('entries', true)
   };
@@ -18485,12 +18542,338 @@ async function render() {
   }
 }
 
+const FINANCE_ACCOUNT_REORDER_HOLD_MS = 1000;
+const FINANCE_ACCOUNT_REORDER_CANCEL_PX = 8;
+const FINANCE_ACCOUNT_REORDER_AUTOSCROLL_EDGE_PX = 76;
+const FINANCE_ACCOUNT_REORDER_AUTOSCROLL_MAX_PX = 16;
+
+function isFinanceAccountReorderInteractiveTarget(target) {
+  return Boolean(target?.closest?.('input, textarea, select, button, a, [contenteditable="true"], [data-account-input], [data-account-save], [data-delete-account]'));
+}
+
+function getFinanceAccountsListFromCard(card) {
+  const list = card?.closest?.('#finance-accountsList');
+  return list || null;
+}
+
+function getFinanceAccountCards(list) {
+  return [...(list?.querySelectorAll?.('.financeAccountCard[data-open-detail]') || [])];
+}
+
+function getFinanceAccountIdsFromList(list) {
+  return getFinanceAccountCards(list).map((card) => String(card.dataset.openDetail || '').trim()).filter(Boolean);
+}
+
+function ordersMatch(a = [], b = []) {
+  if (a.length !== b.length) return false;
+  return a.every((id, index) => id === b[index]);
+}
+
+function restoreFinanceAccountDomOrder(list, accountIds = []) {
+  if (!list) return;
+  const cardsById = new Map(getFinanceAccountCards(list).map((card) => [String(card.dataset.openDetail || ''), card]));
+  accountIds.forEach((id) => {
+    const card = cardsById.get(String(id || ''));
+    if (card) {
+      list.appendChild(card);
+      cardsById.delete(String(id || ''));
+    }
+  });
+  cardsById.forEach((card) => list.appendChild(card));
+}
+
+function animateFinanceAccountListReflow(list, mutate) {
+  if (!list || typeof mutate !== 'function') return;
+  const cards = getFinanceAccountCards(list).filter((card) => !card.classList.contains('is-dragging'));
+  const before = new Map(cards.map((card) => [card, card.getBoundingClientRect()]));
+  mutate();
+  cards.forEach((card) => {
+    const first = before.get(card);
+    if (!first || !card.isConnected) return;
+    const last = card.getBoundingClientRect();
+    const dx = first.left - last.left;
+    const dy = first.top - last.top;
+    if (!dx && !dy) return;
+    card.style.transition = 'none';
+    card.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+    requestAnimationFrame(() => {
+      card.style.transition = 'transform 180ms ease';
+      card.style.transform = '';
+      window.setTimeout(() => {
+        if (!card.classList.contains('is-dragging')) {
+          card.style.transition = '';
+          card.style.transform = '';
+        }
+      }, 220);
+    });
+  });
+}
+
+function markFinanceAccountReorderClickSuppressed(view, accountId = '') {
+  if (!view) return;
+  view.dataset.financeAccountReorderSuppressClick = String(accountId || '*');
+  window.setTimeout(() => {
+    if (view.dataset.financeAccountReorderSuppressClick) {
+      delete view.dataset.financeAccountReorderSuppressClick;
+    }
+  }, 450);
+}
+
+function clearFinanceAccountReorderCard(card) {
+  if (!card) return;
+  card.classList.remove('is-drag-armed', 'is-dragging', 'is-drop-target');
+  card.setAttribute('aria-grabbed', 'false');
+  card.style.position = '';
+  card.style.left = '';
+  card.style.top = '';
+  card.style.width = '';
+  card.style.height = '';
+  card.style.margin = '';
+  card.style.zIndex = '';
+  card.style.transform = '';
+  card.style.pointerEvents = '';
+}
+
+function clearFinanceAccountReorderList(list) {
+  if (!list) return;
+  list.classList.remove('is-reordering');
+  list.querySelectorAll('.is-drop-target').forEach((el) => el.classList.remove('is-drop-target'));
+}
+
+async function persistFinanceAccountOrder(accountIds = [], previousOrder = {}) {
+  const nextOrder = buildFinanceAccountOrderMap(accountIds);
+  const previousNormalized = normalizeFinanceAccountOrder(previousOrder);
+  const path = `${resolveFinancePath()}/preferences/accountOrder`;
+  state.financePreferences = { ...(state.financePreferences || {}), accountOrder: nextOrder };
+  clearFinanceDerivedCaches();
+  logFirebaseWrite({
+    module: 'finance',
+    path,
+    reason: 'finance-account-manual-order',
+    viewId: 'view-finance',
+    extra: { accountCount: accountIds.length },
+  });
+  try {
+    await set(ref(db, path), nextOrder);
+    applyFinanceAbsoluteUpdatesToCaches({ [path]: nextOrder });
+    scheduleFinanceSnapshotSave('account-order');
+  } catch (error) {
+    console.warn('[finance] no se pudo guardar el orden de cuentas', error);
+    state.financePreferences = { ...(state.financePreferences || {}), accountOrder: previousNormalized };
+    clearFinanceDerivedCaches();
+    toast('No se pudo guardar el orden');
+    await triggerRender({ preserveUi: false });
+    return false;
+  }
+  await triggerRender({ preserveUi: false });
+  return true;
+}
+
 function bindEvents() {
   
   const view = document.getElementById('view-finance'); if (!view || view.dataset.financeBound === '1') return; view.dataset.financeBound = '1';
   state.eventsAbortController = new AbortController();
   const evtOpts = { signal: state.eventsAbortController.signal };
   const chartEvtOpts = { signal: state.eventsAbortController.signal, passive: false };
+  const accountReorder = {
+    mode: 'idle',
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    lastY: 0,
+    timer: 0,
+    card: null,
+    list: null,
+    placeholder: null,
+    originalIds: [],
+    previousOrder: {},
+    originNext: null,
+    dragTop: 0,
+    dragHeight: 0,
+    autoscrollRaf: 0,
+  };
+
+  const stopAccountReorderAutoscroll = () => {
+    if (accountReorder.autoscrollRaf) cancelAnimationFrame(accountReorder.autoscrollRaf);
+    accountReorder.autoscrollRaf = 0;
+  };
+
+  const updateAccountReorderPlaceholder = (clientY) => {
+    const { list, card, placeholder } = accountReorder;
+    if (!list || !card || !placeholder) return;
+    let inserted = false;
+    let nextParent = list;
+    let nextBefore = null;
+    getFinanceAccountCards(list).forEach((candidate) => {
+      if (inserted || candidate === card) return;
+      const rect = candidate.getBoundingClientRect();
+      if (clientY < rect.top + rect.height / 2) {
+        nextBefore = candidate;
+        inserted = true;
+      }
+    });
+    if (!inserted) nextBefore = null;
+    if (placeholder.parentElement === nextParent && placeholder.nextElementSibling === nextBefore) return;
+    animateFinanceAccountListReflow(list, () => {
+      if (nextBefore) nextParent.insertBefore(placeholder, nextBefore);
+      else nextParent.appendChild(placeholder);
+    });
+  };
+
+  const scheduleAccountReorderAutoscroll = () => {
+    if (accountReorder.autoscrollRaf || accountReorder.mode !== 'dragging') return;
+    accountReorder.autoscrollRaf = requestAnimationFrame(() => {
+      accountReorder.autoscrollRaf = 0;
+      if (accountReorder.mode !== 'dragging') return;
+      const edge = FINANCE_ACCOUNT_REORDER_AUTOSCROLL_EDGE_PX;
+      const y = accountReorder.lastY;
+      let delta = 0;
+      if (y < edge) delta = -Math.min(FINANCE_ACCOUNT_REORDER_AUTOSCROLL_MAX_PX, edge - y);
+      else if (y > window.innerHeight - edge) delta = Math.min(FINANCE_ACCOUNT_REORDER_AUTOSCROLL_MAX_PX, y - (window.innerHeight - edge));
+      if (delta) {
+        window.scrollBy({ top: delta, left: 0, behavior: 'auto' });
+        updateAccountReorderPlaceholder(y);
+        scheduleAccountReorderAutoscroll();
+      }
+    });
+  };
+
+  const resetAccountReorderState = () => {
+    if (accountReorder.timer) clearTimeout(accountReorder.timer);
+    stopAccountReorderAutoscroll();
+    accountReorder.mode = 'idle';
+    accountReorder.pointerId = null;
+    accountReorder.timer = 0;
+    accountReorder.card = null;
+    accountReorder.list = null;
+    accountReorder.placeholder = null;
+    accountReorder.originalIds = [];
+    accountReorder.previousOrder = {};
+    accountReorder.originNext = null;
+  };
+
+  const cancelAccountReorder = ({ restore = true } = {}) => {
+    const { card, list, placeholder, originalIds, originNext } = accountReorder;
+    if (accountReorder.mode === 'pending') {
+      clearFinanceAccountReorderCard(card);
+      resetAccountReorderState();
+      return;
+    }
+    if (placeholder?.parentElement) placeholder.remove();
+    if (card && list && restore) {
+      if (originNext?.parentElement === list) list.insertBefore(card, originNext);
+      else list.appendChild(card);
+      restoreFinanceAccountDomOrder(list, originalIds);
+    }
+    clearFinanceAccountReorderCard(card);
+    clearFinanceAccountReorderList(list);
+    resetAccountReorderState();
+  };
+
+  const armPointerAccountReorder = (event, card, list) => {
+    accountReorder.mode = 'pending';
+    accountReorder.pointerId = event.pointerId;
+    accountReorder.startX = event.clientX;
+    accountReorder.startY = event.clientY;
+    accountReorder.lastY = event.clientY;
+    accountReorder.card = card;
+    accountReorder.list = list;
+    accountReorder.originalIds = getFinanceAccountIdsFromList(list);
+    accountReorder.previousOrder = normalizeFinanceAccountOrder(state.financePreferences?.accountOrder || {});
+    accountReorder.originNext = card.nextElementSibling;
+    card.classList.add('is-drag-armed');
+    accountReorder.timer = window.setTimeout(() => {
+      if (accountReorder.mode !== 'pending' || accountReorder.card !== card) return;
+      const rect = card.getBoundingClientRect();
+      const placeholder = document.createElement('div');
+      placeholder.className = 'finance-account-card finance-account-drag-placeholder is-drop-target';
+      placeholder.setAttribute('aria-hidden', 'true');
+      placeholder.style.height = `${rect.height}px`;
+      card.parentElement.insertBefore(placeholder, card);
+      accountReorder.placeholder = placeholder;
+      accountReorder.mode = 'dragging';
+      accountReorder.dragTop = rect.top;
+      accountReorder.dragHeight = rect.height;
+      list.classList.add('is-reordering');
+      card.classList.remove('is-drag-armed');
+      card.classList.add('is-dragging');
+      card.setAttribute('aria-grabbed', 'true');
+      card.style.position = 'fixed';
+      card.style.left = `${rect.left}px`;
+      card.style.top = `${rect.top}px`;
+      card.style.width = `${rect.width}px`;
+      card.style.height = `${rect.height}px`;
+      card.style.margin = '0';
+      card.style.zIndex = '1000';
+      card.style.pointerEvents = 'none';
+      try { card.setPointerCapture?.(event.pointerId); } catch (_) {}
+      try { navigator.vibrate?.(12); } catch (_) {}
+      scheduleAccountReorderAutoscroll();
+    }, FINANCE_ACCOUNT_REORDER_HOLD_MS);
+  };
+
+  const finishPointerAccountReorder = async (event) => {
+    const { card, list, placeholder, originalIds, previousOrder } = accountReorder;
+    if (accountReorder.mode === 'pending') {
+      cancelAccountReorder({ restore: false });
+      return;
+    }
+    if (accountReorder.mode !== 'dragging' || !card || !list || !placeholder) return;
+    markFinanceAccountReorderClickSuppressed(view, card.dataset.openDetail || '');
+    placeholder.replaceWith(card);
+    clearFinanceAccountReorderCard(card);
+    clearFinanceAccountReorderList(list);
+    const nextIds = getFinanceAccountIdsFromList(list);
+    resetAccountReorderState();
+    try { card.releasePointerCapture?.(event.pointerId); } catch (_) {}
+    if (!ordersMatch(originalIds, nextIds)) {
+      await persistFinanceAccountOrder(nextIds, previousOrder);
+    }
+  };
+
+  const startKeyboardAccountReorder = (card, list) => {
+    accountReorder.mode = 'keyboard';
+    accountReorder.card = card;
+    accountReorder.list = list;
+    accountReorder.originalIds = getFinanceAccountIdsFromList(list);
+    accountReorder.previousOrder = normalizeFinanceAccountOrder(state.financePreferences?.accountOrder || {});
+    list.classList.add('is-reordering');
+    card.classList.add('is-drag-armed');
+    card.setAttribute('aria-grabbed', 'true');
+  };
+
+  const moveKeyboardAccountCard = (direction) => {
+    const { card, list } = accountReorder;
+    if (!card || !list) return;
+    const cards = getFinanceAccountCards(list);
+    const index = cards.indexOf(card);
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= cards.length) return;
+    animateFinanceAccountListReflow(list, () => {
+      if (direction < 0) list.insertBefore(card, cards[nextIndex]);
+      else list.insertBefore(cards[nextIndex], card);
+    });
+    card.classList.add('is-drop-target');
+    window.setTimeout(() => card.classList.remove('is-drop-target'), 180);
+    card.focus({ preventScroll: true });
+  };
+
+  const finishKeyboardAccountReorder = async () => {
+    const { card, list, originalIds, previousOrder } = accountReorder;
+    if (accountReorder.mode !== 'keyboard' || !card || !list) return;
+    const nextIds = getFinanceAccountIdsFromList(list);
+    clearFinanceAccountReorderCard(card);
+    clearFinanceAccountReorderList(list);
+    resetAccountReorderState();
+    if (!ordersMatch(originalIds, nextIds)) {
+      await persistFinanceAccountOrder(nextIds, previousOrder);
+    }
+  };
+
+  const cancelKeyboardAccountReorder = () => {
+    if (accountReorder.mode !== 'keyboard') return;
+    cancelAccountReorder({ restore: true });
+  };
   const unlockFinanceScroll = () => {
     if (!view.dataset.__scrollLocked) return;
     view.dataset.__scrollLocked = '';
@@ -18509,6 +18892,15 @@ function bindEvents() {
 
   view.addEventListener('pointerdown', (event) => {
     const target = event.target;
+    const accountCard = target?.closest?.('#finance-accountsList .financeAccountCard[data-open-detail]');
+    if (
+      accountCard &&
+      !isFinanceAccountReorderInteractiveTarget(target) &&
+      (event.pointerType !== 'mouse' || event.button === 0)
+    ) {
+      const list = getFinanceAccountsListFromCard(accountCard);
+      if (list) armPointerAccountReorder(event, accountCard, list);
+    }
     if (target?.closest?.('[data-products-receipt-add-line]')) {
       event.preventDefault();
       return;
@@ -18535,6 +18927,21 @@ function bindEvents() {
   }, chartEvtOpts);
 
   view.addEventListener('pointermove', (event) => {
+    if (accountReorder.mode === 'pending' && event.pointerId === accountReorder.pointerId) {
+      const dx = event.clientX - accountReorder.startX;
+      const dy = event.clientY - accountReorder.startY;
+      if (Math.hypot(dx, dy) > FINANCE_ACCOUNT_REORDER_CANCEL_PX) {
+        cancelAccountReorder({ restore: false });
+      }
+    } else if (accountReorder.mode === 'dragging' && event.pointerId === accountReorder.pointerId) {
+      event.preventDefault();
+      accountReorder.lastY = event.clientY;
+      const y = event.clientY - accountReorder.startY;
+      accountReorder.card.style.transform = `translate3d(0, ${y}px, 0)`;
+      updateAccountReorderPlaceholder(event.clientY);
+      scheduleAccountReorderAutoscroll();
+      return;
+    }
     const trendChart = event.target.closest('#fin-trendChart');
     if (trendChart) {
       const svg = trendChart.querySelector('svg');
@@ -18606,8 +19013,24 @@ function bindEvents() {
     unlockFinanceScroll();
   };
 
-  view.addEventListener('pointerup', (event) => { endPointer(event); }, chartEvtOpts);
-  view.addEventListener('pointercancel', (event) => { endPointer(event); }, chartEvtOpts);
+  view.addEventListener('pointerup', (event) => {
+    if (event.pointerId === accountReorder.pointerId) {
+      void finishPointerAccountReorder(event);
+    }
+    endPointer(event);
+  }, chartEvtOpts);
+  view.addEventListener('pointercancel', (event) => {
+    if (event.pointerId === accountReorder.pointerId) {
+      cancelAccountReorder({ restore: true });
+    }
+    endPointer(event);
+  }, chartEvtOpts);
+
+  window.addEventListener('blur', () => {
+    if (accountReorder.mode === 'dragging' || accountReorder.mode === 'pending' || accountReorder.mode === 'keyboard') {
+      cancelAccountReorder({ restore: true });
+    }
+  }, evtOpts);
 
   view.addEventListener('pointerleave', (event) => {
     const trendChart = event.target.closest('#fin-trendChart');
@@ -18625,6 +19048,14 @@ function bindEvents() {
 
   view.addEventListener('click', async (event) => {
     const target = event.target;
+    const suppressedAccountClick = view.dataset.financeAccountReorderSuppressClick || '';
+    const clickedAccountCard = target?.closest?.('[data-open-detail]');
+    if (suppressedAccountClick && clickedAccountCard) {
+      event.preventDefault();
+      event.stopPropagation();
+      delete view.dataset.financeAccountReorderSuppressClick;
+      return;
+    }
 
     const lineChart = target?.closest?.('#finance-lineChart');
     if (lineChart) {
@@ -20041,6 +20472,42 @@ view.addEventListener('focusout', async (event) => {
   }
 }, evtOpts);
   view.addEventListener('keydown', async (event) => {
+    if ((accountReorder.mode === 'dragging' || accountReorder.mode === 'pending') && event.key === 'Escape') {
+      event.preventDefault();
+      cancelAccountReorder({ restore: true });
+      return;
+    }
+    if (accountReorder.mode === 'keyboard') {
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        moveKeyboardAccountCard(event.key === 'ArrowUp' ? -1 : 1);
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        await finishKeyboardAccountReorder();
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelKeyboardAccountReorder();
+        return;
+      }
+    } else {
+      const keyboardAccountCard = event.target?.closest?.('#finance-accountsList .financeAccountCard[data-open-detail]');
+      if (
+        keyboardAccountCard &&
+        !isFinanceAccountReorderInteractiveTarget(event.target) &&
+        (event.key === 'Enter' || event.key === ' ')
+      ) {
+        const list = getFinanceAccountsListFromCard(keyboardAccountCard);
+        if (list) {
+          event.preventDefault();
+          startKeyboardAccountReorder(keyboardAccountCard, list);
+          return;
+        }
+      }
+    }
     if (event.key === 'Escape' && event.target.matches('[data-products-receipt-add-name], [data-products-receipt-name]')) {
       event.preventDefault();
       closeProductsReceiptSuggestions(view);
@@ -20080,6 +20547,14 @@ view.addEventListener('focusout', async (event) => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     event.target.blur();
+  }, evtOpts);
+  view.addEventListener('focusout', () => {
+    if (accountReorder.mode !== 'keyboard') return;
+    window.setTimeout(() => {
+      if (accountReorder.mode !== 'keyboard') return;
+      const active = document.activeElement;
+      if (!accountReorder.list?.contains(active)) cancelKeyboardAccountReorder();
+    }, 0);
   }, evtOpts);
   view.addEventListener('change', async (event) => {
     if (event.target.matches('[data-range]')) { state.rangeMode = event.target.value; triggerRender(); }

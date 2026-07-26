@@ -15,6 +15,7 @@ export const state = {
   activeView: 'home',
   homePanelView: localStorage.getItem(HOME_PANEL_VIEW_KEY) === 'calendar' ? 'calendar' : 'hero',
   accounts: [],
+  financePreferences: { accountOrder: {} },
   legacyEntries: {},
   balance: { tx: {}, movements: {}, transactions: {}, categories: {}, budgets: {}, snapshots: {}, recurring: {}, aggregates: {}, defaultAccountId: '', lastSeenMonthKey: '' },
   goals: { goals: {} },

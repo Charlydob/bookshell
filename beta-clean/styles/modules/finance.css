@@ -233,7 +233,14 @@
 .financeTab .finance__sectionHeader { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .financeTab .finance__sectionHeader h2,
 .financeTab .finance__sectionHeader h3 { margin: 0; font-size: 1.1rem; }
-.financeTab #finance-accountsList { margin-top: 12px; display: grid; gap: 12px; }
+.financeTab { overflow-x: hidden; }
+.financeTab #finance-accountsList {
+  margin-top: 12px;
+  display: grid;
+  gap: 12px;
+  touch-action: pan-y;
+  overflow-x: clip;
+}
 
 .financeTab .financeAccountCard {
   border-radius: 22px;
@@ -243,6 +250,39 @@
   align-items: flex-start;
   gap: 10px;
   cursor: pointer;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, opacity 180ms ease, filter 180ms ease;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: pan-y;
+  will-change: transform;
+}
+.financeTab #finance-accountsList.is-reordering .financeAccountCard {
+  cursor: grabbing;
+}
+.financeTab .financeAccountCard.is-drag-armed,
+.financeTab .finance-account-card.is-drag-armed {
+  outline: 2px solid rgba(198, 214, 255, .72);
+  outline-offset: 2px;
+  filter: brightness(1.08);
+}
+.financeTab .financeAccountCard.is-dragging,
+.financeTab .finance-account-card.is-dragging {
+  cursor: grabbing;
+  opacity: .96;
+  transform: scale(1.012);
+  box-shadow: 0 18px 38px rgba(0, 0, 0, .34), 0 0 0 1px rgba(198, 214, 255, .5);
+}
+.financeTab .finance-account-drag-placeholder {
+  min-height: 72px;
+  border-radius: 22px;
+  border: 1px dashed rgba(198, 214, 255, .58);
+  background: rgba(198, 214, 255, .10);
+  opacity: .72;
+}
+.financeTab .financeAccountCard.is-drop-target,
+.financeTab .finance-account-card.is-drop-target {
+  box-shadow: 0 0 0 2px rgba(198, 214, 255, .44);
 }
 .financeTab .financeAccountCard.is-positive { background: linear-gradient(98deg, rgba(36, 135, 100, .6), rgba(11, 28, 65, .9)); }
 .financeTab .financeAccountCard.is-negative { background: linear-gradient(98deg, rgba(154, 57, 89, .62), rgba(11, 29, 67, .92)); }

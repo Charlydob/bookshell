@@ -419,6 +419,18 @@ function normalizeFinanceAccountRecord(account = {}) {
   const currency = assetType === 'crypto' ? 'BTC' : normalizeCurrencyCode(account?.currency || getDefaultCurrency());
   return { ...account, assetType, currency, isBitcoin: assetType === 'crypto' };
 }
+function compareFinanceAccountOrder(a = {}, b = {}) {
+  const aOrder = Number(a?.displayOrder);
+  const bOrder = Number(b?.displayOrder);
+  const aHasOrder = Number.isFinite(aOrder);
+  const bHasOrder = Number.isFinite(bOrder);
+  if (aHasOrder || bHasOrder) {
+    if (!aHasOrder) return 1;
+    if (!bHasOrder) return -1;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+  }
+  return Number(a?.createdAt || 0) - Number(b?.createdAt || 0);
+}
 function isCryptoAccount(account = {}) { return normalizeAccountAssetType(account) === 'crypto'; }
 function accountCurrency(account = {}) {
   if (isCryptoAccount(account)) return 'BTC';
@@ -1119,7 +1131,7 @@ function collectBalanceRowsFromRoot(root = {}, financePath = state.financePath) 
 }
 function syncLocalAccountsFromRoot(root = {}) {
   if (!root?.accounts || typeof root.accounts !== 'object') return;
-  state.accounts = Object.values(root.accounts).map(normalizeFinanceAccountRecord).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  state.accounts = Object.values(root.accounts).map(normalizeFinanceAccountRecord).sort(compareFinanceAccountOrder);
 }
 function pruneLocalLegacyTxRows(txId) {
   const safeId = String(txId || '').trim();
@@ -17618,7 +17630,7 @@ function applyRemoteData(val = {}, replace = false) {
   const root = val && typeof val === 'object' ? val : {};
   const accountsMap = root.accounts || (replace ? {} : Object.fromEntries(state.accounts.map((acc) => [acc.id, acc])));
   const fallbackEntries = replace ? {} : state.legacyEntries;
-  state.accounts = Object.values(accountsMap).map(normalizeFinanceAccountRecord).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  state.accounts = Object.values(accountsMap).map(normalizeFinanceAccountRecord).sort(compareFinanceAccountOrder);
   state.legacyEntries = root.accountsEntries || root.entries || fallbackEntries;
   state.balance = {
     tx: root.balance?.tx || root.tx || (replace ? {} : state.balance.tx),
@@ -18506,6 +18518,117 @@ function bindEvents() {
   let chartPointerId = null;
   let chartPointerActive = false;
   let chartPointerEl = null;
+  let suppressNextAccountClick = false;
+  const accountDrag = {
+    armed: false, dragging: false, pointerId: null, card: null, list: null,
+    timer: 0, startX: 0, startY: 0, offsetY: 0, placeholder: null, originalOrder: [],
+  };
+  const clearAccountDragTimer = () => {
+    if (accountDrag.timer) window.clearTimeout(accountDrag.timer);
+    accountDrag.timer = 0;
+  };
+  const resetAccountDrag = ({ restore = false } = {}) => {
+    clearAccountDragTimer();
+    const { card, list, placeholder, originalOrder } = accountDrag;
+    if (restore && list && originalOrder.length) {
+      const cards = new Map([...list.querySelectorAll(':scope > .financeAccountCard')].map((item) => [item.dataset.openDetail, item]));
+      originalOrder.forEach((id) => { if (cards.has(id)) list.append(cards.get(id)); });
+    }
+    if (card) {
+      card.classList.remove('is-drag-armed', 'is-dragging');
+      card.style.transform = '';
+      card.style.width = '';
+      card.style.height = '';
+      card.style.top = '';
+      card.style.left = '';
+      try { if (card.hasPointerCapture?.(accountDrag.pointerId)) card.releasePointerCapture(accountDrag.pointerId); } catch (_) {}
+    }
+    placeholder?.remove();
+    Object.assign(accountDrag, { armed: false, dragging: false, pointerId: null, card: null, list: null, timer: 0, startX: 0, startY: 0, offsetY: 0, placeholder: null, originalOrder: [] });
+  };
+  const persistAccountOrder = async (list) => {
+    const ids = [...list.querySelectorAll(':scope > .financeAccountCard')].map((card) => card.dataset.openDetail).filter(Boolean);
+    const updates = {};
+    ids.forEach((id, index) => { updates[`${state.financePath}/accounts/${id}/displayOrder`] = index; });
+    state.accounts = [...state.accounts].sort((a, b) => ids.indexOf(String(a.id)) - ids.indexOf(String(b.id))).map((account, index) => ({ ...account, displayOrder: index }));
+    await safeFirebase(() => update(ref(db), updates));
+    scheduleFinanceSnapshotSave('account-order-update');
+  };
+
+  view.addEventListener('contextmenu', (event) => {
+    const card = event.target.closest('#finance-accountsList > .financeAccountCard');
+    if (card && (accountDrag.armed || accountDrag.dragging)) event.preventDefault();
+  }, evtOpts);
+
+  view.addEventListener('pointerdown', (event) => {
+    const card = event.target.closest('#finance-accountsList > .financeAccountCard');
+    if (!card || event.button !== 0 || accountDrag.card) return;
+    const list = card.parentElement;
+    Object.assign(accountDrag, {
+      armed: true, pointerId: event.pointerId, card, list,
+      startX: event.clientX, startY: event.clientY,
+      originalOrder: [...list.querySelectorAll(':scope > .financeAccountCard')].map((item) => item.dataset.openDetail),
+    });
+    card.classList.add('is-drag-armed');
+    try { card.setPointerCapture?.(event.pointerId); } catch (_) {}
+    accountDrag.timer = window.setTimeout(() => {
+      if (!accountDrag.armed || accountDrag.card !== card) return;
+      accountDrag.timer = 0;
+      accountDrag.dragging = true;
+      suppressNextAccountClick = true;
+      const rect = card.getBoundingClientRect();
+      accountDrag.offsetY = accountDrag.startY - rect.top;
+      const placeholder = document.createElement('div');
+      placeholder.className = 'financeAccountCard__placeholder';
+      placeholder.style.height = `${rect.height}px`;
+      accountDrag.placeholder = placeholder;
+      card.after(placeholder);
+      card.classList.remove('is-drag-armed');
+      card.classList.add('is-dragging');
+      card.style.width = `${rect.width}px`;
+      card.style.height = `${rect.height}px`;
+      card.style.top = `${rect.top}px`;
+      card.style.left = `${rect.left}px`;
+      card.style.transform = 'translate3d(0, 0, 0)';
+      navigator.vibrate?.(20);
+    }, 1000);
+  }, chartEvtOpts);
+
+  view.addEventListener('pointermove', (event) => {
+    if (!accountDrag.card || event.pointerId !== accountDrag.pointerId) return;
+    if (!accountDrag.dragging) {
+      if (Math.hypot(event.clientX - accountDrag.startX, event.clientY - accountDrag.startY) > 9) resetAccountDrag();
+      return;
+    }
+    event.preventDefault();
+    const { card, list, placeholder } = accountDrag;
+    const cardRect = card.getBoundingClientRect();
+    const translateY = event.clientY - accountDrag.startY;
+    card.style.transform = `translate3d(0, ${translateY}px, 0)`;
+    const centerY = event.clientY - accountDrag.offsetY + cardRect.height / 2;
+    const siblings = [...list.querySelectorAll(':scope > .financeAccountCard:not(.is-dragging)')];
+    const after = siblings.find((item) => centerY < item.getBoundingClientRect().top + item.getBoundingClientRect().height / 2);
+    if (after) list.insertBefore(placeholder, after);
+    else list.append(placeholder);
+    const edge = 72;
+    if (event.clientY < edge) window.scrollBy(0, -12);
+    else if (event.clientY > window.innerHeight - edge) window.scrollBy(0, 12);
+  }, chartEvtOpts);
+
+  const finishAccountDrag = async (event, save) => {
+    if (!accountDrag.card || event.pointerId !== accountDrag.pointerId) return;
+    const { card, list, placeholder, dragging } = accountDrag;
+    if (dragging && save) {
+      list.insertBefore(card, placeholder);
+      resetAccountDrag();
+      await persistAccountOrder(list);
+    } else resetAccountDrag({ restore: !save });
+  };
+  view.addEventListener('pointerup', (event) => { void finishAccountDrag(event, true); }, chartEvtOpts);
+  view.addEventListener('pointercancel', (event) => { void finishAccountDrag(event, false); }, chartEvtOpts);
+  view.addEventListener('lostpointercapture', (event) => { void finishAccountDrag(event, false); }, chartEvtOpts);
+  document.addEventListener('visibilitychange', () => { if (document.hidden && accountDrag.card) resetAccountDrag({ restore: true }); }, evtOpts);
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && accountDrag.card) resetAccountDrag({ restore: true }); }, evtOpts);
 
   view.addEventListener('pointerdown', (event) => {
     const target = event.target;
@@ -18625,6 +18748,13 @@ function bindEvents() {
 
   view.addEventListener('click', async (event) => {
     const target = event.target;
+
+    if (suppressNextAccountClick && target.closest('#finance-accountsList > .financeAccountCard')) {
+      suppressNextAccountClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
 
     const lineChart = target?.closest?.('#finance-lineChart');
     if (lineChart) {

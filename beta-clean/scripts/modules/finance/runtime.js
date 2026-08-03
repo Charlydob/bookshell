@@ -421,6 +421,18 @@ function normalizeFinanceAccountRecord(account = {}) {
   const currency = assetType === 'crypto' ? 'BTC' : normalizeCurrencyCode(account?.currency || getDefaultCurrency());
   return { ...account, assetType, currency, isBitcoin: assetType === 'crypto' };
 }
+function compareFinanceAccountOrder(a = {}, b = {}) {
+  const aOrder = Number(a?.displayOrder);
+  const bOrder = Number(b?.displayOrder);
+  const aHasOrder = Number.isFinite(aOrder);
+  const bHasOrder = Number.isFinite(bOrder);
+  if (aHasOrder || bHasOrder) {
+    if (!aHasOrder) return 1;
+    if (!bHasOrder) return -1;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+  }
+  return Number(a?.createdAt || 0) - Number(b?.createdAt || 0);
+}
 function isCryptoAccount(account = {}) { return normalizeAccountAssetType(account) === 'crypto'; }
 function accountCurrency(account = {}) {
   if (isCryptoAccount(account)) return 'BTC';
@@ -1121,7 +1133,7 @@ function collectBalanceRowsFromRoot(root = {}, financePath = state.financePath) 
 }
 function syncLocalAccountsFromRoot(root = {}) {
   if (!root?.accounts || typeof root.accounts !== 'object') return;
-  state.accounts = Object.values(root.accounts).map(normalizeFinanceAccountRecord).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  state.accounts = Object.values(root.accounts).map(normalizeFinanceAccountRecord).sort(compareFinanceAccountOrder);
 }
 function pruneLocalLegacyTxRows(txId) {
   const safeId = String(txId || '').trim();
@@ -17669,7 +17681,7 @@ function applyRemoteData(val = {}, replace = false) {
   const root = val && typeof val === 'object' ? val : {};
   const accountsMap = root.accounts || (replace ? {} : Object.fromEntries(state.accounts.map((acc) => [acc.id, acc])));
   const fallbackEntries = replace ? {} : state.legacyEntries;
-  state.accounts = Object.values(accountsMap).map(normalizeFinanceAccountRecord).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  state.accounts = Object.values(accountsMap).map(normalizeFinanceAccountRecord).sort(compareFinanceAccountOrder);
   state.legacyEntries = root.accountsEntries || root.entries || fallbackEntries;
   state.balance = {
     tx: root.balance?.tx || root.tx || (replace ? {} : state.balance.tx),
@@ -18889,6 +18901,215 @@ function bindEvents() {
   let chartPointerId = null;
   let chartPointerActive = false;
   let chartPointerEl = null;
+  let suppressNextAccountClick = false;
+  const accountDrag = {
+    armed: false, dragging: false, pointerId: null, card: null, list: null,
+    timer: 0, startX: 0, startY: 0, clientY: 0, offsetY: 0, placeholder: null,
+    originalOrder: [], scrollContainer: null, raf: 0, placeholderIndex: -1,
+    previousStyles: null, finishing: false,
+  };
+  const dragLog = (message, detail = '') => console.debug(`[finance account drag] ${message}`, detail);
+  const findScrollContainer = (element) => {
+    let candidate = element?.parentElement;
+    while (candidate && candidate !== document.body) {
+      const style = getComputedStyle(candidate);
+      if (/(auto|scroll)/.test(style.overflowY) && candidate.scrollHeight > candidate.clientHeight) return candidate;
+      candidate = candidate.parentElement;
+    }
+    // Desktop currently scrolls the document; the installed PWA may instead constrain #view-finance.
+    return document.scrollingElement || document.documentElement;
+  };
+  const clearAccountDragTimer = () => {
+    if (accountDrag.timer) window.clearTimeout(accountDrag.timer);
+    accountDrag.timer = 0;
+  };
+  const resetAccountDrag = ({ restore = false } = {}) => {
+    clearAccountDragTimer();
+    if (accountDrag.raf) cancelAnimationFrame(accountDrag.raf);
+    const { card, list, placeholder, originalOrder, pointerId, scrollContainer, previousStyles } = accountDrag;
+    accountDrag.finishing = true;
+    if (restore && list && originalOrder.length) {
+      const cards = new Map([...list.querySelectorAll(':scope > .financeAccountCard')].map((item) => [item.dataset.openDetail, item]));
+      originalOrder.forEach((id) => { if (cards.has(id)) list.append(cards.get(id)); });
+    }
+    if (card) {
+      card.classList.remove('is-drag-armed', 'is-dragging');
+      card.style.transform = '';
+      card.style.width = '';
+      card.style.height = '';
+      card.style.top = '';
+      card.style.left = '';
+      card.style.touchAction = previousStyles?.cardTouchAction || '';
+      try { if (card.hasPointerCapture?.(pointerId)) card.releasePointerCapture(pointerId); } catch (_) {}
+    }
+    if (list) list.style.touchAction = previousStyles?.listTouchAction || '';
+    if (scrollContainer) {
+      scrollContainer.style.touchAction = previousStyles?.scrollTouchAction || '';
+      scrollContainer.style.overscrollBehavior = previousStyles?.overscrollBehavior || '';
+    }
+    placeholder?.remove();
+    Object.assign(accountDrag, { armed: false, dragging: false, pointerId: null, card: null, list: null, timer: 0, startX: 0, startY: 0, clientY: 0, offsetY: 0, placeholder: null, originalOrder: [], scrollContainer: null, raf: 0, placeholderIndex: -1, previousStyles: null, finishing: false });
+  };
+  const persistAccountOrder = async (list) => {
+    const ids = [...list.querySelectorAll(':scope > .financeAccountCard')].map((card) => card.dataset.openDetail).filter(Boolean);
+    const updates = {};
+    ids.forEach((id, index) => { updates[`${state.financePath}/accounts/${id}/displayOrder`] = index; });
+    state.accounts = [...state.accounts].sort((a, b) => ids.indexOf(String(a.id)) - ids.indexOf(String(b.id))).map((account, index) => ({ ...account, displayOrder: index }));
+    await safeFirebase(() => update(ref(db), updates));
+    scheduleFinanceSnapshotSave('account-order-update');
+  };
+
+  view.addEventListener('contextmenu', (event) => {
+    const card = event.target.closest('#finance-accountsList > .financeAccountCard');
+    if (card && (accountDrag.armed || accountDrag.dragging)) event.preventDefault();
+  }, evtOpts);
+
+  view.addEventListener('pointerdown', (event) => {
+    const card = event.target.closest('#finance-accountsList > .financeAccountCard');
+    if (!card || event.button !== 0 || accountDrag.card) return;
+    const list = card.parentElement;
+    Object.assign(accountDrag, {
+      armed: true, pointerId: event.pointerId, card, list,
+      startX: event.clientX, startY: event.clientY, clientY: event.clientY,
+      originalOrder: [...list.querySelectorAll(':scope > .financeAccountCard')].map((item) => item.dataset.openDetail),
+    });
+    card.classList.add('is-drag-armed');
+    dragLog('drag armed');
+    accountDrag.timer = window.setTimeout(() => {
+      if (!accountDrag.armed || accountDrag.card !== card) return;
+      accountDrag.timer = 0;
+      accountDrag.dragging = true;
+      suppressNextAccountClick = true;
+      const rect = card.getBoundingClientRect();
+      accountDrag.offsetY = accountDrag.startY - rect.top;
+      accountDrag.scrollContainer = findScrollContainer(list);
+      const scrollContainer = accountDrag.scrollContainer;
+      accountDrag.previousStyles = {
+        cardTouchAction: card.style.touchAction,
+        listTouchAction: list.style.touchAction,
+        scrollTouchAction: scrollContainer.style.touchAction,
+        overscrollBehavior: scrollContainer.style.overscrollBehavior,
+      };
+      const placeholder = document.createElement('div');
+      placeholder.className = 'financeAccountCard__placeholder';
+      placeholder.style.height = `${rect.height}px`;
+      accountDrag.placeholder = placeholder;
+      card.after(placeholder);
+      card.classList.remove('is-drag-armed');
+      card.classList.add('is-dragging');
+      card.style.width = `${rect.width}px`;
+      card.style.height = `${rect.height}px`;
+      card.style.top = `${rect.top}px`;
+      card.style.left = `${rect.left}px`;
+      card.style.transform = 'translate3d(0, 0, 0)';
+      card.style.touchAction = 'none';
+      list.style.touchAction = 'none';
+      scrollContainer.style.touchAction = 'none';
+      scrollContainer.style.overscrollBehavior = 'none';
+      dragLog('drag activated', { scrollContainer: scrollContainer.id || scrollContainer.className });
+      try {
+        card.setPointerCapture(event.pointerId);
+        dragLog('pointer captured', event.pointerId);
+      } catch (error) {
+        dragLog('drag cancelled: pointer capture error', error);
+        resetAccountDrag({ restore: true });
+        return;
+      }
+      navigator.vibrate?.(20);
+      accountDrag.raf = requestAnimationFrame(autoScrollFrame);
+    }, 1000);
+  }, chartEvtOpts);
+
+  const updateDraggedPosition = () => {
+    if (!accountDrag.dragging) return;
+    accountDrag.card.style.transform = `translate3d(0, ${accountDrag.clientY - accountDrag.startY}px, 0)`;
+  };
+  const updatePlaceholderPosition = () => {
+    const { card, list, placeholder, clientY, offsetY } = accountDrag;
+    if (!accountDrag.dragging || !card || !placeholder) return;
+    const centerY = clientY - offsetY + card.offsetHeight / 2;
+    const siblings = [...list.querySelectorAll(':scope > .financeAccountCard:not(.is-dragging)')];
+    const after = siblings.find((item) => centerY < item.getBoundingClientRect().top + item.offsetHeight / 2);
+    if (after) list.insertBefore(placeholder, after);
+    else list.append(placeholder);
+    const index = [...list.children].indexOf(placeholder);
+    if (index !== accountDrag.placeholderIndex) {
+      accountDrag.placeholderIndex = index;
+      dragLog('placeholder index', index);
+    }
+  };
+  function autoScrollFrame() {
+    if (!accountDrag.dragging) return;
+    const container = accountDrag.scrollContainer;
+    const documentScroller = container === document.scrollingElement || container === document.documentElement || container === document.body;
+    const bounds = documentScroller ? { top: 0, bottom: window.innerHeight } : container.getBoundingClientRect();
+    const top = Math.max(0, bounds.top);
+    const bottom = Math.min(window.innerHeight, bounds.bottom);
+    const edge = 80;
+    let speed = 0;
+    if (accountDrag.clientY < top + edge) speed = -Math.max(2, (top + edge - accountDrag.clientY) * 0.18);
+    else if (accountDrag.clientY > bottom - edge) speed = Math.max(2, (accountDrag.clientY - (bottom - edge)) * 0.18);
+    if (speed) {
+      const oldScrollTop = container.scrollTop;
+      container.scrollTop += speed;
+      if (container.scrollTop !== oldScrollTop) {
+        dragLog('autoscroll speed', speed);
+        updateDraggedPosition();
+        updatePlaceholderPosition();
+      }
+    }
+    accountDrag.raf = requestAnimationFrame(autoScrollFrame);
+  }
+
+  view.addEventListener('pointermove', (event) => {
+    if (!accountDrag.card || event.pointerId !== accountDrag.pointerId) return;
+    if (!accountDrag.dragging) {
+      if (Math.hypot(event.clientX - accountDrag.startX, event.clientY - accountDrag.startY) > 9) {
+        dragLog('drag cancelled: moved before long-press');
+        resetAccountDrag();
+      }
+      return;
+    }
+    event.preventDefault();
+    accountDrag.clientY = event.clientY;
+    dragLog('pointermove while dragging', event.clientY);
+    updateDraggedPosition();
+    updatePlaceholderPosition();
+  }, chartEvtOpts);
+
+  const finishAccountDrag = async (event, save) => {
+    if (!accountDrag.card || event.pointerId !== accountDrag.pointerId) return;
+    const { card, list, placeholder, dragging } = accountDrag;
+    if (dragging && save) {
+      list.insertBefore(card, placeholder);
+      resetAccountDrag();
+      await persistAccountOrder(list);
+      dragLog('drop completed');
+    } else {
+      dragLog(`drag cancelled: ${save ? 'released before activation' : 'pointer ended'}`);
+      resetAccountDrag({ restore: !save });
+    }
+  };
+  view.addEventListener('pointerup', (event) => { void finishAccountDrag(event, true); }, chartEvtOpts);
+  view.addEventListener('pointercancel', (event) => {
+    if (accountDrag.dragging && accountDrag.card?.hasPointerCapture?.(event.pointerId)) return;
+    void finishAccountDrag(event, false);
+  }, chartEvtOpts);
+  view.addEventListener('lostpointercapture', (event) => {
+    if (!accountDrag.finishing) void finishAccountDrag(event, false);
+  }, chartEvtOpts);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && accountDrag.card) {
+      dragLog('drag cancelled: visibility changed');
+      resetAccountDrag({ restore: true });
+    }
+  }, evtOpts);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && accountDrag.card) {
+      dragLog('drag cancelled: escape');
+      resetAccountDrag({ restore: true });
+    }
+  }, evtOpts);
 
   view.addEventListener('pointerdown', (event) => {
     const target = event.target;
@@ -19054,6 +19275,13 @@ function bindEvents() {
       event.preventDefault();
       event.stopPropagation();
       delete view.dataset.financeAccountReorderSuppressClick;
+      return;
+    }
+
+    if (suppressNextAccountClick && target.closest('#finance-accountsList > .financeAccountCard')) {
+      suppressNextAccountClick = false;
+      event.preventDefault();
+      event.stopPropagation();
       return;
     }
 

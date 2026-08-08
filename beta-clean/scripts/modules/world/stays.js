@@ -119,6 +119,22 @@ function formatDayLabel(days) {
   return `${n} día${n === 1 ? "" : "s"}`;
 }
 
+function addDaysLocal(date, days) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  next.setDate(next.getDate() + Number(days || 0));
+  return next;
+}
+
+function formatDateLongLocal(date) {
+  if (!date || Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("es-ES", {
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  }).format(date);
+}
+
 function buildMetricSegments(days, alive, yearDays, options = stayViewOptions) {
   const segments = [];
   if (options.showDays) segments.push(formatDayLabel(days));
@@ -523,11 +539,15 @@ function renderFullYearDistribution(summary) {
 function renderSpainFiscalCard(summary) {
   if (!summary) return "";
   const fiscal = summary.fiscal;
+  const targetDateLine = (missingDays) => {
+    const date = formatDateLongLocal(addDaysLocal(new Date(), missingDays));
+    return date ? `Alcanzarás los 183 días el <strong>${esc(date)}</strong>` : "";
+  };
   const spainLine = fiscal.missingForSpain183 > 0
-    ? `Faltan ${formatDayLabel(fiscal.missingForSpain183)} para alcanzar 183 días en España.`
+    ? `<strong>Faltan ${formatDayLabel(fiscal.missingForSpain183)} en España</strong><span>${targetDateLine(fiscal.missingForSpain183)}</span>`
     : "España ya alcanza o supera 183 días.";
   const abroadLine = fiscal.missingForAbroad183 > 0
-    ? `Faltan ${formatDayLabel(fiscal.missingForAbroad183)} fuera de España para llegar a 183.`
+    ? `<strong>Faltan ${formatDayLabel(fiscal.missingForAbroad183)} fuera de España</strong><span>${targetDateLine(fiscal.missingForAbroad183)}</span>`
     : "Fuera de España ya alcanza o supera 183 días.";
   return `<section class="world-year-summary-card world-year-summary-card--fiscal" aria-label="Control fiscal España"><div class="world-year-summary-head"><strong>🧾 Control fiscal España</strong><small>Contador orientativo. No constituye una decisión legal.</small></div><div class="world-fiscal-grid"><div class="world-fiscal-stat"><span>España</span><strong>${formatDayLabel(fiscal.spainDays)}</strong></div><div class="world-fiscal-stat"><span>Fuera de España</span><strong>${formatDayLabel(fiscal.abroadDays)}</strong></div><div class="world-fiscal-stat"><span>Sin registrar</span><strong>${formatDayLabel(fiscal.unregisteredDays)}</strong></div></div><div class="world-fiscal-copy"><p>${spainLine}</p>
   <p>${abroadLine}</p></div></section>`;

@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-07-26-shortcut-reconcile-debug";
-const PUBLISHED_COMMIT = "local-shortcut-reconcile-debug";
+const APP_VERSION = "2026-08-08-reading-stats";
+const PUBLISHED_COMMIT = "local-reading-stats";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 
@@ -61,6 +61,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/recipes/met-catalog.js",
   "./scripts/modules/recipes/foodrepo.js",
   "./scripts/modules/world/index.js",
+  "./scripts/modules/world/stays.js",
   "./scripts/shared/cache/processed-json-cache.js",
   "./scripts/shared/config/app-paths.js",
   "./scripts/shared/firebase/app.js",

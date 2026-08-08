@@ -30,8 +30,8 @@
 <span>Libros leídos</span>
 <select aria-label="Rango libros leídos" class="stat-range-select" id="stat-books-read-range">
 <option selected="" value="total">Total</option>
-<option value="month">Mes</option>
 <option value="year">Año</option>
+<option value="month">Mes</option>
 <option value="week">Semana</option>
 </select>
 </div>
@@ -149,6 +149,12 @@
 <div class="chart-card">
 <div class="chart-card-header">
 <div class="chart-card-title">Páginas leídas por día</div>
+<select aria-label="Rango páginas leídas" class="chart-selector-input chart-range-select" id="books-pages-timeline-range">
+<option selected="" value="total">Total</option>
+<option value="year">Año</option>
+<option value="month">Mes</option>
+<option value="week">Semana</option>
+</select>
 </div>
 <div class="chart-timeline-host" id="chart-pages-timeline"></div>
 </div>
@@ -319,6 +325,40 @@
 <div class="spec-value" id="book-detail-notes">Sin notas</div>
 </div>
 </div>
+</div>
+<div class="spec-block compact book-detail-reading-stats" id="book-detail-reading-stats">
+<div class="spec-block-title">Ritmo de lectura</div>
+<div class="book-detail-rate-grid">
+<div class="book-detail-rate-item">
+<span>Inicio</span>
+<strong id="book-detail-started">—</strong>
+</div>
+<div class="book-detail-rate-item">
+<span>Ritmo</span>
+<strong id="book-detail-rate">—</strong>
+</div>
+<div class="book-detail-rate-item">
+<span>Restantes</span>
+<strong id="book-detail-remaining">—</strong>
+</div>
+<div class="book-detail-rate-item">
+<span>Estimación</span>
+<strong id="book-detail-estimate-days">—</strong>
+</div>
+</div>
+<div class="book-detail-estimate-note" id="book-detail-estimate-date">Aún no hay suficientes datos</div>
+</div>
+<div class="spec-block compact book-detail-chart-block" id="book-detail-pages-section" style="display:none;">
+<div class="chart-card-header">
+<div class="spec-block-title">Páginas leídas por día</div>
+<select aria-label="Rango páginas del libro" class="chart-selector-input chart-range-select" id="book-detail-pages-range">
+<option selected="" value="total">Total</option>
+<option value="year">Año</option>
+<option value="month">Mes</option>
+<option value="week">Semana</option>
+</select>
+</div>
+<div class="chart-timeline-host book-detail-chart-host" id="book-detail-pages-chart"></div>
 </div>
 <details class="book-detail-quotes" id="book-detail-quotes" open>
 <summary>

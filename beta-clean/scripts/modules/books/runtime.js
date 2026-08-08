@@ -140,6 +140,43 @@ function getDaysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate();
 }
 
+function parseDateKeyLocal(key) {
+  const match = String(key || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function addDaysLocal(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + Number(days || 0));
+  return next;
+}
+
+function daysBetweenInclusive(startDate, endDate) {
+  if (!startDate || !endDate) return 0;
+  const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  const diff = Math.floor((end.getTime() - start.getTime()) / 86400000);
+  return Math.max(0, diff) + 1;
+}
+
+function formatDateLongLocal(date, options = {}) {
+  if (!date || Number.isNaN(date.getTime())) return null;
+  const currentYear = new Date().getFullYear();
+  const includeYear = options.includeYear ?? date.getFullYear() !== currentYear;
+  return new Intl.DateTimeFormat("es-ES", {
+    day: "numeric",
+    month: "long",
+    ...(includeYear ? { year: "numeric" } : {})
+  }).format(date);
+}
+
+function formatDateKeyLongLocal(key, options = {}) {
+  return formatDateLongLocal(parseDateKeyLocal(key), options);
+}
+
 // === UI refs ===
 const $viewBooks = document.getElementById("view-books");
 const $viewStats = document.getElementById("view-stats");
@@ -186,6 +223,7 @@ const $chartTitle = document.getElementById("books-chart-title");
 const $chartActive = document.getElementById("chart-active");
 const $booksPageTimeline = document.getElementById("books-pages-timeline");
 const $chartPagesTimeline = document.getElementById("chart-pages-timeline");
+const $booksPagesTimelineRange = document.getElementById("books-pages-timeline-range");
 const $appMain = document.querySelector(".app-main");
 const $booksGeoSection = document.getElementById("books-geo-section");
 const $booksWorldMap = document.getElementById("books-world-map");
@@ -243,6 +281,15 @@ const $bookDetailPages = document.getElementById("book-detail-pages");
 const $bookDetailProgress = document.getElementById("book-detail-progress");
 const $bookDetailFinished = document.getElementById("book-detail-finished");
 const $bookDetailNotes = document.getElementById("book-detail-notes");
+const $bookDetailReadingStats = document.getElementById("book-detail-reading-stats");
+const $bookDetailStarted = document.getElementById("book-detail-started");
+const $bookDetailRate = document.getElementById("book-detail-rate");
+const $bookDetailRemaining = document.getElementById("book-detail-remaining");
+const $bookDetailEstimateDays = document.getElementById("book-detail-estimate-days");
+const $bookDetailEstimateDate = document.getElementById("book-detail-estimate-date");
+const $bookDetailPagesSection = document.getElementById("book-detail-pages-section");
+const $bookDetailPagesChart = document.getElementById("book-detail-pages-chart");
+const $bookDetailPagesRange = document.getElementById("book-detail-pages-range");
 const $bookDetailQuotes = document.getElementById("book-detail-quotes");
 const $bookDetailQuotesCount = document.getElementById("book-detail-quotes-count");
 const $bookDetailQuotesBody = document.getElementById("book-detail-quotes-body");
@@ -353,6 +400,14 @@ if ($statBooksReadCard && $statBooksReadRange) {
     if (e.target === $statBooksReadRange) return;
     $statBooksReadRange.focus();
     try { $statBooksReadRange.click(); } catch (_) {}
+  });
+}
+if ($booksPagesTimelineRange) {
+  $booksPagesTimelineRange.addEventListener("change", () => renderPagesTimeline());
+}
+if ($bookDetailPagesRange) {
+  $bookDetailPagesRange.addEventListener("change", () => {
+    if (bookDetailId) renderBookPagesTimeline(bookDetailId);
   });
 }
 const SHELF_GAP_PX = 10; // igual que el gap del CSS
@@ -852,6 +907,7 @@ function bindDataSources() {
       setBooksShellLoading(false);
     }
     renderBooks();
+    if (bookDetailId && books?.[bookDetailId]) renderBookReadingStats(bookDetailId);
     emitBookshellBooksData("remote:books");
   }, {
     key: "books-root",
@@ -872,6 +928,10 @@ function bindDataSources() {
     renderStats();
     renderCalendar();
     renderPagesTimeline();
+    if (bookDetailId && books?.[bookDetailId]) {
+      renderBookReadingStats(bookDetailId);
+      renderBookPagesTimeline(bookDetailId);
+    }
     emitBookshellBooksData("remote:reading-log");
   }, {
     key: "books-reading-log",
@@ -1102,6 +1162,7 @@ if ($bookIsbn) {
 function closeBookDetail() {
   bookDetailId = null;
   if ($bookDetailBackdrop) $bookDetailBackdrop.classList.add("hidden");
+  disposeTimelineChart($bookDetailPagesChart);
   bookDetailQuoteSearchValue = "";
   bookQuotesStore.searchValue = "";
   if ($bookDetailQuotesSearch) $bookDetailQuotesSearch.value = "";
@@ -1161,6 +1222,8 @@ function openBookDetail(bookId) {
 
   const notes = b.notes || b.description || "Sin notas";
   fillDetail($bookDetailNotes, notes);
+  renderBookReadingStats(bookId);
+  renderBookPagesTimeline(bookId);
   renderBookDetailQuotes(bookId, b);
 
   if ($bookDetailFavorite) {
@@ -1572,6 +1635,7 @@ $bookForm.addEventListener("submit", async (e) => {
   // - si pasa a finished => fijamos fecha
   // - si sale de finished => borramos fecha (para que el calendario/contadores se corrijan)
   const prevBook = id && books[id] ? books[id] : null;
+  const prevCurrentPage = prevBook ? Math.max(0, Number(prevBook.currentPage) || 0) : 0;
   const prevWasFinished = prevBook?.status === "finished" || ((Number(prevBook?.pages) || 0) > 0 && (Number(prevBook?.currentPage) || 0) >= (Number(prevBook?.pages) || 0));
   const nowIsFinished = bookData.status === "finished" || (bookData.pages > 0 && bookData.currentPage >= bookData.pages);
 
@@ -1618,6 +1682,10 @@ $bookForm.addEventListener("submit", async (e) => {
   try {
     if (id) {
       await update(ref(db, `${BOOKS_PATH}/${id}`), bookData);
+      const progressDiff = (Number(bookData.currentPage) || 0) - prevCurrentPage;
+      if (!bookData.finishedPast && progressDiff !== 0) {
+        await addBookProgressDeltaToLog(id, progressDiff);
+      }
     } else {
       const newRef = push(ref(db, BOOKS_PATH));
       await set(newRef, {
@@ -1662,6 +1730,7 @@ function rerenderBooksViewOnShow() {
     setCalendarShellLoading(false);
     renderStats();
     renderCalendar();
+    renderPagesTimeline();
   }
 }
 
@@ -2662,162 +2731,190 @@ setSpineWidth(spine, title);
   return spine;
 }
 
-// === Gráfico lineal: Páginas leídas por día ===
-async function renderPagesTimeline() {
-  const $host = document.getElementById("chart-pages-timeline");
-  const $section = document.getElementById("books-pages-timeline");
-  
+function normalizeTimelineRange(value) {
+  return ["total", "year", "month", "week"].includes(value) ? value : "total";
+}
+
+function getTimelineBounds(range, totals = {}) {
+  const safeRange = normalizeTimelineRange(range);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (safeRange === "week") {
+    const week = getWeekBoundsKey(today);
+    return { from: parseDateKeyLocal(week.from), to: today };
+  }
+
+  if (safeRange === "month") {
+    return { from: new Date(today.getFullYear(), today.getMonth(), 1), to: today };
+  }
+
+  if (safeRange === "year") {
+    return { from: new Date(today.getFullYear(), 0, 1), to: today };
+  }
+
+  const days = Object.keys(totals || {})
+    .filter((day) => (Number(totals[day]) || 0) > 0 && parseDateKeyLocal(day))
+    .sort();
+  if (!days.length) return { from: null, to: null };
+
+  const from = parseDateKeyLocal(days[0]);
+  const last = parseDateKeyLocal(days[days.length - 1]);
+  const to = last && last.getTime() > today.getTime() ? last : today;
+  return { from, to };
+}
+
+function buildTimelineSeries(totals = {}, range = "total") {
+  const { from, to } = getTimelineBounds(range, totals);
+  if (!from || !to || from.getTime() > to.getTime()) return { dates: [], values: [] };
+
+  const dates = [];
+  const values = [];
+  for (let date = new Date(from); date.getTime() <= to.getTime(); date = addDaysLocal(date, 1)) {
+    const key = dateKeyLocal(date);
+    dates.push(key);
+    values.push(Math.max(0, Number(totals[key]) || 0));
+  }
+  return { dates, values };
+}
+
+function disposeTimelineChart($host) {
+  if (!$host) return;
+  if ($host.__resizeListener) {
+    window.removeEventListener("resize", $host.__resizeListener);
+    $host.__resizeListener = null;
+  }
+  if ($host.__echartsInstance) {
+    try { $host.__echartsInstance.dispose(); } catch (_) {}
+    $host.__echartsInstance = null;
+  }
+}
+
+async function renderTimelineChart($host, $section, totals = {}, range = "total") {
   if (!$host || !$section) return;
 
-  // Obtener datos diarios
-  const totals = computeDailyTotals();
-  
-  // Si no hay datos, ocultar la sección
-  if (!totals || Object.keys(totals).length === 0) {
+  const hasData = Object.values(totals || {}).some((n) => (Number(n) || 0) > 0);
+  if (!hasData) {
+    disposeTimelineChart($host);
+    $host.innerHTML = "";
+    $section.style.display = "none";
+    return;
+  }
+
+  const { dates, values } = buildTimelineSeries(totals, range);
+  if (!dates.length) {
+    disposeTimelineChart($host);
+    $host.innerHTML = "";
     $section.style.display = "none";
     return;
   }
 
   $section.style.display = "block";
 
-  // Preparar datos para el gráfico: últimos 30 días
-  const today = new Date();
-  const dates = [];
-  const values = [];
-  
-  for (let i = 29; i >= 0; i--) {
-    const date = new Date(today);
-    date.setDate(date.getDate() - i);
-    const key = dateKeyLocal(date);
-    const pages = totals[key] || 0;
-    
-    dates.push(key);
-    values.push(Number(pages) || 0);
-  }
-
   try {
     const echarts = await getEcharts();
-    
-    // Limpiar instancia anterior si existe
-    if ($host.__echartsInstance) {
-      $host.__echartsInstance.dispose();
-    }
-
-    // Limpiar contenedor
+    disposeTimelineChart($host);
     $host.innerHTML = "";
 
-    const instance = echarts.init($host, null, { renderer: 'canvas' });
+    const instance = echarts.init($host, null, { renderer: "canvas" });
     $host.__echartsInstance = instance;
 
     const option = {
       responsive: true,
       animation: true,
       grid: {
-        left: '10%',
-        right: '8%',
-        top: '16%',
-        bottom: '12%',
+        left: "10%",
+        right: "8%",
+        top: "16%",
+        bottom: "12%",
         containLabel: true
       },
       xAxis: {
-        type: 'category',
+        type: "category",
         data: dates,
-        axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
+        axisLine: { lineStyle: { color: "rgba(255,255,255,0.1)" } },
         axisTick: { show: false },
         axisLabel: {
           fontSize: 11,
-          color: 'rgba(255,255,255,0.6)',
+          color: "rgba(255,255,255,0.6)",
+          hideOverlap: true,
           formatter: (value) => {
-            // value es un string formato "YYYY-MM-DD"
-            const parts = value.split('-');
-            if (parts.length === 3) {
-              return `${parts[2]}/${parts[1]}`;
-            }
-            return value;
+            const parts = String(value).split("-");
+            return parts.length === 3 ? `${parts[2]}/${parts[1]}` : value;
           }
         }
       },
       yAxis: {
-        type: 'value',
+        type: "value",
         axisLine: { show: false },
         axisTick: { show: false },
-        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
+        splitLine: { lineStyle: { color: "rgba(255,255,255,0.08)" } },
         axisLabel: {
           fontSize: 11,
-          color: 'rgba(255,255,255,0.6)'
+          color: "rgba(255,255,255,0.6)"
         }
       },
       series: [{
         data: values,
-        type: 'line',
+        type: "line",
         smooth: true,
-        symbol: 'circle',
+        symbol: "circle",
         symbolSize: 5,
         itemStyle: {
-          color: '#7f5dff',
-          borderColor: '#fff',
+          color: "#7f5dff",
+          borderColor: "#fff",
           borderWidth: 1
         },
         lineStyle: {
-          color: '#7f5dff',
+          color: "#7f5dff",
           width: 2.5
         },
         areaStyle: {
-          color: 'rgba(127, 93, 255, 0.15)'
+          color: "rgba(127, 93, 255, 0.15)"
         },
         emphasis: {
           itemStyle: {
-            color: '#f1d27b',
-            borderColor: '#fff',
+            color: "#f1d27b",
+            borderColor: "#fff",
             borderWidth: 2,
             shadowBlur: 10,
-            shadowColor: 'rgba(127, 93, 255, 0.5)'
+            shadowColor: "rgba(127, 93, 255, 0.5)"
           },
           lineStyle: {
             width: 3,
-            color: '#f1d27b'
-          }
-        },
-        tooltip: {
-          trigger: 'item',
-          backgroundColor: 'rgba(0,0,0,0.8)',
-          borderColor: 'rgba(255,255,255,0.2)',
-          textStyle: { color: '#fff', fontSize: 12 },
-          formatter: (params) => {
-            if (params.componentSubType === 'line') {
-              return `${params.axisValue}<br/>Páginas: <strong>${params.value}</strong>`;
-            }
-            return params.value;
+            color: "#f1d27b"
           }
         }
       }],
       tooltip: {
-        trigger: 'axis',
-        backgroundColor: 'rgba(0,0,0,0.8)',
-        borderColor: 'rgba(255,255,255,0.2)',
-        textStyle: { color: '#fff', fontSize: 12 },
+        trigger: "axis",
+        backgroundColor: "rgba(0,0,0,0.8)",
+        borderColor: "rgba(255,255,255,0.2)",
+        textStyle: { color: "#fff", fontSize: 12 },
         formatter: (params) => {
           if (Array.isArray(params) && params.length > 0) {
             const p = params[0];
             return `${p.axisValue}<br/>Páginas: <strong>${p.value}</strong>`;
           }
-          return '';
+          return "";
         }
       }
     };
 
     instance.setOption(option);
-    
-    // Redimensionar cuando cambie la ventana
     const handleResize = () => instance.resize();
-    window.addEventListener('resize', handleResize);
-    
-    // Limpiar listener al descartar
+    window.addEventListener("resize", handleResize);
     $host.__resizeListener = handleResize;
-
+    requestAnimationFrame(() => instance.resize());
   } catch (error) {
     console.warn("[books] No se pudo renderizar el gráfico de timeline:", error);
   }
+}
+
+// === Gráfico lineal: Páginas leídas por día ===
+async function renderPagesTimeline() {
+  const range = normalizeTimelineRange($booksPagesTimelineRange?.value || "total");
+  await renderTimelineChart($chartPagesTimeline, $booksPageTimeline, computeDailyTotals(), range);
 }
 
 function renderBooks() {
@@ -3166,6 +3263,17 @@ async function updateBookFavorite(bookId, favorite) {
   }
 }
 
+async function addBookProgressDeltaToLog(bookId, diff) {
+  if (!READING_LOG_PATH || !bookId || diff === 0) return;
+  const day = todayKey();
+  const logRef = ref(db, `${READING_LOG_PATH}/${day}/${bookId}`);
+  await runTransaction(logRef, (current) => {
+    const prev = Number(current) || 0;
+    const next = Math.max(0, prev + diff);
+    return next === 0 ? null : next;
+  });
+}
+
 async function updateBookProgress(bookId, newPage) {
   let diff = 0;
 
@@ -3207,13 +3315,7 @@ async function updateBookProgress(bookId, newPage) {
 
     // Registramos páginas leídas del día como DELTA editable (si corriges, se corrige)
     if (res?.committed && diff !== 0) {
-      const day = todayKey();
-      const logRef = ref(db, `${READING_LOG_PATH}/${day}/${bookId}`);
-      await runTransaction(logRef, (current) => {
-        const prev = Number(current) || 0;
-        const next = Math.max(0, prev + diff);
-        return next === 0 ? null : next; // null => borra el nodo
-      });
+      await addBookProgressDeltaToLog(bookId, diff);
     }
   } catch (err) {
     console.error("Error actualizando progreso", err);
@@ -3367,6 +3469,102 @@ function computeDailyTotals() {
     totals[day] = sum;
   });
   return totals;
+}
+
+function computeBookDailyTotals(bookId) {
+  const totals = {};
+  if (!bookId) return totals;
+  Object.entries(readingLog || {}).forEach(([day, perBook]) => {
+    const n = Math.max(0, Number(perBook?.[bookId]) || 0);
+    if (n > 0) totals[day] = n;
+  });
+  return totals;
+}
+
+function getBookExplicitStartKey(book = {}) {
+  if (typeof book.startedOn === "string" && parseDateKeyLocal(book.startedOn)) return book.startedOn;
+  if (typeof book.startedAt === "string" && parseDateKeyLocal(book.startedAt)) return book.startedAt;
+  if (book.startedAt) return dateKeyFromTimestamp(book.startedAt);
+  return null;
+}
+
+function getBookStartDateKey(bookId) {
+  const historyStart = Object.entries(readingLog || {})
+    .filter(([, perBook]) => (Number(perBook?.[bookId]) || 0) > 0)
+    .map(([day]) => day)
+    .filter((day) => parseDateKeyLocal(day))
+    .sort()[0] || null;
+  if (historyStart) return historyStart;
+  return getBookExplicitStartKey(books?.[bookId] || {});
+}
+
+function formatPagesPerDay(value) {
+  const n = Number(value) || 0;
+  if (n >= 10) return String(Math.round(n));
+  return n.toFixed(1).replace(/\.0$/, "");
+}
+
+function computeBookReadingStats(bookId) {
+  const b = books?.[bookId];
+  if (!b) return null;
+
+  const total = Math.max(0, Number(b.pages) || 0);
+  const currentRaw = Math.max(0, Number(b.currentPage) || 0);
+  const current = total > 0 ? Math.min(currentRaw, total) : currentRaw;
+  const finished = isBookFinished(b);
+  const startedKey = getBookStartDateKey(bookId);
+  const startedDate = parseDateKeyLocal(startedKey);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysSinceStart = startedDate ? daysBetweenInclusive(startedDate, today) : 0;
+  const averagePagesPerDay = daysSinceStart > 0 ? current / daysSinceStart : 0;
+  const remainingPages = total > 0 ? Math.max(0, total - current) : null;
+  const canEstimate = !!startedDate
+    && total > 0
+    && !finished
+    && current > 0
+    && remainingPages > 0
+    && averagePagesPerDay > 0;
+  const daysRemaining = canEstimate ? Math.max(0, Math.ceil(remainingPages / averagePagesPerDay)) : null;
+  const estimatedDate = daysRemaining != null ? addDaysLocal(today, daysRemaining) : null;
+
+  return {
+    startedKey,
+    startedDate,
+    daysSinceStart,
+    averagePagesPerDay,
+    remainingPages,
+    daysRemaining,
+    estimatedDate,
+    finished,
+    canEstimate
+  };
+}
+
+function renderBookReadingStats(bookId) {
+  if (!$bookDetailReadingStats) return;
+  const stats = computeBookReadingStats(bookId);
+  if (!stats) return;
+
+  fillDetail($bookDetailStarted, stats.startedKey ? formatDateKeyLongLocal(stats.startedKey, { includeYear: true }) : "—");
+  fillDetail($bookDetailRate, stats.averagePagesPerDay > 0 ? `${formatPagesPerDay(stats.averagePagesPerDay)} pág/día` : "—");
+  fillDetail($bookDetailRemaining, stats.remainingPages != null ? `${stats.remainingPages} pág` : "—");
+  fillDetail($bookDetailEstimateDays, stats.daysRemaining != null ? `${stats.daysRemaining} día${stats.daysRemaining === 1 ? "" : "s"}` : "—");
+
+  if (!$bookDetailEstimateDate) return;
+  if (stats.finished) {
+    $bookDetailEstimateDate.textContent = "Libro terminado; no se muestra predicción.";
+  } else if (stats.canEstimate) {
+    const dateLabel = formatDateLongLocal(stats.estimatedDate, { includeYear: true });
+    $bookDetailEstimateDate.textContent = `Estimación basada en el ritmo actual: ${dateLabel}`;
+  } else {
+    $bookDetailEstimateDate.textContent = "Aún no hay suficientes datos para estimar la finalización.";
+  }
+}
+
+async function renderBookPagesTimeline(bookId) {
+  const range = normalizeTimelineRange($bookDetailPagesRange?.value || "total");
+  await renderTimelineChart($bookDetailPagesChart, $bookDetailPagesSection, computeBookDailyTotals(bookId), range);
 }
 
 function computeFinishedPastPages() {

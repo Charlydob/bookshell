@@ -299,6 +299,9 @@
 #view-world .world-fiscal-stat strong{font-size:14px;line-height:1.2;overflow-wrap:anywhere}
 #view-world .world-fiscal-copy{display:flex;flex-direction:column;gap:4px}
 #view-world .world-fiscal-copy p{margin:0;font-size:12px;line-height:1.35;opacity:.92}
+#view-world .world-fiscal-copy p strong:first-child{display:block;font-size:12px;line-height:1.3;color:rgba(255,255,255,.96)}
+#view-world .world-fiscal-copy p span{display:block;margin-top:1px;color:rgba(255,255,255,.72)}
+#view-world .world-fiscal-copy p span strong{color:rgba(255,255,255,.94)}
 @media (max-width:460px){
   #view-world .world-current-location-kpi{padding:11px 12px;border-radius:16px}
   #view-world .world-current-location-kpi strong{font-size:14px}

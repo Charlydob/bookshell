@@ -990,6 +990,45 @@
   font-size: 13px;
   color: #f7f7ff;
 }
+.book-detail-rate-grid{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+.book-detail-rate-item{
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 10px;
+  background: rgba(255,255,255,.035);
+  border: 1px solid rgba(255,255,255,.06);
+}
+.book-detail-rate-item span{
+  display: block;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--txt-soft);
+}
+.book-detail-rate-item strong{
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.25;
+  color: #f7f7ff;
+  overflow-wrap: anywhere;
+}
+.book-detail-estimate-note{
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--txt-soft);
+}
+.book-detail-chart-block .chart-card-header{
+  margin-bottom: 8px;
+}
+.book-detail-chart-host{
+  min-height: 190px;
+  padding: 8px;
+}
 .book-detail-footer{
   --detail-footer-h: 72px; /* ajusta si tu footer mide más */
   display: flex;
@@ -1926,6 +1965,10 @@ width: 100%;
 }
 
 @media (max-width: 640px) {
+  .book-detail-rate-grid{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .book-detail-quotes-toolbar{
     grid-template-columns: 1fr;
   }

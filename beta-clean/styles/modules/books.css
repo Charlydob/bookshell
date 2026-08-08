@@ -1240,6 +1240,14 @@
   gap: 10px;
   margin-bottom: 6px;
 }
+.chart-header-controls{
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
 .chart-selector{
   display: inline-flex;
   align-items: center;
@@ -1254,6 +1262,13 @@
   border-radius: 12px;
   padding: 6px 10px;
   font-size: 13px;
+  min-width: 0;
+}
+.chart-book-select{
+  max-width: 210px;
+}
+.chart-range-select{
+  max-width: 96px;
 }
 .chart-selector-input:focus{
   outline: 2px solid rgba(245,230,166,0.45);
@@ -1963,8 +1978,32 @@ width: 100%;
   box-sizing: border-box;
   position: relative;
 }
+.chart-empty-note{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  color: var(--txt-soft);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+}
 
 @media (max-width: 640px) {
+  .books-chart-timeline .chart-card-header{
+    align-items: flex-start;
+  }
+
+  .chart-header-controls{
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .chart-book-select{
+    flex: 1 1 160px;
+    max-width: none;
+  }
+
   .book-detail-rate-grid{
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

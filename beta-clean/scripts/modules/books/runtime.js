@@ -223,6 +223,7 @@ const $chartTitle = document.getElementById("books-chart-title");
 const $chartActive = document.getElementById("chart-active");
 const $booksPageTimeline = document.getElementById("books-pages-timeline");
 const $chartPagesTimeline = document.getElementById("chart-pages-timeline");
+const $booksPagesTimelineBook = document.getElementById("books-pages-timeline-book");
 const $booksPagesTimelineRange = document.getElementById("books-pages-timeline-range");
 const $appMain = document.querySelector(".app-main");
 const $booksGeoSection = document.getElementById("books-geo-section");
@@ -404,6 +405,9 @@ if ($statBooksReadCard && $statBooksReadRange) {
 }
 if ($booksPagesTimelineRange) {
   $booksPagesTimelineRange.addEventListener("change", () => renderPagesTimeline());
+}
+if ($booksPagesTimelineBook) {
+  $booksPagesTimelineBook.addEventListener("change", () => renderPagesTimeline());
 }
 if ($bookDetailPagesRange) {
   $bookDetailPagesRange.addEventListener("change", () => {
@@ -906,7 +910,9 @@ function bindDataSources() {
       booksSnapshotHydrated = true;
       setBooksShellLoading(false);
     }
+    populatePagesTimelineBookSelect();
     renderBooks();
+    renderPagesTimeline();
     if (bookDetailId && books?.[bookDetailId]) renderBookReadingStats(bookDetailId);
     emitBookshellBooksData("remote:books");
   }, {
@@ -1723,6 +1729,7 @@ onUserChange((user) => {
 function rerenderBooksViewOnShow() {
   if (booksSnapshotHydrated) {
     setBooksShellLoading(false);
+    populatePagesTimelineBookSelect();
     renderBooks();
   }
 
@@ -2735,6 +2742,29 @@ function normalizeTimelineRange(value) {
   return ["total", "year", "month", "week"].includes(value) ? value : "total";
 }
 
+function populatePagesTimelineBookSelect() {
+  if (!$booksPagesTimelineBook) return;
+  const previous = $booksPagesTimelineBook.value || "overview";
+  $booksPagesTimelineBook.innerHTML = "";
+
+  const overview = document.createElement("option");
+  overview.value = "overview";
+  overview.textContent = "Vista general";
+  $booksPagesTimelineBook.appendChild(overview);
+
+  Object.entries(books || {})
+    .map(([id, book]) => ({ id, title: String(book?.title || "").trim() || "Sin título" }))
+    .sort((a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" }))
+    .forEach(({ id, title }) => {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = title;
+      $booksPagesTimelineBook.appendChild(option);
+    });
+
+  $booksPagesTimelineBook.value = previous === "overview" || books?.[previous] ? previous : "overview";
+}
+
 function getTimelineBounds(range, totals = {}) {
   const safeRange = normalizeTimelineRange(range);
   const today = new Date();
@@ -2790,22 +2820,36 @@ function disposeTimelineChart($host) {
   }
 }
 
-async function renderTimelineChart($host, $section, totals = {}, range = "total") {
+function setTimelineEmptyMessage($host, message = "") {
+  if (!$host) return;
+  $host.innerHTML = "";
+  if (!message) return;
+  const note = document.createElement("div");
+  note.className = "chart-empty-note";
+  note.textContent = message;
+  $host.appendChild(note);
+}
+
+async function renderTimelineChart($host, $section, totals = {}, range = "total", options = {}) {
   if (!$host || !$section) return;
 
   const hasData = Object.values(totals || {}).some((n) => (Number(n) || 0) > 0);
   if (!hasData) {
     disposeTimelineChart($host);
-    $host.innerHTML = "";
-    $section.style.display = "none";
+    setTimelineEmptyMessage($host, options.emptyMessage || "");
+    if (options.keepVisibleOnEmpty) {
+      $section.style.display = "block";
+    } else {
+      $section.style.display = "none";
+    }
     return;
   }
 
   const { dates, values } = buildTimelineSeries(totals, range);
   if (!dates.length) {
     disposeTimelineChart($host);
-    $host.innerHTML = "";
-    $section.style.display = "none";
+    setTimelineEmptyMessage($host, options.emptyMessage || "");
+    $section.style.display = options.keepVisibleOnEmpty ? "block" : "none";
     return;
   }
 
@@ -2914,7 +2958,13 @@ async function renderTimelineChart($host, $section, totals = {}, range = "total"
 // === Gráfico lineal: Páginas leídas por día ===
 async function renderPagesTimeline() {
   const range = normalizeTimelineRange($booksPagesTimelineRange?.value || "total");
-  await renderTimelineChart($chartPagesTimeline, $booksPageTimeline, computeDailyTotals(), range);
+  const selectedBookId = $booksPagesTimelineBook?.value || "overview";
+  const isBookScope = selectedBookId !== "overview" && !!books?.[selectedBookId];
+  const totals = isBookScope ? computeBookDailyTotals(selectedBookId) : computeDailyTotals();
+  await renderTimelineChart($chartPagesTimeline, $booksPageTimeline, totals, range, {
+    keepVisibleOnEmpty: isBookScope,
+    emptyMessage: isBookScope ? "Sin lecturas registradas para este libro." : ""
+  });
 }
 
 function renderBooks() {

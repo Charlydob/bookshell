@@ -149,12 +149,17 @@
 <div class="chart-card">
 <div class="chart-card-header">
 <div class="chart-card-title">Páginas leídas por día</div>
+<div class="chart-header-controls">
+<select aria-label="Libro para páginas leídas" class="chart-selector-input chart-book-select" id="books-pages-timeline-book">
+<option selected="" value="overview">Vista general</option>
+</select>
 <select aria-label="Rango páginas leídas" class="chart-selector-input chart-range-select" id="books-pages-timeline-range">
 <option selected="" value="total">Total</option>
 <option value="year">Año</option>
 <option value="month">Mes</option>
 <option value="week">Semana</option>
 </select>
+</div>
 </div>
 <div class="chart-timeline-host" id="chart-pages-timeline"></div>
 </div>

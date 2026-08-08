@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-08-08-reading-stats";
-const PUBLISHED_COMMIT = "local-reading-stats";
+const APP_VERSION = "2026-08-08-reading-timeline-book-filter";
+const PUBLISHED_COMMIT = "local-reading-timeline-book-filter";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 

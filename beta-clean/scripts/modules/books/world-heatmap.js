@@ -161,7 +161,16 @@ export async function renderCountryHeatmap(host, entries = [], options = {}) {
     value: Number(e.value) || 0,
     label: e.label || e.code,
     rawCode: (e.code || "").toUpperCase(),
+    rawKey: String(e.code || e.label || "").trim().toLowerCase(),
     rawValue: Number(e.rawValue ?? e.days ?? e.value) || 0,
+    ...(e.selected ? {
+      selected: true,
+      itemStyle: {
+        areaColor: "rgba(245,230,166,0.96)",
+        borderColor: "rgba(255,255,255,0.82)",
+        borderWidth: 1.2,
+      },
+    } : {}),
   }));
   const maxVal = Math.max(...data.map((d) => Number(d.value) || 0), 1);
   const showTooltip = options.showTooltip !== false;

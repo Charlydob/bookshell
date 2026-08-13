@@ -225,10 +225,15 @@ const $booksPageTimeline = document.getElementById("books-pages-timeline");
 const $chartPagesTimeline = document.getElementById("chart-pages-timeline");
 const $booksPagesTimelineBook = document.getElementById("books-pages-timeline-book");
 const $booksPagesTimelineRange = document.getElementById("books-pages-timeline-range");
+const $booksPublicationTimeline = document.getElementById("books-publication-timeline");
+const $booksPublicationTimelineTrack = document.getElementById("books-publication-timeline-track");
+const $booksPublicationTimelineBooks = document.getElementById("books-publication-timeline-books");
+const $booksPublicationTimelineSummary = document.getElementById("books-publication-timeline-summary");
 const $appMain = document.querySelector(".app-main");
 const $booksGeoSection = document.getElementById("books-geo-section");
 const $booksWorldMap = document.getElementById("books-world-map");
 const $booksCountryList = document.getElementById("books-country-list");
+const $booksCountryPanel = document.getElementById("books-country-panel");
 
 // Tabs navigation
 const $booksSubtabs = document.getElementById("books-subtabs");
@@ -253,6 +258,12 @@ const $booksWatchlist = document.getElementById("books-watchlist");
 const $booksWatchlistList = document.getElementById("books-watchlist-list");
 const $booksWatchlistEmpty = document.getElementById("books-watchlist-empty");
 const $booksWatchlistCount = document.getElementById("books-watchlist-count");
+
+let selectedPublicationYear = null;
+let publicationTimelineScrollRightPending = true;
+let selectedCountry = null;
+let booksGeoCurrentIds = [];
+let countryListScrollPending = false;
 
 const filterState = {
   query: "",
@@ -376,8 +387,10 @@ function switchBooksTab(panelName) {
   });
 
   if (panelName === "stats") {
+    publicationTimelineScrollRightPending = true;
     // Dar tiempo a que se renderice el elemento
     setTimeout(() => {
+      renderPublicationTimeline(Object.keys(books || {}));
       renderPagesTimeline();
     }, 100);
   }
@@ -1743,6 +1756,9 @@ function rerenderBooksViewOnShow() {
 
 export function onShow() {
   booksViewVisible = true;
+  if ($booksPanelStats?.classList.contains("is-active")) {
+    publicationTimelineScrollRightPending = true;
+  }
   if (!dataBindingsReady) bindDataSources();
   rerenderBooksViewOnShow();
   requestAnimationFrame(() => {
@@ -1893,6 +1909,108 @@ setSpineWidth(spine, title);
   });
 
   return spine;
+}
+
+function getBookPublishYear(book = {}) {
+  const year = Number(book?.year);
+  if (!Number.isFinite(year)) return null;
+  const normalized = Math.trunc(year);
+  return normalized ? normalized : null;
+}
+
+function buildBookSpineForStats(id) {
+  const book = books?.[id] || {};
+  if (isBookFinished(book)) return buildFinishedSpine(id);
+  if (book?.status === "planned") return buildWatchlistSpine(id);
+  return buildReadingSpine(id);
+}
+
+function buildPublicationYearGroups(ids = []) {
+  const groups = new Map();
+  (ids || []).forEach((id) => {
+    const year = getBookPublishYear(books?.[id]);
+    if (!year) return;
+    if (!groups.has(year)) groups.set(year, []);
+    groups.get(year).push(id);
+  });
+
+  return Array.from(groups.entries())
+    .map(([year, bookIds]) => ({
+      year,
+      ids: bookIds.sort((a, b) =>
+        String(books?.[a]?.title || "").localeCompare(String(books?.[b]?.title || ""), "es", { sensitivity: "base" })
+      )
+    }))
+    .sort((a, b) => a.year - b.year);
+}
+
+function scrollPublicationTimelineToEnd() {
+  if (!$booksPublicationTimelineTrack) return;
+  requestAnimationFrame(() => {
+    $booksPublicationTimelineTrack.scrollLeft = $booksPublicationTimelineTrack.scrollWidth;
+  });
+}
+
+function renderPublicationTimeline(ids = []) {
+  if (!$booksPublicationTimeline || !$booksPublicationTimelineTrack || !$booksPublicationTimelineBooks) return;
+
+  const groups = buildPublicationYearGroups(ids);
+  if (!groups.length) {
+    $booksPublicationTimeline.style.display = "none";
+    $booksPublicationTimelineTrack.innerHTML = "";
+    $booksPublicationTimelineBooks.innerHTML = "";
+    if ($booksPublicationTimelineSummary) $booksPublicationTimelineSummary.textContent = "";
+    selectedPublicationYear = null;
+    return;
+  }
+
+  $booksPublicationTimeline.style.display = "block";
+
+  const years = groups.map((g) => g.year);
+  if (!years.includes(selectedPublicationYear)) {
+    selectedPublicationYear = years[years.length - 1];
+    publicationTimelineScrollRightPending = true;
+  }
+
+  const frag = document.createDocumentFragment();
+  groups.forEach((group) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "publication-year-marker";
+    if (group.year === selectedPublicationYear) btn.classList.add("is-active");
+    btn.dataset.year = String(group.year);
+    btn.setAttribute("aria-pressed", group.year === selectedPublicationYear ? "true" : "false");
+    btn.innerHTML = `
+      <span class="publication-year-line" aria-hidden="true"></span>
+      <span class="publication-year-label">${group.year}</span>
+      <span class="publication-year-count">${group.ids.length}</span>
+    `;
+    btn.addEventListener("click", () => {
+      selectedPublicationYear = group.year;
+      publicationTimelineScrollRightPending = false;
+      renderPublicationTimeline(ids);
+    });
+    frag.appendChild(btn);
+  });
+
+  $booksPublicationTimelineTrack.innerHTML = "";
+  $booksPublicationTimelineTrack.appendChild(frag);
+
+  const selected = groups.find((g) => g.year === selectedPublicationYear) || groups[groups.length - 1];
+  const count = selected?.ids?.length || 0;
+  if ($booksPublicationTimelineSummary) {
+    $booksPublicationTimelineSummary.textContent = `${selected.year} · ${count} libro${count === 1 ? "" : "s"}`;
+  }
+
+  $booksPublicationTimelineBooks.innerHTML = "";
+  $booksPublicationTimelineBooks.appendChild(
+    buildShelfRowsByWidth(selected.ids, buildBookSpineForStats, $booksPublicationTimelineBooks, "books-shelf-row publication-book-row")
+  );
+
+  if (publicationTimelineScrollRightPending) {
+    publicationTimelineScrollRightPending = false;
+    scrollPublicationTimelineToEnd();
+  }
 }
 
 // === Charts (donut 2D interactivo) ===
@@ -2368,13 +2486,84 @@ function buildBookCountryStats(ids) {
     const country = normalizeCountryRecord(b?.country, b?.countryLabel);
     if (!country || !country.label) return;
     const key = country.code || country.label.toLowerCase();
-    const current = m.get(key) || { code: country.code, label: country.label, english: country.english, value: 0 };
+    const current = m.get(key) || { code: country.code, label: country.label, english: country.english, value: 0, ids: [] };
     current.value += 1;
+    current.ids.push(id);
     m.set(key, current);
   });
   return Array.from(m.values()).sort(
     (a, b) => b.value - a.value || a.label.localeCompare(b.label, "es", { sensitivity: "base" })
   );
+}
+
+function getCountryStatKey(item = {}) {
+  return String(item.code || item.label || "").trim().toLowerCase();
+}
+
+function selectBooksCountry(item = {}, options = {}) {
+  const key = getCountryStatKey(item);
+  if (!key) return;
+  selectedCountry = selectedCountry === key && options.toggle !== false ? null : key;
+  countryListScrollPending = !!options.scrollIntoView;
+  if ($booksCountryPanel && selectedCountry) $booksCountryPanel.open = true;
+  void renderBooksGeo(booksGeoCurrentIds);
+}
+
+function renderInteractiveCountryList(container, stats = []) {
+  if (!container) return;
+  container.innerHTML = "";
+  if (!stats.length) {
+    container.innerHTML = `<div class="geo-empty">Sin datos todavía.</div>`;
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  stats.forEach((item) => {
+    const key = getCountryStatKey(item);
+    const isSelected = key && key === selectedCountry;
+    const wrapper = document.createElement("div");
+    wrapper.className = "geo-list-item";
+    wrapper.dataset.countryKey = key;
+
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "geo-list-row geo-list-row-button";
+    if (isSelected) row.classList.add("is-active");
+    row.setAttribute("aria-expanded", isSelected ? "true" : "false");
+
+    const name = document.createElement("span");
+    name.className = "geo-list-name";
+    name.textContent = item.label || item.code || "País";
+
+    const value = document.createElement("span");
+    value.className = "geo-list-value";
+    const count = Number(item.value) || 0;
+    value.textContent = `${count} libro${count === 1 ? "" : "s"}`;
+
+    row.appendChild(name);
+    row.appendChild(value);
+    row.addEventListener("click", () => selectBooksCountry(item));
+    wrapper.appendChild(row);
+
+    if (isSelected) {
+      const booksHost = document.createElement("div");
+      booksHost.className = "geo-country-books";
+      booksHost.appendChild(
+        buildShelfRowsByWidth(item.ids || [], buildBookSpineForStats, booksHost, "books-shelf-row geo-country-book-row")
+      );
+      wrapper.appendChild(booksHost);
+      if (countryListScrollPending) {
+        requestAnimationFrame(() => {
+          wrapper.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+      }
+    }
+
+    frag.appendChild(wrapper);
+  });
+
+  container.appendChild(frag);
+  countryListScrollPending = false;
 }
 
 let deferredBooksVisualToken = 0;
@@ -2423,15 +2612,20 @@ function scheduleFinishedVisuals(finishedIds) {
 
 async function renderBooksGeo(ids) {
   if (!$booksGeoSection) return;
+  booksGeoCurrentIds = Array.isArray(ids) ? [...ids] : [];
   const stats = buildBookCountryStats(ids);
   if (!stats.length) {
     $booksGeoSection.style.display = "none";
+    selectedCountry = null;
     if ($booksWorldMap) {
       if (typeof $booksWorldMap.__geoCleanup === "function") $booksWorldMap.__geoCleanup();
       $booksWorldMap.innerHTML = "";
     }
     if ($booksCountryList) $booksCountryList.innerHTML = "";
     return;
+  }
+  if (selectedCountry && !stats.some((s) => getCountryStatKey(s) === selectedCountry)) {
+    selectedCountry = null;
   }
   $booksGeoSection.style.display = "block";
   requestAnimationFrame(() => $booksWorldMap?.__geoChart?.resize?.());
@@ -2442,15 +2636,18 @@ async function renderBooksGeo(ids) {
       code: s.code,
       value: s.value,
       label: s.label,
-      mapName: s.english
+      mapName: s.english,
+      selected: getCountryStatKey(s) === selectedCountry
     }));
   try {
     const {
       renderCountryHeatmap,
-      renderCountryList,
     } = await loadWorldHeatmapModule();
-    renderCountryHeatmap($booksWorldMap, mapData, { emptyLabel: "Añade el país de tus libros" });
-    renderCountryList($booksCountryList, stats, "libro");
+    renderCountryHeatmap($booksWorldMap, mapData, {
+      emptyLabel: "Añade el país de tus libros",
+      onCountryClick: (country) => selectBooksCountry(country, { scrollIntoView: true, toggle: false })
+    });
+    renderInteractiveCountryList($booksCountryList, stats);
   } catch (error) {
     console.warn("No se pudo cargar el mapa de países de libros", error);
   }
@@ -2984,6 +3181,7 @@ function renderBooks() {
   });
 
   if (!idsAll.length) {
+    renderPublicationTimeline([]);
     if ($booksListActive) $booksListActive.innerHTML = "";
     if (hasFinishedUI) {
       $booksListFinished.innerHTML = "";
@@ -3002,6 +3200,8 @@ function renderBooks() {
     $booksEmpty.style.display = "block";
     return;
   }
+
+  renderPublicationTimeline(idsAll);
 
   const filteredIds = applyFilters(books, searchQuery, filterState);
 

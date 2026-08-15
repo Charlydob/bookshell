@@ -11073,9 +11073,10 @@ function renderMovementRow(row = {}, accountsById = {}, options = {}) {
     ? `<button class="finance-pill finance-pill--mini" data-recurring-instance-open="${escapeHtml(String(row.recurringId || ''))}" data-recurring-month="${escapeHtml(String(row.monthKey || ''))}">✏️</button>`
     : `<button class="finance-pill finance-pill--mini" data-tx-edit="${escapeHtml(String(row.id || ''))}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${escapeHtml(String(row.id || ''))}">❌</button>`;
   const noteLabel = movementNoteLabel(row);
+  const mainLine = `${movementPrimaryLabel(row)} · ${movementSecondaryLabel(row, accountsById)}`;
   return `<div class="financeTxRow finMovementRow">
     <span class="finMovementRow__date">${escapeHtml(dateLabel)}</span>
-    <span class="finMovementRow__main"><strong>${escapeHtml(movementPrimaryLabel(row))}</strong><small>${escapeHtml(movementSecondaryLabel(row, accountsById))}</small>${noteLabel ? `<small class="finMovementRow__note">${escapeHtml(noteLabel)}</small>` : ''}</span>
+    <span class="finMovementRow__main"><strong>${escapeHtml(mainLine)}</strong>${noteLabel ? `<small class="finMovementRow__note">${escapeHtml(noteLabel)}</small>` : ''}</span>
     <span class="finMovementRow__amount"><strong class="${tone}">${amountText}</strong>${amountMeta}</span>
     <span class="finance-row finMovementRow__actions">${actions}</span>
   </div>`;

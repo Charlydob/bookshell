@@ -612,28 +612,30 @@ body.finance-modal-open { overflow: hidden; }
   opacity: .75;
 }
 .financeTab .finMovementRow {
-  grid-template-columns: 74px minmax(0, 1fr) minmax(118px, auto) auto;
-  align-items: start;
-  gap: 10px 12px;
+  grid-template-columns: 66px minmax(0, 1fr) max-content max-content;
+  align-items: center;
+  gap: 6px 10px;
   width: 100%;
   min-width: 0;
-  padding: 10px;
-  border: 1px solid rgba(165, 186, 230, .12);
-  border-radius: 10px;
-  background: rgba(255,255,255,.025);
+  padding: 5px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  border-radius: 0;
+  background: transparent;
   overflow: visible;
 }
 .financeTab .finMovementRow__main,
 .financeTab .finMovementRow__amount {
   display: grid;
-  gap: 4px;
+  gap: 1px;
   min-width: 0;
 }
 .financeTab .finMovementRow__main strong,
 .financeTab .finMovementRow__main small {
   min-width: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .financeTab .finMovementRow__main small,
 .financeTab .finMovementRow__amount small,
@@ -642,31 +644,32 @@ body.finance-modal-open { overflow: hidden; }
   font-size: 12px;
 }
 .financeTab .finMovementRow__main strong {
-  font-size: .95rem;
-  line-height: 1.22;
+  font-size: .86rem;
+  line-height: 1.18;
 }
 .financeTab .finMovementRow__main small {
-  line-height: 1.25;
+  line-height: 1.18;
 }
 .financeTab .finMovementRow__note {
-  opacity: .58;
+  display: none;
 }
 .financeTab .finMovementRow__date {
-  padding-top: 2px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 .financeTab .finMovementRow__amount {
   justify-items: end;
   text-align: right;
-  line-height: 1.2;
+  line-height: 1.15;
 }
 .financeTab .finMovementRow__amount > strong {
   white-space: nowrap;
+  font-size: .84rem;
 }
 .financeTab .finMovementRow__amount small {
   display: block;
   text-transform: none;
+  white-space: nowrap;
 }
 .financeTab .finMovementRow__amount small strong {
   color: inherit;
@@ -676,25 +679,27 @@ body.finance-modal-open { overflow: hidden; }
   display: inline-flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-width: max-content;
 }
 .financeTab .finMovementRow__actions .finance-pill {
-  width: 30px;
-  min-width: 30px;
-  min-height: 30px;
+  width: 24px;
+  min-width: 24px;
+  min-height: 24px;
   padding: 0;
   display: inline-grid;
   place-items: center;
   line-height: 1;
+  font-size: 11px;
 }
 @media (max-width: 640px) {
   .financeTab .finMovementRow {
-    grid-template-columns: 64px minmax(0, 1fr) auto;
-    gap: 8px 10px;
+    grid-template-columns: 58px minmax(0, 1fr) max-content;
+    gap: 3px 8px;
   }
   .financeTab .finMovementRow__amount {
-    grid-column: 2 / 3;
+    grid-column: 2 / 4;
+    grid-row: 2;
     justify-items: start;
     text-align: left;
   }
@@ -705,22 +710,22 @@ body.finance-modal-open { overflow: hidden; }
 }
 @media (max-width: 420px) {
   .financeTab .finMovementRow {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: 58px minmax(0, 1fr) max-content;
   }
   .financeTab .finMovementRow__date {
     grid-column: 1 / 2;
     grid-row: 1;
   }
   .financeTab .finMovementRow__main {
-    grid-column: 1 / 3;
-    grid-row: 2;
+    grid-column: 2 / 3;
+    grid-row: 1;
   }
   .financeTab .finMovementRow__amount {
-    grid-column: 1 / 3;
-    grid-row: 3;
+    grid-column: 2 / 4;
+    grid-row: 2;
   }
   .financeTab .finMovementRow__actions {
-    grid-column: 2;
+    grid-column: 3;
     grid-row: 1;
   }
 }
@@ -9536,30 +9541,34 @@ grid-template-columns: 1fr auto;
 /* Movement drilldown rows: keep this after legacy .financeTxRow overrides. */
 .financeTab .financeTxRow.finMovementRow {
   display: grid;
-  grid-template-columns: 74px minmax(0, 1fr) minmax(118px, auto) auto;
-  align-items: start;
-  gap: 10px 12px;
+  grid-template-columns: 66px minmax(0, 1fr) max-content max-content;
+  align-items: center;
+  gap: 6px 10px;
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  padding: 10px;
-  border: 1px solid rgba(165, 186, 230, .12);
-  border-radius: 10px;
-  background: rgba(255,255,255,.025);
-  font-size: 13px;
+  padding: 5px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
 }
 .financeTab .financeTxRow.finMovementRow .finMovementRow__actions {
   display: inline-flex;
   grid-template-columns: none;
+  gap: 2px;
+  min-width: max-content;
 }
 @media (max-width: 640px) {
   .financeTab .financeTxRow.finMovementRow {
-    grid-template-columns: 64px minmax(0, 1fr) auto;
+    grid-template-columns: 58px minmax(0, 1fr) max-content;
+    gap: 3px 8px;
   }
 }
 @media (max-width: 420px) {
   .financeTab .financeTxRow.finMovementRow {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: 58px minmax(0, 1fr) max-content;
   }
 }
 #export-finance{

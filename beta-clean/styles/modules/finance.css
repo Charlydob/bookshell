@@ -544,6 +544,64 @@ body.finance-modal-open { overflow: hidden; }
   border-bottom: 1px solid rgba(255,255,255,.08);
   padding-bottom: 6px;
 }
+.financeTab .finMovementSection {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.financeTab .finMovementSection__header h3 {
+  display: block;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+}
+.financeTab .finMovementSection__header small {
+  opacity: .75;
+}
+.financeTab .finMovementRow {
+  grid-template-columns: 76px minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+.financeTab .finMovementRow__main,
+.financeTab .finMovementRow__amount {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.financeTab .finMovementRow__main strong,
+.financeTab .finMovementRow__main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.financeTab .finMovementRow__main small,
+.financeTab .finMovementRow__amount small,
+.financeTab .finMovementRow__date {
+  opacity: .76;
+  font-size: 12px;
+}
+.financeTab .finMovementRow__amount {
+  justify-items: end;
+  text-align: right;
+}
+.financeTab .finMovementRow__actions {
+  justify-content: flex-end;
+  gap: 4px;
+}
+@media (max-width: 640px) {
+  .financeTab .finMovementRow {
+    grid-template-columns: 64px minmax(0, 1fr) auto;
+  }
+  .financeTab .finMovementRow__amount {
+    grid-column: 2 / 4;
+    justify-items: start;
+    text-align: left;
+  }
+  .financeTab .finMovementRow__actions {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
 .financeTab .financeProgress {
   width: 100%;
   height: 8px;

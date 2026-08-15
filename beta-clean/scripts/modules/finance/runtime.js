@@ -327,6 +327,7 @@ function buildFinanceStatsCacheKey({ monthKey, statsRange, statsScope, statsGrou
       Number(row.ts || row.timestamp || row.createdAt || row.updatedAt || 0),
       String(row.type || ''),
       Number(row.amount || 0),
+      String(row.categoryId || ''),
       String(row.category || ''),
       String(row.accountId || ''),
       String(row.fromAccountId || ''),
@@ -336,7 +337,7 @@ function buildFinanceStatsCacheKey({ monthKey, statsRange, statsScope, statsGrou
       String(row.foodId || ''),
     ].join('|'))
     .join('~');
-  return `finance:balance-donut:v1:${state.financePath}:${monthKey}:${statsRange}:${statsScope}:${statsGroupBy}:${mode}:${includeUnlined ? '1' : '0'}:${hashString(signature)}`;
+  return `finance:balance-donut:v2:${state.financePath}:${monthKey}:${statsRange}:${statsScope}:${statsGroupBy}:${mode}:${includeUnlined ? '1' : '0'}:${hashString(signature)}`;
 }
 
 function serializeFinanceProductMeta(meta = {}) {
@@ -1039,6 +1040,11 @@ function personalDeltaForTxInCurrency(tx = {}, accountsById = {}, targetCurrency
 function movementSign(type) { return type === 'income' ? 1 : -1; }
 function txSortTs(row) {
   return new Date(row?.date || row?.dateISO || 0).getTime() || 0;
+}
+function compareTxNewestFirst(left = {}, right = {}) {
+  return (txSortTs(right) - txSortTs(left))
+    || (Number(right?.createdAt || 0) - Number(left?.createdAt || 0))
+    || String(right?.id || '').localeCompare(String(left?.id || ''));
 }
 function normalizeTxType(type = '') {
   const safe = String(type || '').trim().toLowerCase();
@@ -10974,7 +10980,7 @@ async function processFinanceNewMovementDeepLink() {
   return true;
 }
 
-function openEditMovementModal(movement = null) {
+function openEditMovementModal(movement = null, options = {}) {
   const row = movement || null;
   const clonedRow = row
     ? (typeof structuredClone === 'function'
@@ -10982,6 +10988,7 @@ function openEditMovementModal(movement = null) {
       : JSON.parse(JSON.stringify(row)))
     : null;
   state.editingMovementDraft = clonedRow;
+  state.editingMovementReturnModal = options?.returnModal || null;
   console.log('[finance:edit:open]', {
     txId: clonedRow?.id || '',
     status: clonedRow?.status || '',
@@ -10994,7 +11001,7 @@ function openEditMovementModal(movement = null) {
     recurringEnabled: false,
     mode: 'edit',
   });
-  state.modal = { type: 'tx', txId: String(clonedRow?.id || '').trim() };
+  state.modal = { type: 'tx', txId: String(clonedRow?.id || '').trim(), ...(state.editingMovementReturnModal ? { returnModal: state.editingMovementReturnModal } : {}) };
   return triggerRender({ preserveUi: false, force: true });
 }
 
@@ -11009,9 +11016,11 @@ function openRecurringMovementModal(recurringId = '', monthKey = getSelectedBala
 }
 
 function closeMovementModal() {
+  const returnModal = state.modal?.returnModal || state.editingMovementReturnModal || null;
   state.editingMovementDraft = null;
+  state.editingMovementReturnModal = null;
   resetMovementForm();
-  state.modal = { type: null };
+  state.modal = returnModal || { type: null };
   return triggerRender({ preserveUi: false, force: true });
 }
 
@@ -11027,10 +11036,101 @@ function setMovementFormBusy(formEl = null, busy = false) {
   });
 }
 
+function movementAccountLabel(row = {}, accountsById = {}) {
+  const accountName = (id = '') => String(accountsById?.[id]?.name || 'Sin cuenta');
+  if (normalizeTxType(row?.type) === 'transfer') {
+    return `${accountName(row.fromAccountId)} -> ${accountName(row.toAccountId)}`;
+  }
+  return accountName(row.accountId);
+}
+
+function movementPrimaryLabel(row = {}) {
+  return String(row?.category || row?.title || row?.note || 'Sin categoría').trim() || 'Sin categoría';
+}
+
+function movementSecondaryLabel(row = {}, accountsById = {}) {
+  const parts = [movementAccountLabel(row, accountsById)];
+  const note = String(row?.note || '').trim();
+  if (note && note !== movementPrimaryLabel(row)) parts.push(note);
+  const ratio = normalizeTxType(row?.type) === 'transfer' ? null : personalRatioForTx(row, accountsById);
+  if (ratio != null) parts.push(`Imputado a mí: ${Math.round(ratio * 100)}%`);
+  return parts.filter(Boolean).join(' · ');
+}
+
+function renderMovementRow(row = {}, accountsById = {}, options = {}) {
+  const day = isoToDay(row.date || row.dateISO || '') || String(row.date || row.dateISO || '').slice(0, 10);
+  const dateLabel = day ? new Date(`${day}T00:00:00`).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '--';
+  const type = normalizeTxType(row.type);
+  const originalCurrency = String(row.originalCurrency || row.currency || 'EUR').toUpperCase();
+  const hasOriginal = originalCurrency !== String(row.accountCurrency || row.currency || 'EUR').toUpperCase() && Number.isFinite(Number(row.originalAmount));
+  const originalText = hasOriginal ? ` · ${formatCurrency(row.originalAmount, originalCurrency)}` : '';
+  const amountText = `${fmtCurrencyCode(row.amount, row.accountCurrency || row.currency || 'EUR')}${originalText}`;
+  const contribution = Number(options.contribution || 0);
+  const showContribution = Number.isFinite(contribution) && contribution > 0;
+  const amountMeta = showContribution ? `<small>${escapeHtml(options.contributionLabel || 'Aporta')}: ${fmtCurrency(contribution)}</small>` : '';
+  const tone = type === 'income' ? 'is-positive' : (type === 'expense' ? 'is-negative' : toneClass(personalDeltaForTx(row, accountsById)));
+  const actions = row.recurringVirtual
+    ? `<button class="finance-pill finance-pill--mini" data-recurring-instance-open="${escapeHtml(String(row.recurringId || ''))}" data-recurring-month="${escapeHtml(String(row.monthKey || ''))}">✏️</button>`
+    : `<button class="finance-pill finance-pill--mini" data-tx-edit="${escapeHtml(String(row.id || ''))}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${escapeHtml(String(row.id || ''))}">❌</button>`;
+  return `<div class="financeTxRow finMovementRow">
+    <span class="finMovementRow__date">${escapeHtml(dateLabel)}</span>
+    <span class="finMovementRow__main"><strong>${escapeHtml(movementPrimaryLabel(row))}</strong><small>${escapeHtml(movementSecondaryLabel(row, accountsById))}</small></span>
+    <span class="finMovementRow__amount"><strong class="${tone}">${amountText}</strong>${amountMeta}</span>
+    <span class="finance-row finMovementRow__actions">${actions}</span>
+  </div>`;
+}
+
+function renderMovementList(rows = [], accountsById = {}, options = {}) {
+  const listRows = rows.slice().sort(compareTxNewestFirst);
+  const emptyText = options.emptyText || 'Sin movimientos.';
+  const maxRows = Number(options.maxRows || 0);
+  const visibleRows = maxRows > 0 ? listRows.slice(0, maxRows) : listRows;
+  const contributionById = options.contributionById || {};
+  return `<div class="financeTxList finMovementList ${options.scroll ? 'financeTxList--scroll' : ''}" ${options.maxHeight ? `style="max-height:${Number(options.maxHeight)}px;overflow-y:auto;"` : ''}>
+    ${visibleRows.map((row) => renderMovementRow(row, accountsById, {
+      contribution: contributionById[String(row.id || '')],
+      contributionLabel: options.contributionLabel,
+    })).join('') || `<p class="finance-empty">${escapeHtml(emptyText)}</p>`}
+  </div>`;
+}
+
+function filterTxRowsByAccountId(txRows = [], accountId = '') {
+  const safeAccountId = String(accountId || '').trim();
+  if (!safeAccountId) return [];
+  return txRows
+    .filter((row) => String(row?.accountId || '') === safeAccountId || String(row?.fromAccountId || '') === safeAccountId || String(row?.toAccountId || '') === safeAccountId)
+    .sort(compareTxNewestFirst);
+}
+
+function statsCategoryIdForTx(row = {}) {
+  return String(row?.categoryId || row?.category || 'Sin categoría').trim() || 'Sin categoría';
+}
+
+function statsCategoryLabelForTx(row = {}) {
+  return String(row?.category || row?.categoryId || 'Sin categoría').trim() || 'Sin categoría';
+}
+
+function buildStatsCategoryContributionRows(rows = [], categoryId = '', txMode = 'expense', scope = 'personal', accountsById = {}) {
+  const selectedCategoryId = String(categoryId || '').trim();
+  if (!selectedCategoryId) return [];
+  return rows
+    .filter((row) => normalizeTxType(row?.type) === txMode)
+    .map((row) => {
+      if (statsCategoryIdForTx(row) !== selectedCategoryId) return null;
+      const contribution = scope === 'global'
+        ? Math.abs(txAmountInCurrency(row, accountsById))
+        : Math.abs(personalDeltaForTxInCurrency(row, accountsById));
+      if (!Number.isFinite(contribution) || contribution <= 0) return null;
+      return { ...row, statsContribution: contribution };
+    })
+    .filter(Boolean)
+    .sort(compareTxNewestFirst);
+}
+
 function buildDrilldownRows(txType, monthKey) {
   return balanceTxList()
     .filter((row) => row.type === txType && row.monthKey === monthKey)
-    .sort((a, b) => txSortTs(b) - txSortTs(a));
+    .sort(compareTxNewestFirst);
 }
 
 function monthlyNetRows(accountsById = {}, txRows = balanceTxList()) {
@@ -11211,6 +11311,7 @@ function computeTransactionAmountInRange(row = {}, viewedRange = {}) {
 function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense', scope = 'personal', accountsById = {}, options = {}) {
   const output = {};
   const productKeyByLabel = {};
+  const labelByKey = {};
   const ungroupedLabel = 'Importe sin líneas';
   const includeUnlined = !!options.includeUnlined;
   let unlinedTotal = 0;
@@ -11243,6 +11344,9 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
         if (includeUnlined) output[ungroupedLabel] = (output[ungroupedLabel] || 0) + amount;
       }
       return;
+    } else if (groupBy === 'category') {
+      key = statsCategoryIdForTx(row);
+      if (!labelByKey[key]) labelByKey[key] = statsCategoryLabelForTx(row);
     } else key = row.category || 'Sin categoría';
     output[key] = (output[key] || 0) + amount;
   });
@@ -11264,7 +11368,7 @@ function aggregateStatsGroup(rows = [], groupBy = 'category', txMode = 'expense'
   } else {
     state.balanceStatsProductMeta = {};
   }
-  return { breakdown: output, unlinedTotal, productKeyByLabel };
+  return { breakdown: output, unlinedTotal, productKeyByLabel, labelByKey };
 }
 
 async function renderFixedExpenseCharts() {
@@ -11350,7 +11454,7 @@ function computeFinanceStatsDonutPayload(rows = [], accountsById = {}, options =
   const payload = {
     donutAggregation,
     donutTotal,
-    segments: donutSegments(donutMap, donutTotal, { productKeyByLabel: donutAggregation.productKeyByLabel }),
+    segments: donutSegments(donutMap, donutTotal, { productKeyByLabel: donutAggregation.productKeyByLabel, labelByKey: donutAggregation.labelByKey }),
     productMeta: serializeFinanceProductMeta(state.balanceStatsProductMeta || {}),
   };
   writeProcessedJsonCache(cacheKey, payload, {
@@ -11362,10 +11466,13 @@ function computeFinanceStatsDonutPayload(rows = [], accountsById = {}, options =
 function donutSegments(mapData = {}, total = 0, options = {}) {
   if (!total) return [];
   const productKeyByLabel = options?.productKeyByLabel || {};
+  const labelByKey = options?.labelByKey || {};
   let accumulatedRatio = 0;
   return Object.entries(mapData)
     .sort((a, b) => b[1] - a[1])
-    .map(([label, value], index) => {
+    .map(([rawKey, value], index) => {
+      const segmentKey = String(productKeyByLabel[rawKey] || rawKey || '');
+      const label = String(labelByKey[rawKey] || rawKey || 'Sin datos');
       const ratio = Number(value || 0) / total;
       const startRatio = accumulatedRatio;
       const endRatio = accumulatedRatio + ratio;
@@ -11376,9 +11483,9 @@ function donutSegments(mapData = {}, total = 0, options = {}) {
         color: categoryColor(index),
         pct: ratio * 100,
         midAngle,
-        key: `${firebaseSafeKey(label)}__${index}`,
-        _key: String(productKeyByLabel[label] || firebaseSafeKey(label)),
-        productKey: String(productKeyByLabel[label] || firebaseSafeKey(label))
+        key: `${firebaseSafeKey(segmentKey || label)}__${index}`,
+        _key: segmentKey || firebaseSafeKey(label),
+        productKey: segmentKey || firebaseSafeKey(label)
       };
       accumulatedRatio = endRatio;
       return segment;
@@ -11700,7 +11807,7 @@ financeStatsDonutChart.setOption({
     const segmentKey = String(params.data._key || '');
     if (!segmentKey || !Number.isInteger(idx) || idx < 0) return;
     if (state.balanceStatsActiveSegment === segmentKey) {
-      resetSelection({ rerender: false });
+      resetSelection({ rerender: true });
       return;
     }
     state.balanceStatsActiveSegment = segmentKey;
@@ -11709,6 +11816,7 @@ financeStatsDonutChart.setOption({
     financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
     updateLegendSelection(segmentKey);
     updateCalloutFromSlice(params);
+    triggerRender();
   });
 
   const zr = financeStatsDonutChart.getZr?.();
@@ -13721,9 +13829,13 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
   const donutMap = donutAggregation.breakdown;
   const unlinedTotal = donutAggregation.unlinedTotal;
   const donutTotal = Number(donutPayload.donutTotal || 0);
-  const segments = Array.isArray(donutPayload.segments) ? donutPayload.segments : donutSegments(donutMap, donutTotal, { productKeyByLabel: donutAggregation.productKeyByLabel });
+  const segments = Array.isArray(donutPayload.segments) ? donutPayload.segments : donutSegments(donutMap, donutTotal, { productKeyByLabel: donutAggregation.productKeyByLabel, labelByKey: donutAggregation.labelByKey });
   const selectedSegment = segments.find((segment) => segment._key === state.balanceStatsActiveSegment) || null;
   if (!selectedSegment && state.balanceStatsActiveSegment) state.balanceStatsActiveSegment = null;
+  const selectedCategoryMovementRows = selectedSegment && statsGroupBy === 'category'
+    ? buildStatsCategoryContributionRows(rangeRows, selectedSegment._key, mode, statsScope, accountsById)
+    : [];
+  const selectedCategoryContributionById = Object.fromEntries(selectedCategoryMovementRows.map((row) => [String(row.id || ''), Number(row.statsContribution || 0)]));
   const legendExpanded = state.balanceStatsLegendExpanded !== false;
   const monthScopeLabel = statsRange === 'month' ? ` — ${capitalizeFirst(monthLabelByKey(monthKey))}` : '';
   const totalIncome = statsScope === 'global' ? rangeStats.totalIncomeGlobal : rangeStats.totalIncomePersonal;
@@ -13871,6 +13983,19 @@ function renderFinanceBalance(accounts = buildAccountModels(), categories = cate
         }).join('') : '<p class="finance-empty">Sin datos.</p>'}
       </div>
     </details>
+    ${selectedSegment && statsGroupBy === 'category' ? `
+      <details class="financeStats__details financeStats__movementDetails" open>
+        <summary class="financeStats__detailsSummary">Movimientos — ${escapeHtml(selectedSegment.label)} · ${fmtCurrency(selectedSegment.value)}</summary>
+        <div class="financeStats__detailsBody financeStats__movementBody">
+          ${renderMovementList(selectedCategoryMovementRows, accountsById, {
+            scroll: false,
+            emptyText: 'Sin movimientos para esta categoría con los filtros actuales.',
+            contributionById: selectedCategoryContributionById,
+            contributionLabel: scopeLabel,
+          })}
+        </div>
+      </details>
+    ` : ''}
 
     <div class="financeStats__compare">
       <h4>Comparativa del período (${scopeLabel})</h4>
@@ -14828,11 +14953,17 @@ function renderModal({ accounts = null, categories = null, txRows = null } = {})
     const chart = chartModelForRange(account.daily, 'total');
     state.lineChart = { points: chart.points || [], mode: 'total', kind: 'account', accountId: account.id, accountName: account.name };
     const preview = state.modal.importPreview;
+    const accountsById = Object.fromEntries(resolvedAccounts.map((item) => [item.id, item]));
+    const accountMovementRows = filterTxRowsByAccountId(resolvedTxRows, account.id);
     backdrop.innerHTML = `<div id="finance-modal" class="finance-modal" role="dialog" aria-modal="true" tabindex="-1"><header><h3> ${escapeHtml(account.name)}</h3><div class="finance-row"><button class="finance-pill finance-pill--mini" data-edit-account="${account.id}">Editar cuenta</button><button class="finance-pill" data-close-modal>Cerrar</button></div></header>
       <p>Saldo real: <strong>${formatAccountAmount(account.currentReal, account)}</strong>${account.shared ? ` · Mi parte: <strong>${formatAccountAmount(account.current, account)}</strong>` : ''}</p><div id="finance-lineChart" class="${chart.tone}">${chart.points.length ? `<svg viewBox="0 0 320 120" preserveAspectRatio="none"><path d="${linePath(chart.points)}"/></svg>` : '<div class="finance-empty">Sin datos.</div>'}</div>
       <form class="finance-entry-form" data-account-entry-form="${account.id}"><input name="day" type="date" value="${dayKeyFromTs(Date.now())}" required /><input name="value" type="number" step="${accountCurrency(account) === 'BTC' ? '0.00000001' : '0.01'}" placeholder="Valor real" required /><button class="finance-pill" id="guardar-dato-vista-detalle" type="submit">💳</button></form>
       <div class="finance-table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Δ</th><th>Δ%</th><th></th></tr></thead><tbody>${account.daily.slice().reverse().map((row) => `<tr><td>${new Date(row.ts).toLocaleDateString('es-ES')}</td><td><form data-account-row-form="${account.id}:${row.day}"><input name="value" type="number" step="${accountCurrency(account) === 'BTC' ? '0.00000001' : '0.01'}" value="${Number(row.realValue || row.value || 0)}"/></form></td><td class="${toneClass(row.delta)}">${row.delta > 0 ? '+' : ''}${formatAccountAmount(row.delta, account)}</td><td class="${toneClass(row.deltaPct)}">${fmtSignedPercent(row.deltaPct)}</td><td>
       <div class="boton-editar-borrar"><button class="finance-pill finance-pill--mini" data-save-day="${account.id}:${row.day}">✏️</button><button class="finance-pill finance-pill--mini" data-delete-day="${account.id}:${row.day}">❌</button></div></td></tr>`).join('') || '<tr><td colspan="5">Sin registros.</td></tr>'}</tbody></table></div>
+      <section class="finMovementSection">
+        <div class="finance-row finMovementSection__header"><h3>Movimientos</h3><small>${accountMovementRows.length} registros</small></div>
+        ${renderMovementList(accountMovementRows, accountsById, { scroll: true, maxHeight: 320, emptyText: 'Sin movimientos asociados a esta cuenta.' })}
+      </section>
       <section class="financeImportBox">
       
       <section class="financeImportBox">
@@ -15481,7 +15612,7 @@ if (form) {
       const originalCurrency = String(row.originalCurrency || row.currency || 'EUR').toUpperCase();
       const hasOriginal = originalCurrency !== 'EUR' && Number.isFinite(Number(row.originalAmount));
       const originalText = hasOriginal ? ` · ${formatCurrency(row.originalAmount, originalCurrency)}` : '';
-      return `<div class="financeTxRow"><span>${escapeHtml(row.title || row.note || row.category || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrencyCode(row.amount, row.accountCurrency || row.currency || 'EUR')}${originalText}</strong><span class="finance-row" id="filas-movimiento" >${actionButtons}</span></div>`;
+      return `<div class="financeTxRow"><span>${escapeHtml(row.category || row.title || '—')} · ${accountText}${ratioBadge}${recurringBadge}</span><strong class="${toneClass(personalDeltaForTx(row, ratioAccountsById))}">${fmtCurrencyCode(row.amount, row.accountCurrency || row.currency || 'EUR')}${originalText}</strong><span class="finance-row" id="filas-movimiento" >${actionButtons}</span></div>`;
     }).join('') || '<p class="finance-empty">Sin movimientos.</p>'}</div></div>`;
     return;
   }
@@ -19667,6 +19798,7 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
         const idx = rows.findIndex((row) => String(row?._key || '') === String(state.balanceStatsActiveSegment || ''));
         if (idx >= 0) financeStatsDonutChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
       }
+      triggerRender();
       return;
     }
     const legendProductKey = target.closest('[data-finance-product-stats]')?.dataset.financeProductStats || target.closest('.financeLegendRow')?.dataset.productKey;
@@ -20336,7 +20468,10 @@ if (ticketImportRawEl && state.modal?.type === 'tx') {
     if (txEdit) {
       const currentRow = balanceTxList().find((row) => row.id === txEdit) || null;
       if (!currentRow) return;
-      openEditMovementModal(currentRow);
+      const returnModal = state.modal?.type && state.modal.type !== 'tx'
+        ? (typeof structuredClone === 'function' ? structuredClone(state.modal) : JSON.parse(JSON.stringify(state.modal)))
+        : null;
+      openEditMovementModal(currentRow, { returnModal });
       return;
     }
     const recurringInstanceOpen = target.closest('[data-recurring-instance-open]')?.dataset.recurringInstanceOpen;

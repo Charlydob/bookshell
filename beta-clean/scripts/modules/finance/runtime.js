@@ -11049,12 +11049,12 @@ function movementPrimaryLabel(row = {}) {
 }
 
 function movementSecondaryLabel(row = {}, accountsById = {}) {
-  const parts = [movementAccountLabel(row, accountsById)];
+  return movementAccountLabel(row, accountsById);
+}
+
+function movementNoteLabel(row = {}) {
   const note = String(row?.note || '').trim();
-  if (note && note !== movementPrimaryLabel(row)) parts.push(note);
-  const ratio = normalizeTxType(row?.type) === 'transfer' ? null : personalRatioForTx(row, accountsById);
-  if (ratio != null) parts.push(`Imputado a mí: ${Math.round(ratio * 100)}%`);
-  return parts.filter(Boolean).join(' · ');
+  return note && note !== movementPrimaryLabel(row) ? note : '';
 }
 
 function renderMovementRow(row = {}, accountsById = {}, options = {}) {
@@ -11067,14 +11067,15 @@ function renderMovementRow(row = {}, accountsById = {}, options = {}) {
   const amountText = `${fmtCurrencyCode(row.amount, row.accountCurrency || row.currency || 'EUR')}${originalText}`;
   const contribution = Number(options.contribution || 0);
   const showContribution = Number.isFinite(contribution) && contribution > 0;
-  const amountMeta = showContribution ? `<small>${escapeHtml(options.contributionLabel || 'Aporta')}: ${fmtCurrency(contribution)}</small>` : '';
+  const amountMeta = showContribution ? `<small>${escapeHtml(options.contributionLabel || 'mi parte')}: <strong>${fmtCurrency(contribution)}</strong></small>` : '';
   const tone = type === 'income' ? 'is-positive' : (type === 'expense' ? 'is-negative' : toneClass(personalDeltaForTx(row, accountsById)));
   const actions = row.recurringVirtual
     ? `<button class="finance-pill finance-pill--mini" data-recurring-instance-open="${escapeHtml(String(row.recurringId || ''))}" data-recurring-month="${escapeHtml(String(row.monthKey || ''))}">✏️</button>`
     : `<button class="finance-pill finance-pill--mini" data-tx-edit="${escapeHtml(String(row.id || ''))}">✏️</button><button class="finance-pill finance-pill--mini" data-tx-delete="${escapeHtml(String(row.id || ''))}">❌</button>`;
+  const noteLabel = movementNoteLabel(row);
   return `<div class="financeTxRow finMovementRow">
     <span class="finMovementRow__date">${escapeHtml(dateLabel)}</span>
-    <span class="finMovementRow__main"><strong>${escapeHtml(movementPrimaryLabel(row))}</strong><small>${escapeHtml(movementSecondaryLabel(row, accountsById))}</small></span>
+    <span class="finMovementRow__main"><strong>${escapeHtml(movementPrimaryLabel(row))}</strong><small>${escapeHtml(movementSecondaryLabel(row, accountsById))}</small>${noteLabel ? `<small class="finMovementRow__note">${escapeHtml(noteLabel)}</small>` : ''}</span>
     <span class="finMovementRow__amount"><strong class="${tone}">${amountText}</strong>${amountMeta}</span>
     <span class="finance-row finMovementRow__actions">${actions}</span>
   </div>`;

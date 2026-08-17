@@ -1233,6 +1233,17 @@
   color: #fff;
   text-align: left;
 }
+.chart-title-group{
+  min-width: 0;
+}
+.pages-timeline-summary{
+  margin-top: 1px;
+  color: var(--txt-soft);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+}
 .chart-card-header{
   display: flex;
   align-items: center;

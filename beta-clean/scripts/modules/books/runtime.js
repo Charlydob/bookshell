@@ -225,6 +225,7 @@ const $booksPageTimeline = document.getElementById("books-pages-timeline");
 const $chartPagesTimeline = document.getElementById("chart-pages-timeline");
 const $booksPagesTimelineBook = document.getElementById("books-pages-timeline-book");
 const $booksPagesTimelineRange = document.getElementById("books-pages-timeline-range");
+const $booksPagesTimelineSummary = document.getElementById("books-pages-timeline-summary");
 const $booksPublicationTimeline = document.getElementById("books-publication-timeline");
 const $booksPublicationTimelineTrack = document.getElementById("books-publication-timeline-track");
 const $booksPublicationTimelineBooks = document.getElementById("books-publication-timeline-books");
@@ -2936,7 +2937,7 @@ setSpineWidth(spine, title);
 }
 
 function normalizeTimelineRange(value) {
-  return ["total", "year", "month", "week"].includes(value) ? value : "total";
+  return ["total", "year", "month", "week", "day"].includes(value) ? value : "total";
 }
 
 function populatePagesTimelineBookSelect() {
@@ -2966,6 +2967,10 @@ function getTimelineBounds(range, totals = {}) {
   const safeRange = normalizeTimelineRange(range);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+
+  if (safeRange === "day") {
+    return { from: today, to: today };
+  }
 
   if (safeRange === "week") {
     const week = getWeekBoundsKey(today);
@@ -3005,6 +3010,33 @@ function buildTimelineSeries(totals = {}, range = "total") {
   return { dates, values };
 }
 
+function renderPagesTimelineSummary(series = {}, range = "total") {
+  if (!$booksPagesTimelineSummary) return;
+
+  const safeRange = normalizeTimelineRange(range);
+  const { dates = [], values = [] } = series;
+  const totalPages = values.reduce((sum, pages) => sum + pages, 0);
+  const formatPages = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 });
+
+  if (!dates.length) {
+    $booksPagesTimelineSummary.textContent = "";
+    return;
+  }
+
+  const formattedTotal = formatPages.format(totalPages);
+  if (safeRange === "day") {
+    $booksPagesTimelineSummary.textContent = `${formattedTotal} páginas ese día · ${formattedTotal} páginas en total`;
+    return;
+  }
+
+  const dailyAverage = totalPages / dates.length;
+  const formattedAverage = new Intl.NumberFormat("es-ES", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  }).format(dailyAverage);
+  $booksPagesTimelineSummary.textContent = `${formattedAverage} pág./día · ${formattedTotal} páginas`;
+}
+
 function disposeTimelineChart($host) {
   if (!$host) return;
   if ($host.__resizeListener) {
@@ -3042,7 +3074,7 @@ async function renderTimelineChart($host, $section, totals = {}, range = "total"
     return;
   }
 
-  const { dates, values } = buildTimelineSeries(totals, range);
+  const { dates, values } = options.series || buildTimelineSeries(totals, range);
   if (!dates.length) {
     disposeTimelineChart($host);
     setTimelineEmptyMessage($host, options.emptyMessage || "");
@@ -3158,7 +3190,10 @@ async function renderPagesTimeline() {
   const selectedBookId = $booksPagesTimelineBook?.value || "overview";
   const isBookScope = selectedBookId !== "overview" && !!books?.[selectedBookId];
   const totals = isBookScope ? computeBookDailyTotals(selectedBookId) : computeDailyTotals();
+  const series = buildTimelineSeries(totals, range);
+  renderPagesTimelineSummary(series, range);
   await renderTimelineChart($chartPagesTimeline, $booksPageTimeline, totals, range, {
+    series,
     keepVisibleOnEmpty: isBookScope,
     emptyMessage: isBookScope ? "Sin lecturas registradas para este libro." : ""
   });

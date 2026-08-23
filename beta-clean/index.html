@@ -8,10 +8,141 @@
     content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
   />
   <meta name="theme-color" content="#05060a" />
-  <meta name="bookshell-published-commit" content="3560924" />
+  <meta name="bookshell-published-commit" content="f01cf4c" />
+  <meta name="bookshell-app-version" content="2026-08-23-f01cf4c-cache-purge-auth-removal" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Bookshell" />
+  <script>
+    window.__bookshellVersion = {
+      appVersion: "2026-08-23-f01cf4c-cache-purge-auth-removal",
+      serviceWorkerVersion: "2026-08-23-f01cf4c-cache-purge-auth-removal",
+      commit: "f01cf4c",
+      cachePrefix: "bookshell-",
+      expectedCaches: [
+        "bookshell-static-2026-08-23-f01cf4c-cache-purge-auth-removal",
+        "bookshell-runtime-2026-08-23-f01cf4c-cache-purge-auth-removal"
+      ],
+      cacheKeysAtBoot: [],
+      purgedCacheKeys: [],
+      serviceWorkerRegistrationsAtBoot: []
+    };
+
+    (function () {
+      var version = window.__bookshellVersion.appVersion;
+      var cachePrefix = window.__bookshellVersion.cachePrefix;
+      var expectedCaches = window.__bookshellVersion.expectedCaches;
+      var markerKey = "bookshell:cache-purge-version";
+      var reloadKey = "bookshell:cache-purge-reloaded";
+
+      function getStored(storage, key) {
+        try { return storage.getItem(key); } catch (_) { return ""; }
+      }
+
+      function setStored(storage, key, value) {
+        try { storage.setItem(key, value); } catch (_) {}
+      }
+
+      function appendPurgeParam() {
+        try {
+          var url = new URL(window.location.href);
+          url.searchParams.set("cachePurge", version);
+          url.searchParams.set("cachePurgeTs", String(Date.now()));
+          return url.href;
+        } catch (_) {
+          return window.location.href;
+        }
+      }
+
+      function isOldRegistration(registration) {
+        var scriptUrl = String(registration && (registration.active || registration.waiting || registration.installing || {}).scriptURL || "");
+        return scriptUrl && scriptUrl.indexOf(version) === -1;
+      }
+
+      async function purgeBookshellCachesAtBoot(reason) {
+        var cacheKeys = [];
+        var deletedKeys = [];
+        var registrations = [];
+        var oldRegistrations = [];
+        var marker = getStored(window.localStorage, markerKey);
+
+        if ("caches" in window && caches.keys) {
+          cacheKeys = await caches.keys();
+          deletedKeys = cacheKeys.filter(function (key) { return key.indexOf(cachePrefix) === 0; });
+          await Promise.all(deletedKeys.map(function (key) {
+            console.warn("[cache-purge:boot:delete]", { key: key, reason: reason });
+            return caches.delete(key);
+          }));
+        }
+
+        if ("serviceWorker" in navigator && navigator.serviceWorker.getRegistrations) {
+          registrations = await navigator.serviceWorker.getRegistrations();
+          oldRegistrations = registrations.filter(isOldRegistration);
+          await Promise.all(oldRegistrations.map(function (registration) {
+            console.warn("[cache-purge:boot:unregister-old-sw]", {
+              scope: registration.scope,
+              reason: reason
+            });
+            return registration.unregister();
+          }));
+        }
+
+        window.__bookshellVersion.cacheKeysAtBoot = cacheKeys;
+        window.__bookshellVersion.purgedCacheKeys = deletedKeys;
+        window.__bookshellVersion.serviceWorkerRegistrationsAtBoot = registrations.map(function (registration) {
+          var worker = registration.active || registration.waiting || registration.installing || null;
+          return {
+            scope: registration.scope,
+            scriptURL: worker ? worker.scriptURL : ""
+          };
+        });
+
+        var hadOldRuntime = cacheKeys.some(function (key) {
+          return key.indexOf(cachePrefix) === 0 && expectedCaches.indexOf(key) === -1;
+        });
+        var needsReload = marker !== version && (deletedKeys.length > 0 || oldRegistrations.length > 0 || !!navigator.serviceWorker.controller || hadOldRuntime);
+        setStored(window.localStorage, markerKey, version);
+        console.info("[cache-purge:boot:summary]", {
+          version: version,
+          commit: window.__bookshellVersion.commit,
+          reason: reason,
+          markerBefore: marker,
+          cacheKeys: cacheKeys,
+          deletedKeys: deletedKeys,
+          oldServiceWorkers: oldRegistrations.length,
+          needsReload: needsReload
+        });
+
+        if (needsReload && getStored(window.sessionStorage, reloadKey) !== version) {
+          setStored(window.sessionStorage, reloadKey, version);
+          window.location.replace(appendPurgeParam());
+        }
+      }
+
+      window.__bookshellVersion.purgeBookshellCaches = function () {
+        return purgeBookshellCachesAtBoot("manual-console");
+      };
+
+      purgeBookshellCachesAtBoot("startup-version-check").catch(function (error) {
+        console.warn("[cache-purge:boot:error]", error);
+      });
+
+      if ("serviceWorker" in navigator && navigator.serviceWorker.getRegistration) {
+        navigator.serviceWorker.getRegistration("./").then(function (registration) {
+          if (!registration || !registration.update) return null;
+          console.info("[sw:update-request:index]", {
+            version: version,
+            commit: window.__bookshellVersion.commit,
+            scope: registration.scope
+          });
+          return registration.update();
+        }).catch(function (error) {
+          console.warn("[sw:update-request:index:error]", error);
+        });
+      }
+    })();
+  </script>
+
   <script>
     (function () {
       var defaultTheme = "dark-opal";
@@ -503,6 +634,6 @@
 
   <datalist id="country-options"></datalist>
 
-  <script type="module" src="./scripts/app/main.js"></script>
+  <script type="module" src="./scripts/app/main.js?v=2026-08-23-f01cf4c-cache-purge-auth-removal"></script>
 </body>
 </html>

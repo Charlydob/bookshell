@@ -1,7 +1,9 @@
-const APP_VERSION = "2026-08-08-reading-timeline-book-filter";
-const PUBLISHED_COMMIT = "local-reading-timeline-book-filter";
+const APP_VERSION = "2026-08-23-f01cf4c-cache-purge-auth-removal";
+const PUBLISHED_COMMIT = "f01cf4c";
+const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
+const ACTIVE_CACHE_NAMES = Object.freeze([STATIC_CACHE, RUNTIME_CACHE]);
 
 const LOCAL_PRECACHE_ASSETS = [
   "./",
@@ -111,7 +113,16 @@ function isCacheableAsset(request, url) {
 }
 
 async function putInCache(cacheName, request, response) {
-  if (!response || (!response.ok && response.type !== "opaque")) return response;
+  if (!response || (!response.ok && response.type !== "opaque")) {
+    if (response && !response.ok) {
+      console.warn("[sw:cache:skip]", {
+        cacheName,
+        path: new URL(request.url).pathname,
+        status: response.status,
+      });
+    }
+    return response;
+  }
   const cache = await caches.open(cacheName);
   await cache.put(request, response.clone());
   return response;
@@ -125,7 +136,10 @@ async function matchAnyCache(request) {
     staticCache.match(request),
   ]);
   const match = runtimeMatch || staticMatch || null;
-  console.info(match ? "[offline:cache:hit]" : "[offline:cache:miss]", new URL(request.url).pathname);
+  console.info(match ? "[sw:cache:hit:active-only]" : "[sw:cache:miss:active-only]", {
+    path: new URL(request.url).pathname,
+    activeCaches: ACTIVE_CACHE_NAMES,
+  });
   return match;
 }
 
@@ -138,21 +152,6 @@ async function precacheLocalAssets() {
   }));
 }
 
-async function staleWhileRevalidate(request) {
-  const cached = await matchAnyCache(request);
-  const networkPromise = fetch(request)
-    .then((response) => putInCache(RUNTIME_CACHE, request, response))
-    .catch(() => null);
-
-  if (cached) {
-    void networkPromise;
-    return cached;
-  }
-
-  const networkResponse = await networkPromise;
-  return networkResponse || (await caches.match(APP_INDEX_URL)) || Response.error();
-}
-
 async function navigationNetworkFirst(request) {
   const appIndexRequest = new Request(APP_INDEX_URL, { cache: "no-store" });
 
@@ -162,7 +161,8 @@ async function navigationNetworkFirst(request) {
     await putInCache(STATIC_CACHE, appIndexRequest, response);
     return response;
   } catch (_) {
-    const cachedShell = await caches.match(appIndexRequest) || await caches.match(APP_INDEX_URL);
+    const staticCache = await caches.open(STATIC_CACHE);
+    const cachedShell = await staticCache.match(appIndexRequest) || await staticCache.match(APP_INDEX_URL);
     if (cachedShell) {
       console.warn("[sw:navigation:cache-fallback]", new URL(request.url).pathname);
       return cachedShell;
@@ -172,19 +172,28 @@ async function navigationNetworkFirst(request) {
 }
 
 async function networkFirst(request) {
+  const url = new URL(request.url);
   try {
     const response = await fetch(request, { cache: "no-store" });
-    console.info("[sw:network-first:network]", new URL(request.url).pathname, { status: response.status });
-    await putInCache(STATIC_CACHE, request, response);
+    console.info("[sw:network-first:network]", {
+      path: url.pathname,
+      status: response.status,
+      strategy: "network-first",
+      cacheWrite: response.ok || response.type === "opaque",
+    });
+    await putInCache(url.origin === self.location.origin ? STATIC_CACHE : RUNTIME_CACHE, request, response);
     return response;
   } catch (_) {
     const cached = await matchAnyCache(request);
     if (cached) {
-      console.warn("[sw:network-first:cache-fallback]", new URL(request.url).pathname);
+      console.warn("[sw:network-first:cache-fallback]", {
+        path: url.pathname,
+        activeCaches: ACTIVE_CACHE_NAMES,
+      });
       return cached;
     }
-    console.warn("[sw:network-first:app-index-fallback]", new URL(request.url).pathname);
-    return caches.match(APP_INDEX_URL);
+    console.warn("[sw:network-first:miss]", url.pathname);
+    return Response.error();
   }
 }
 
@@ -197,32 +206,93 @@ function isLocalCodeRequest(request, url) {
   return /\.(?:html|js|mjs|css)$/i.test(url.pathname);
 }
 
-function shouldBypassModuleCache(url) {
-  return url.origin === self.location.origin
-    && (
-      url.pathname.includes("/scripts/modules/finance/")
-      || url.pathname.endsWith("/scripts/app/main.js")
-    );
+function isExecutableRequest(request, url) {
+  if (request.destination === "script" || request.destination === "worker") return true;
+  return /\.(?:js|mjs)$/i.test(url.pathname);
+}
+
+function isServiceWorkerScript(url) {
+  return url.origin === self.location.origin && url.pathname.endsWith("/service-worker.js");
+}
+
+async function purgeBookshellCaches(reason = "unknown") {
+  const keys = await caches.keys();
+  const staleKeys = keys.filter((key) => key.startsWith(CACHE_PREFIX));
+  console.info("[sw:cache:keys-before-purge]", {
+    reason,
+    keys,
+    bookshellKeys: staleKeys,
+    nextActiveCaches: ACTIVE_CACHE_NAMES,
+  });
+  await Promise.all(staleKeys.map(async (key) => {
+    const deleted = await caches.delete(key);
+    console.warn("[sw:cache:deleted]", { key, deleted, reason });
+    return deleted;
+  }));
+  return staleKeys;
+}
+
+async function notifyClients(message = {}) {
+  const clientList = await self.clients.matchAll({ includeUncontrolled: true, type: "window" });
+  clientList.forEach((client) => {
+    client.postMessage({
+      source: "bookshell-service-worker",
+      version: APP_VERSION,
+      commit: PUBLISHED_COMMIT,
+      activeCaches: ACTIVE_CACHE_NAMES,
+      ...message,
+    });
+  });
 }
 
 self.addEventListener("install", (event) => {
   console.info("[offline:boot]", { phase: "sw-install", version: APP_VERSION, commit: PUBLISHED_COMMIT });
   self.skipWaiting();
-  event.waitUntil(precacheLocalAssets());
+  event.waitUntil(Promise.resolve());
 });
 
 self.addEventListener("activate", (event) => {
   console.info("[offline:boot]", { phase: "sw-activate", version: APP_VERSION, commit: PUBLISHED_COMMIT });
   event.waitUntil(
-    caches.keys().then(async (keys) => {
-      await Promise.all(
-        keys
-          .filter((key) => key.startsWith("bookshell-") && key !== STATIC_CACHE && key !== RUNTIME_CACHE)
-          .map((key) => caches.delete(key)),
-      );
+    (async () => {
+      await self.skipWaiting();
+      const purgedKeys = await purgeBookshellCaches("activate-force-purge");
+      await precacheLocalAssets();
+      const activeKeys = (await caches.keys()).filter((key) => key.startsWith(CACHE_PREFIX));
+      console.info("[sw:cache:active-after-purge]", {
+        activeKeys,
+        expected: ACTIVE_CACHE_NAMES,
+      });
       await self.clients.claim();
-    }),
+      await notifyClients({
+        type: "activated",
+        purgedKeys,
+        activeKeys,
+      });
+    })(),
   );
+});
+
+self.addEventListener("message", (event) => {
+  const type = String(event?.data?.type || "");
+  if (type === "BOOKSHELL_GET_VERSION") {
+    event.source?.postMessage?.({
+      source: "bookshell-service-worker",
+      type: "version",
+      version: APP_VERSION,
+      commit: PUBLISHED_COMMIT,
+      activeCaches: ACTIVE_CACHE_NAMES,
+    });
+    return;
+  }
+  if (type === "BOOKSHELL_PURGE_CACHES") {
+    event.waitUntil(
+      purgeBookshellCaches("message-purge").then((purgedKeys) => notifyClients({
+        type: "purged",
+        purgedKeys,
+      })),
+    );
+  }
 });
 
 self.addEventListener("fetch", (event) => {
@@ -230,26 +300,51 @@ self.addEventListener("fetch", (event) => {
   if (!isHttpRequest(request)) return;
 
   const url = new URL(request.url);
+  if (isServiceWorkerScript(url)) {
+    console.debug("[sw:fetch] service-worker-network-only", {
+      path: url.pathname,
+      version: APP_VERSION,
+    });
+    event.respondWith(fetch(request, { cache: "no-store" }));
+    return;
+  }
+
   if (!isCacheableAsset(request, url)) return;
 
   if (request.mode === "navigate") {
-    console.debug("[sw:fetch] nav-network-first", url.pathname);
+    console.debug("[sw:fetch] nav-network-first", {
+      path: url.pathname,
+      version: APP_VERSION,
+      activeCaches: ACTIVE_CACHE_NAMES,
+    });
     event.respondWith(navigationNetworkFirst(request));
     return;
   }
 
-  if (shouldBypassModuleCache(url)) {
-    console.debug("[sw:fetch] finance-debug-bypass", url.pathname);
+  if (isExecutableRequest(request, url)) {
+    console.debug("[sw:fetch] executable-network-first", {
+      path: url.pathname,
+      version: APP_VERSION,
+      activeCaches: ACTIVE_CACHE_NAMES,
+    });
     event.respondWith(networkFirst(request));
     return;
   }
 
   if (isLocalCodeRequest(request, url)) {
-    console.debug("[sw:fetch] local", url.pathname);
+    console.debug("[sw:fetch] local-code-network-first", {
+      path: url.pathname,
+      version: APP_VERSION,
+      activeCaches: ACTIVE_CACHE_NAMES,
+    });
     event.respondWith(networkFirst(request));
     return;
   }
 
-  console.debug("[sw:fetch] runtime", url.pathname);
-  event.respondWith(staleWhileRevalidate(request));
+  console.debug("[sw:fetch] asset-network-first", {
+    path: url.pathname,
+    version: APP_VERSION,
+    activeCaches: ACTIVE_CACHE_NAMES,
+  });
+  event.respondWith(networkFirst(request));
 });

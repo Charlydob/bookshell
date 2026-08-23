@@ -89,9 +89,16 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
-const APP_PUBLISHED_COMMIT = "3560924";
-const SERVICE_WORKER_VERSION = "2026-07-26-shortcut-reconcile-debug";
-const FINANCE_MODULE_VERSION = "2026-07-26-shortcut-reconcile-debug";
+const APP_PUBLISHED_COMMIT = "f01cf4c";
+const SERVICE_WORKER_VERSION = "2026-08-23-f01cf4c-cache-purge-auth-removal";
+const FINANCE_MODULE_VERSION = "2026-08-23-f01cf4c-cache-purge-auth-removal";
+const BOOKSHELL_CACHE_PREFIX = "bookshell-";
+const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
+  `bookshell-static-${SERVICE_WORKER_VERSION}`,
+  `bookshell-runtime-${SERVICE_WORKER_VERSION}`,
+]);
+const BOOKSHELL_CACHE_PURGE_MARKER_KEY = "bookshell:cache-purge-version";
+const BOOKSHELL_CACHE_PURGE_RELOAD_KEY = "bookshell:cache-purge-reloaded";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
@@ -103,6 +110,14 @@ const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
 registerPublicCatalogMigrationDebugApi();
 const __originalConsole = { ...console };
 window.__BOOKSHELL_PUBLISHED_COMMIT__ = APP_PUBLISHED_COMMIT;
+window.__bookshellVersion = {
+  ...(window.__bookshellVersion && typeof window.__bookshellVersion === "object" ? window.__bookshellVersion : {}),
+  appVersion: SERVICE_WORKER_VERSION,
+  serviceWorkerVersion: SERVICE_WORKER_VERSION,
+  commit: APP_PUBLISHED_COMMIT,
+  cachePrefix: BOOKSHELL_CACHE_PREFIX,
+  expectedCaches: BOOKSHELL_EXPECTED_CACHE_NAMES.slice(),
+};
 window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ = String(window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ || "");
 window.__BOOKSHELL_LAST_BOOT_PHASE__ = String(window.__BOOKSHELL_LAST_BOOT_PHASE__ || "boot:init");
 window.__BOOKSHELL_LAST_ERROR_DETAILS__ = window.__BOOKSHELL_LAST_ERROR_DETAILS__ && typeof window.__BOOKSHELL_LAST_ERROR_DETAILS__ === "object"
@@ -189,6 +204,118 @@ async function copyTechnicalErrorReport() {
 
 window.__bookshellCopyTechnicalError = copyTechnicalErrorReport;
 
+function getStoredValue(storage, key) {
+  try {
+    return storage.getItem(key);
+  } catch (_) {
+    return "";
+  }
+}
+
+function setStoredValue(storage, key, value) {
+  try {
+    storage.setItem(key, value);
+  } catch (_) {}
+}
+
+function isOldBookshellServiceWorker(registration) {
+  const worker = registration?.active || registration?.waiting || registration?.installing || null;
+  const scriptUrl = String(worker?.scriptURL || "");
+  return scriptUrl && scriptUrl.includes("service-worker.js") && !scriptUrl.includes(SERVICE_WORKER_VERSION);
+}
+
+function buildCachePurgeReloadUrl() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("cachePurge", SERVICE_WORKER_VERSION);
+    url.searchParams.set("cachePurgeTs", String(Date.now()));
+    return url.href;
+  } catch (_) {
+    return window.location.href;
+  }
+}
+
+async function purgeBookshellRuntimeCachesIfNeeded(reason = "startup") {
+  const markerBefore = getStoredValue(window.localStorage, BOOKSHELL_CACHE_PURGE_MARKER_KEY);
+  const cacheKeys = "caches" in window && caches.keys ? await caches.keys() : [];
+  const bookshellKeys = cacheKeys.filter((key) => key.startsWith(BOOKSHELL_CACHE_PREFIX));
+  const staleBookshellKeys = bookshellKeys.filter((key) => !BOOKSHELL_EXPECTED_CACHE_NAMES.includes(key));
+  const markerMismatch = markerBefore !== SERVICE_WORKER_VERSION;
+  const mustPurge = markerMismatch || staleBookshellKeys.length > 0;
+  let registrations = [];
+  let oldRegistrations = [];
+
+  if ("serviceWorker" in navigator && navigator.serviceWorker.getRegistrations) {
+    registrations = await navigator.serviceWorker.getRegistrations();
+    oldRegistrations = registrations.filter(isOldBookshellServiceWorker);
+  }
+
+  if (!mustPurge && oldRegistrations.length === 0) {
+    window.__bookshellVersion.cacheKeysAtRuntimeBoot = cacheKeys;
+    return { purged: false, cacheKeys, staleBookshellKeys, oldServiceWorkers: 0 };
+  }
+
+  const keysToDelete = bookshellKeys;
+  await Promise.all(keysToDelete.map(async (key) => {
+    const deleted = await caches.delete(key);
+    console.warn("[cache-purge:runtime:deleted]", { key, deleted, reason });
+    return deleted;
+  }));
+
+  await Promise.all(oldRegistrations.map(async (registration) => {
+    console.warn("[cache-purge:runtime:unregister-old-sw]", {
+      scope: registration.scope,
+      reason,
+    });
+    return registration.unregister();
+  }));
+
+  setStoredValue(window.localStorage, BOOKSHELL_CACHE_PURGE_MARKER_KEY, SERVICE_WORKER_VERSION);
+  window.__bookshellVersion.cacheKeysAtRuntimeBoot = cacheKeys;
+  window.__bookshellVersion.purgedRuntimeCacheKeys = keysToDelete;
+  window.__bookshellVersion.oldServiceWorkersAtRuntimeBoot = oldRegistrations.length;
+  console.info("[cache-purge:runtime:summary]", {
+    version: SERVICE_WORKER_VERSION,
+    commit: APP_PUBLISHED_COMMIT,
+    reason,
+    markerBefore,
+    cacheKeys,
+    deletedKeys: keysToDelete,
+    staleBookshellKeys,
+    oldServiceWorkers: oldRegistrations.length,
+    controlled: !!navigator.serviceWorker?.controller,
+  });
+
+  const shouldReload = (keysToDelete.length > 0 || oldRegistrations.length > 0 || !!navigator.serviceWorker?.controller)
+    && getStoredValue(window.sessionStorage, BOOKSHELL_CACHE_PURGE_RELOAD_KEY) !== SERVICE_WORKER_VERSION;
+  if (shouldReload) {
+    setStoredValue(window.sessionStorage, BOOKSHELL_CACHE_PURGE_RELOAD_KEY, SERVICE_WORKER_VERSION);
+    window.location.replace(buildCachePurgeReloadUrl());
+  }
+
+  return { purged: true, cacheKeys, staleBookshellKeys, oldServiceWorkers: oldRegistrations.length };
+}
+
+void purgeBookshellRuntimeCachesIfNeeded("main-startup").catch((error) => {
+  console.warn("[cache-purge:runtime:error]", error);
+});
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    const payload = event?.data || {};
+    if (payload?.source !== "bookshell-service-worker") return;
+    window.__bookshellVersion.lastServiceWorkerMessage = payload;
+    console.info("[sw:message]", payload);
+  });
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    console.info("[sw:controllerchange]", {
+      version: SERVICE_WORKER_VERSION,
+      commit: APP_PUBLISHED_COMMIT,
+      controlled: !!navigator.serviceWorker.controller,
+    });
+  });
+}
+
 window.addEventListener("error", (event) => {
   const payload = rememberTechnicalError("global-error", event?.error || null, {
     message: event?.message,
@@ -214,20 +341,6 @@ window.addEventListener("unhandledrejection", (event) => {
   __originalConsole.error?.("[global unhandledrejection detailed]", { ...payload, reason });
   window.appConsole?.log?.("error", payload.message || "Promesa rechazada", payload);
 });
-
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.getRegistrations().then((regs) => {
-    regs.forEach((reg) => reg.unregister());
-    console.warn("Service workers eliminados:", regs.length);
-  }).catch(() => {});
-}
-
-if (window.caches) {
-  caches.keys().then((keys) => {
-    keys.forEach((key) => caches.delete(key));
-    console.warn("Caches eliminadas:", keys);
-  }).catch(() => {});
-}
 
 if (!window.appConsole) {
   const entries = [];
@@ -1420,10 +1533,31 @@ async function registerAppServiceWorker() {
     swUrl.searchParams.set("commit", APP_PUBLISHED_COMMIT);
     const scope = new URL("../../", import.meta.url).pathname;
     console.info("[offline:init] service-worker", { swUrl: swUrl.href, scope });
-    const registration = await navigator.serviceWorker.register(swUrl, { scope });
-    console.info("[offline:boot]", { phase: "sw-registered", scope, hasController: !!navigator.serviceWorker.controller });
+    const registration = await navigator.serviceWorker.register(swUrl, {
+      scope,
+      updateViaCache: "none",
+    });
+    console.info("[offline:boot]", {
+      phase: "sw-registered",
+      scope,
+      hasController: !!navigator.serviceWorker.controller,
+      version: SERVICE_WORKER_VERSION,
+      commit: APP_PUBLISHED_COMMIT,
+      updateViaCache: registration.updateViaCache,
+    });
+    await registration.update();
+    console.info("[offline:boot]", {
+      phase: "sw-update-requested",
+      scope,
+      version: SERVICE_WORKER_VERSION,
+      commit: APP_PUBLISHED_COMMIT,
+    });
     registration.addEventListener("updatefound", () => {
-      console.info("[offline:boot]", { phase: "sw-update-found" });
+      console.info("[offline:boot]", {
+        phase: "sw-update-found",
+        version: SERVICE_WORKER_VERSION,
+        commit: APP_PUBLISHED_COMMIT,
+      });
       window.dispatchEvent(new CustomEvent("bookshell:sw-update-available"));
     });
     return registration;

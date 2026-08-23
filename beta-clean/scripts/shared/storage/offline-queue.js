@@ -77,7 +77,7 @@ function normalizeOperation(input = {}) {
   const now = getNowTs();
   const opId = String(input.opId || createOperationId()).trim();
   const writeType = normalizeWriteType(input.writeType);
-  const firebasePath = sanitizePath(input.firebasePath);
+  const backendPath = sanitizePath(input.backendPath || input.firebasePath);
   const createdAt = Number(input.createdAt) || now;
   const updatedAt = Number(input.updatedAt) || now;
   const attempts = Math.max(0, Math.floor(Number(input.attempts) || 0));
@@ -86,7 +86,7 @@ function normalizeOperation(input = {}) {
     : OFFLINE_OPERATION_STATUS.PENDING;
   const dedupeKey = String(
     input.dedupeKey
-    || `${writeType}:${firebasePath}`
+    || `${writeType}:${backendPath}`
   ).trim();
 
   return {
@@ -96,7 +96,7 @@ function normalizeOperation(input = {}) {
     entityType: String(input.entityType || "").trim(),
     actionType: String(input.actionType || "").trim(),
     writeType,
-    firebasePath,
+    backendPath,
     payload: cloneValue(writeType === "set" ? input.payload ?? null : (input.payload || {})),
     createdAt,
     updatedAt,
@@ -123,10 +123,14 @@ function removeCachedOperation(opId) {
   operationsCache = operationsCache.filter((entry) => entry.opId !== opId);
 }
 
-function isSamePathOperation(operation, uid, firebasePath) {
+function getOperationBackendPath(operation = {}) {
+  return sanitizePath(operation?.backendPath || operation?.firebasePath);
+}
+
+function isSamePathOperation(operation, uid, backendPath) {
   return (
     operation?.uid === uid
-    && sanitizePath(operation?.firebasePath) === sanitizePath(firebasePath)
+    && getOperationBackendPath(operation) === sanitizePath(backendPath)
     && ACTIVE_STATUSES.has(operation?.status)
   );
 }
@@ -190,7 +194,7 @@ function applyUpdateAtPath(baseValue, segments, payload) {
 
 function applyOperationToValue(baseValue, basePath, operation) {
   const safeBasePath = sanitizePath(basePath);
-  const safeOpPath = sanitizePath(operation?.firebasePath);
+  const safeOpPath = getOperationBackendPath(operation);
   if (!safeBasePath || !safeOpPath) return cloneValue(baseValue);
   if (!(safeOpPath === safeBasePath || safeOpPath.startsWith(`${safeBasePath}/`))) {
     return cloneValue(baseValue);
@@ -239,7 +243,7 @@ export async function enqueueOfflineOperation(input = {}) {
     nextRetryAt: 0,
   });
 
-  const samePathOperations = operationsCache.filter((operation) => isSamePathOperation(operation, nextOperation.uid, nextOperation.firebasePath));
+  const samePathOperations = operationsCache.filter((operation) => isSamePathOperation(operation, nextOperation.uid, nextOperation.backendPath));
   const isDeleteLike = nextOperation.writeType === "set" && nextOperation.payload == null;
 
   if (isDeleteLike && samePathOperations.length) {
@@ -268,7 +272,7 @@ export async function enqueueOfflineOperation(input = {}) {
 
   await putOperationInDb(nextOperation);
   replaceCachedOperation(nextOperation);
-  console.info("[offline:queue:add]", { opId: nextOperation.opId, path: nextOperation.firebasePath, status: nextOperation.status });
+  console.info("[offline:queue:add]", { opId: nextOperation.opId, path: nextOperation.backendPath, status: nextOperation.status });
   return { operation: nextOperation, replaced: false };
 }
 
@@ -317,7 +321,7 @@ export async function markOfflineOperationSynced(opId) {
     nextRetryAt: 0,
   });
   if (next) {
-    console.info("[offline:sync:done]", { opId: next.opId, path: next.firebasePath });
+    console.info("[offline:sync:done]", { opId: next.opId, path: getOperationBackendPath(next) });
   }
   return next;
 }
@@ -334,7 +338,7 @@ export async function markOfflineOperationFailed(opId, errorMessage = "") {
     nextRetryAt: getNowTs() + computeRetryDelay(nextAttempts),
   });
   if (next) {
-    console.warn("[offline:sync:error]", { opId: next.opId, path: next.firebasePath, error: next.lastError });
+    console.warn("[offline:sync:error]", { opId: next.opId, path: getOperationBackendPath(next), error: next.lastError });
   }
   return next;
 }

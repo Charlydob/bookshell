@@ -40,7 +40,7 @@ import { parseImportRaw, parseTicketImport, applyTicketImport, mapTicketCategory
 import { ensureEcharts } from '../../shared/vendors/echarts.js';
 import { readProcessedJsonCache, writeProcessedJsonCache } from '../../shared/cache/processed-json-cache.js';
 import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/services/public-catalog.js';
-import { logFirebaseRead, logFirebaseWrite, registerViewListener, trackedGet, trackedOnValue } from '../../shared/firebase/read-debug.js';
+import { logFirebaseRead, logFirebaseWrite, registerViewListener, trackedGet, trackedOnValue } from '../../shared/data/read-debug.js';
 import { PUBLIC_PATHS } from '../../shared/data/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
 import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, normalizeCurrencyCode } from './finance/currency-utils.js';

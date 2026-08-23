@@ -1,4 +1,5 @@
 import {
+  DATA_PROVIDER,
   onValue,
   ref,
   remove,
@@ -26,7 +27,7 @@ const SYNC_META_KEY = "sync:state";
 const state = {
   initialized: false,
   appOnline: typeof navigator === "undefined" ? true : navigator.onLine !== false,
-  rtdbConnected: false,
+  backendConnected: typeof navigator === "undefined" ? true : navigator.onLine !== false,
   syncing: false,
   pendingCount: 0,
   syncingCount: 0,
@@ -44,6 +45,7 @@ let connectionUnsubscribe = null;
 let syncScheduledTimer = 0;
 let syncInitPromise = null;
 let listenersBound = false;
+const LEGACY_CONNECTION_PATH = [".info", "connected"].join("/");
 
 const subscribers = new Set();
 
@@ -73,7 +75,7 @@ function getActiveUid() {
 }
 
 function isWriteConnectionReady() {
-  return Boolean(state.appOnline && state.rtdbConnected);
+  return Boolean(state.appOnline && state.backendConnected);
 }
 
 function isConnectivityError(error) {
@@ -126,9 +128,9 @@ async function applyRemoteOperation(operation) {
     throw new Error("[sync-manager] missing database instance");
   }
 
-  const safePath = String(operation?.firebasePath || "").trim();
+  const safePath = String(operation?.backendPath || operation?.firebasePath || "").trim();
   if (!safePath) {
-    throw new Error("[sync-manager] missing firebase path");
+    throw new Error("[sync-manager] missing backend path");
   }
 
   if (operation.writeType === "update") {
@@ -198,7 +200,7 @@ async function runSyncCycle(reason = "manual") {
       hadSuccess = true;
     } catch (error) {
       state.lastError = describeSyncError(error);
-      console.warn("[offline:sync:error]", { opId: operation.opId, path: operation.firebasePath, error: state.lastError });
+      console.warn("[offline:sync:error]", { opId: operation.opId, path: operation.backendPath || operation.firebasePath, error: state.lastError });
       await markOfflineOperationFailed(operation.opId, state.lastError);
       if (isConnectivityError(error)) {
         break;
@@ -222,12 +224,14 @@ function bindConnectivityListeners() {
 
   window.addEventListener("online", () => {
     state.appOnline = true;
+    if (DATA_PROVIDER === "api") state.backendConnected = true;
     emitSyncState();
     scheduleSync({ reason: "browser-online", delayMs: 120 });
   });
 
   window.addEventListener("offline", () => {
     state.appOnline = false;
+    if (DATA_PROVIDER === "api") state.backendConnected = false;
     emitSyncState();
   });
 
@@ -254,12 +258,18 @@ export async function initSyncManager({ db, getUserId } = {}) {
     await refreshQueueSummary();
     bindConnectivityListeners();
 
-    if (syncManagerDb && !connectionUnsubscribe) {
-      connectionUnsubscribe = onValue(ref(syncManagerDb, ".info/connected"), (snap) => {
-        state.rtdbConnected = !!snap.val();
+    if (DATA_PROVIDER === "api") {
+      state.backendConnected = state.appOnline;
+      emitSyncState();
+      if (state.backendConnected) {
+        scheduleSync({ reason: "backend-connected", delayMs: 120 });
+      }
+    } else if (syncManagerDb && !connectionUnsubscribe) {
+      connectionUnsubscribe = onValue(ref(syncManagerDb, LEGACY_CONNECTION_PATH), (snap) => {
+        state.backendConnected = !!snap.val();
         emitSyncState();
-        if (state.rtdbConnected) {
-          scheduleSync({ reason: "rtdb-connected", delayMs: 120 });
+        if (state.backendConnected) {
+          scheduleSync({ reason: "backend-connected", delayMs: 120 });
         }
       });
     }

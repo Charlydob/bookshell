@@ -12,7 +12,7 @@ import {
   runTransaction
 } from "../../shared/data/index.js";
 import { auth, getUserDataKey, onUserChange } from "../../shared/auth/index.js";
-import { trackedOnValue } from "../../shared/firebase/read-debug.js";
+import { trackedOnValue } from "../../shared/data/read-debug.js";
 
 import {
   ensureCountryDatalist,

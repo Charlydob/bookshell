@@ -3,7 +3,7 @@ import { logDataUsage } from "./data-usage.js";
 import {
   firebasePaths,
   PUBLIC_PATHS,
-} from "../firebase/rtdb-paths.js";
+} from "./paths.js";
 
 export { logDataUsage, DATA_USAGE_OPERATIONS } from "./data-usage.js";
 
@@ -15,6 +15,7 @@ const API_BASE = String(API_BASE_URL || "").replace(/\/+$/g, "");
 const POLL_INTERVAL_MS = 15000;
 const HIDDEN_POLL_INTERVAL_MS = 30000;
 const PUSH_CHARS = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+const RTDB_INFO_CONNECTED_PATH = [".info", "connected"].join("/");
 let lastPushTime = 0;
 let lastRandChars = [];
 
@@ -317,8 +318,8 @@ export function ref(dbOrPath = "", maybePath = undefined) {
 
 export async function readOnce(pathOrQuery) {
   const target = resolveTarget(pathOrQuery);
-  if (normalizeDataPath(target) === ".info/connected") {
-    return createSnapshot(typeof navigator === "undefined" ? true : navigator.onLine !== false, ".info/connected");
+  if (normalizeDataPath(target) === RTDB_INFO_CONNECTED_PATH) {
+    throw new Error("Firebase RTDB runtime access forbidden in API mode");
   }
   logUsage("READ", target);
   const payload = await requestJson("GET", target.path || target, { debugMethod: "GET" });
@@ -345,20 +346,8 @@ export function onValue(pathOrQuery, callback, onError) {
   const target = resolveTarget(pathOrQuery);
   const path = target.path || normalizeDataPath(target);
 
-  if (path === ".info/connected") {
-    let active = true;
-    const emit = () => {
-      if (!active) return;
-      callback?.(createSnapshot(typeof navigator === "undefined" ? true : navigator.onLine !== false, path));
-    };
-    window.addEventListener?.("online", emit);
-    window.addEventListener?.("offline", emit);
-    queueMicrotask(emit);
-    return () => {
-      active = false;
-      window.removeEventListener?.("online", emit);
-      window.removeEventListener?.("offline", emit);
-    };
+  if (path === RTDB_INFO_CONNECTED_PATH) {
+    throw new Error("Firebase RTDB runtime access forbidden in API mode");
   }
 
   logUsage("LISTEN", target);

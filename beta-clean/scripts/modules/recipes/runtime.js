@@ -14,7 +14,7 @@ import { FOODREPO_API_BASE, FOODREPO_API_TOKEN } from "./foodrepo.js";
 import { getMetCategoryById } from "./met-catalog.js";
 import { buildConsumptionAnalytics } from "./consumption-analytics.js";
 import { normalizeCatalogName, upsertPublicCatalogItem, clonePublicItemToUserCatalog, findPublicCatalogMatches } from "../../shared/services/public-catalog.js";
-import { readWithCache, trackedGet, trackedOnValue } from "../../shared/firebase/read-debug.js";
+import { readWithCache, trackedGet, trackedOnValue } from "../../shared/data/read-debug.js";
 import {
   ref,
   onValue,

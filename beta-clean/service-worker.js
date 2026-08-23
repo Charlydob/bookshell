@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-08-23-api-data-provider";
+const APP_VERSION = "2026-08-23-api-data-provider-no-rtdb";
 const PUBLISHED_COMMIT = "f01cf4c";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
@@ -66,7 +66,13 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/world/stays.js",
   "./scripts/shared/cache/processed-json-cache.js",
   "./scripts/shared/config/app-paths.js",
-  "./scripts/shared/firebase/offline-rtdb.js",
+  "./scripts/shared/data/api-provider.js",
+  "./scripts/shared/data/config.js",
+  "./scripts/shared/data/data-usage.js",
+  "./scripts/shared/data/index.js",
+  "./scripts/shared/data/offline-backend.js",
+  "./scripts/shared/data/paths.js",
+  "./scripts/shared/data/read-debug.js",
   "./scripts/shared/services/sync-manager.js",
   
   

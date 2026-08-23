@@ -20,7 +20,7 @@ import { ensureEcharts } from "../../shared/vendors/echarts.js";
 import { canWriteDirectly } from "../../shared/services/sync-manager.js?v=2026-04-05-v5";
 import { applyQueuedWritesToPath } from "../../shared/storage/offline-queue.js?v=2026-04-05-v5";
 import { readModuleSnapshot, writeModuleSnapshot } from "../../shared/storage/offline-snapshots.js?v=2026-04-05-v5";
-import { createOfflinePushId, writeRtdbWithOfflineQueue } from "../../shared/firebase/offline-rtdb.js?v=2026-04-05-v5";
+import { createOfflinePushId, writeBackendWithOfflineQueue } from "../../shared/data/offline-backend.js?v=2026-04-05-v5";
 
 let currentUid = auth.currentUser?.uid ?? null;
 let BASE = null;
@@ -600,12 +600,12 @@ function getHabitTimelinePointEntries(habitId, dateKey, options = {}) {
 function persistHabitTimelinePointEntries(habitId, dateKey, entries = []) {
   if (!habitId || !dateKey || !HABIT_TIMELINE_POINTS_PATH) return;
   const payload = Array.isArray(entries) && entries.length ? entries : null;
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habitTimelinePoints",
     actionType: "set-timeline-points",
-    firebasePath: `${HABIT_TIMELINE_POINTS_PATH}/${habitId}/${dateKey}`,
+    backendPath: `${HABIT_TIMELINE_POINTS_PATH}/${habitId}/${dateKey}`,
     payload,
     writeType: "set",
     dedupeKey: `habit-timeline-points:${habitId}:${dateKey}`,
@@ -3740,12 +3740,12 @@ function upsertWorkScheduleWeek(weekStart, rows = []) {
 
 function persistWorkScheduleWeek(payload) {
   if (!payload?.weekStart || !HABIT_WORK_SCHEDULES_PATH) return;
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "workSchedule",
     actionType: "save-week-schedule",
-    firebasePath: `${HABIT_WORK_SCHEDULES_PATH}/${payload.weekStart}`,
+    backendPath: `${HABIT_WORK_SCHEDULES_PATH}/${payload.weekStart}`,
     payload,
     writeType: "update",
     dedupeKey: `work-schedule:${payload.weekStart}`,
@@ -3909,7 +3909,7 @@ function persistHabitScheduleLocal() {
 
 async function loadScheduleFromRemote() {
   try {
-    console.warn("SCHEDULE UPDATE", "firebase:get:init");
+    console.warn("SCHEDULE UPDATE", "api:get:init");
     const snap = await get(ref(db, HABITS_SCHEDULE_PATH));
     const raw = snap.val();
     scheduleState = raw && typeof raw === "object"
@@ -4523,12 +4523,12 @@ function loadHabitCompareSettingsLocal() {
 
 function persistHabitCompareSettings() {
   saveHabitCompareSettingsLocal();
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habitCompareSettings",
     actionType: "save-compare-settings",
-    firebasePath: HABIT_COMPARE_SETTINGS_PATH,
+    backendPath: HABIT_COMPARE_SETTINGS_PATH,
     payload: getHabitCompareSettingsPayload(),
     writeType: "set",
     dedupeKey: "habit-compare-settings",
@@ -15412,7 +15412,7 @@ function bindEvents() {
   });
 }
 
-// Firebase listeners
+// Backend listeners
 
 function listenRemoteLegacy() {
   if (remoteBound) return;
@@ -15471,7 +15471,7 @@ function listenRemoteLegacy() {
   });
 
   bindRemote(HABITS_SCHEDULE_PATH, (snap) => {
-    console.warn("SCHEDULE UPDATE", "firebase:onValue");
+    console.warn("SCHEDULE UPDATE", "api:onValue");
     const raw = snap.val();
     scheduleState = raw && typeof raw === "object"
       ? normalizeHabitSchedule(raw)
@@ -15562,12 +15562,12 @@ function reportQueuedWriteError(message, result) {
 
 function persistHabitGroup(group) {
   if (!group?.id) return;
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habitGroup",
     actionType: "save-group",
-    firebasePath: `${HABIT_GROUPS_PATH}/${group.id}`,
+    backendPath: `${HABIT_GROUPS_PATH}/${group.id}`,
     payload: group,
     writeType: "set",
     dedupeKey: `habit-group:${group.id}`,
@@ -15576,12 +15576,12 @@ function persistHabitGroup(group) {
 
 function removeHabitGroupRemote(groupId) {
   if (!groupId) return;
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habitGroup",
     actionType: "remove-group",
-    firebasePath: `${HABIT_GROUPS_PATH}/${groupId}`,
+    backendPath: `${HABIT_GROUPS_PATH}/${groupId}`,
     payload: null,
     writeType: "set",
     dedupeKey: `habit-group:${groupId}`,
@@ -15590,12 +15590,12 @@ function removeHabitGroupRemote(groupId) {
 
 function persistHabitPrefs() {
   saveCache();
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habitPrefs",
     actionType: "save-prefs",
-    firebasePath: HABIT_PREFS_PATH,
+    backendPath: HABIT_PREFS_PATH,
     payload: habitPrefs || {},
     writeType: "set",
     dedupeKey: "habit-prefs",
@@ -15606,12 +15606,12 @@ function saveUI(partial = {}) {
   const merged = normalizeHabitUI({ ...habitUI, ...(partial || {}) });
   habitUI = merged;
   saveCache();
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habitUi",
     actionType: "save-quick-counters",
-    firebasePath: HABIT_UI_QUICK_COUNTERS_PATH,
+    backendPath: HABIT_UI_QUICK_COUNTERS_PATH,
     payload: merged.quickCounters || [],
     writeType: "set",
     dedupeKey: "habit-ui-quick-counters",
@@ -15656,12 +15656,12 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
 
   queuePendingSessionWrite(habitId, dateKey, payloadToWrite);
   saveCache();
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habitSession",
     actionType: "set-day-time",
-    firebasePath: `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`,
+    backendPath: `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`,
     payload: payloadToWrite,
     writeType: "set",
     dedupeKey: `habit-session-day:${habitId}:${dateKey}`,
@@ -15675,12 +15675,12 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
 
 function persistHabitCheck(habitId, dateKey, value) {
   if (!habitId || !dateKey) return;
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habitCheck",
     actionType: "set-check",
-    firebasePath: `${HABIT_CHECKS_PATH}/${habitId}/${dateKey}`,
+    backendPath: `${HABIT_CHECKS_PATH}/${habitId}/${dateKey}`,
     payload: value ? true : null,
     writeType: "set",
     dedupeKey: `habit-check:${habitId}:${dateKey}`,
@@ -15691,12 +15691,12 @@ function persistHabitCheck(habitId, dateKey, value) {
 function persistHabitCount(habitId, dateKey, value) {
   if (!habitId || !dateKey) return;
   console.log("[habits:counts:save]", { habitId, dateKey, value, path: `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}` });
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habitCount",
     actionType: "set-count",
-    firebasePath: `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}`,
+    backendPath: `${HABIT_COUNTS_PATH}/${habitId}/${dateKey}`,
     payload: value,
     writeType: "set",
     dedupeKey: `habit-count:${habitId}:${dateKey}`,
@@ -15706,12 +15706,12 @@ function persistHabitCount(habitId, dateKey, value) {
 
 function persistHabit(habit) {
   if (!habit?.id) return;
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habit",
     actionType: "save-habit",
-    firebasePath: `${HABITS_PATH}/${habit.id}`,
+    backendPath: `${HABITS_PATH}/${habit.id}`,
     payload: habit,
     writeType: "set",
     dedupeKey: `habit:${habit.id}`,
@@ -15720,12 +15720,12 @@ function persistHabit(habit) {
 
 function removeHabitRemote(habitId) {
   if (!habitId) return;
-  void writeRtdbWithOfflineQueue({
+  void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "habit",
     actionType: "remove-habit",
-    firebasePath: `${HABITS_PATH}/${habitId}`,
+    backendPath: `${HABITS_PATH}/${habitId}`,
     payload: null,
     writeType: "set",
     dedupeKey: `habit:${habitId}`,
@@ -15768,12 +15768,12 @@ async function startSession(habitId = null, meta = null) {
   updateCompareLiveInterval();
   scheduleCompareRefresh("session:start", { targetHabitId: targetHabitId || null });
 
-  const result = await writeRtdbWithOfflineQueue({
+  const result = await writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "activeSession",
     actionType: "start-session",
-    firebasePath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
+    backendPath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
     payload,
     writeType: "set",
     dedupeKey: `active-session:${sessionId}`,
@@ -15803,12 +15803,12 @@ async function patchSession(sessionId, patch = {}) {
     updateSessionUI();
   }
 
-  const result = await writeRtdbWithOfflineQueue({
+  const result = await writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "activeSession",
     actionType: "patch-session",
-    firebasePath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
+    backendPath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
     payload: nextPatch,
     writeType: "update",
     dedupeKey: `active-session-patch:${sessionId}`,
@@ -15852,12 +15852,12 @@ async function stopSession(assignHabitId = null, silent = false, sessionId = run
   updateSessionUI();
   updateCompareLiveInterval();
 
-  const result = await writeRtdbWithOfflineQueue({
+  const result = await writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "activeSession",
     actionType: "stop-session",
-    firebasePath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
+    backendPath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
     payload: null,
     writeType: "set",
     dedupeKey: `active-session:${sessionId}`,
@@ -15942,12 +15942,12 @@ async function cancelRunningSession({ requireConfirm = true, sessionId = running
   updateSessionUI();
   updateCompareLiveInterval();
 
-  const result = await writeRtdbWithOfflineQueue({
+  const result = await writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",
     entityType: "activeSession",
     actionType: "cancel-session",
-    firebasePath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
+    backendPath: `${HABIT_ACTIVE_SESSIONS_PATH}/${sessionId}`,
     payload: null,
     writeType: "set",
     dedupeKey: `active-session:${sessionId}`,
@@ -16029,7 +16029,7 @@ function listenRemote() {
   });
 
   bindRemote(HABITS_SCHEDULE_PATH, (snap) => {
-    console.warn("SCHEDULE UPDATE", "firebase:onValue");
+    console.warn("SCHEDULE UPDATE", "api:onValue");
     const raw = applyQueuedHabitRemoteValue(HABITS_SCHEDULE_PATH, snap.val());
     scheduleState = raw && typeof raw === "object"
       ? normalizeHabitSchedule(raw)

@@ -2,7 +2,7 @@ import {
   getSnapshotRecord,
   putSnapshotRecord,
 } from "./offline-db.js?v=2026-04-05-v5";
-import { registerCacheMetric } from "../firebase/read-debug.js";
+import { registerCacheMetric } from "../data/read-debug.js";
 
 function buildSnapshotKey(moduleName, uid) {
   const safeModule = String(moduleName || "").trim();

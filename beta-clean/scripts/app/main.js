@@ -23,7 +23,7 @@ import {
 } from "../shared/services/sync-manager.js?v=2026-04-05-v5";
 import { applyTheme, getAvailableThemes, getCurrentTheme, initThemeService } from "../shared/services/theme/index.js";
 import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
-import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, getFirebaseMetricsSnapshot, logFirebaseRead, registerViewListener } from "../shared/firebase/read-debug.js";
+import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, getFirebaseMetricsSnapshot, logFirebaseRead, registerViewListener } from "../shared/data/read-debug.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -90,8 +90,8 @@ const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
 const APP_PUBLISHED_COMMIT = "f01cf4c";
-const SERVICE_WORKER_VERSION = "2026-08-23-api-data-provider";
-const FINANCE_MODULE_VERSION = "2026-08-23-api-data-provider";
+const SERVICE_WORKER_VERSION = "2026-08-23-api-data-provider-no-rtdb";
+const FINANCE_MODULE_VERSION = "2026-08-23-api-data-provider-no-rtdb";
 const BOOKSHELL_CACHE_PREFIX = "bookshell-";
 const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
   `bookshell-static-${SERVICE_WORKER_VERSION}`,
@@ -937,7 +937,7 @@ async function renderSettingsModal() {
     </section>
     <section class="app-settings-section">
       <div class="app-settings-section__eyebrow">Limpieza fuerte</div>
-      <p>El hard reset limpia caches del service worker y fuerza una recarga limpia. No borra tus datos de Firebase.</p>
+      <p>El hard reset limpia caches del service worker y fuerza una recarga limpia. No borra tus datos de la API.</p>
       <div class="app-settings-section__actions">
         <button type="button" class="app-settings-dangerBtn" data-settings-hard-reset>Hard reset</button>
       </div>
@@ -1135,7 +1135,7 @@ async function renderMetricsModal() {
         <div class="app-metrics-rangeRow">${rangeButtons}</div>
       </div>
       <div class="app-metrics-kpis">
-        <div class="app-metrics-kpi"><small>Bytes Firebase</small><strong>${formatMetricBytes(snapshot.totals.bytesReceived)}</strong></div>
+        <div class="app-metrics-kpi"><small>Bytes datos</small><strong>${formatMetricBytes(snapshot.totals.bytesReceived)}</strong></div>
         <div class="app-metrics-kpi"><small>get()</small><strong>${snapshot.totals.getCount}</strong></div>
         <div class="app-metrics-kpi"><small>Listeners activos</small><strong>${snapshot.totals.activeListeners}</strong></div>
         <div class="app-metrics-kpi"><small>Eventos listener</small><strong>${snapshot.totals.listenerEvents}</strong></div>
@@ -1176,7 +1176,7 @@ function ensureMetricsModal() {
     <section class="modal app-metrics-modal" role="dialog" aria-modal="true" aria-labelledby="app-metrics-title">
       <header class="modal-header app-metrics-modal__header">
         <div>
-          <div class="app-metrics-modal__eyebrow">Firebase y almacenamiento</div>
+          <div class="app-metrics-modal__eyebrow">Datos y almacenamiento</div>
           <div class="modal-title" id="app-metrics-title">Metricas</div>
         </div>
         <button class="btn-x" type="button" aria-label="Cerrar metricas" data-metrics-close>✕</button>
@@ -1313,8 +1313,8 @@ function renderGlobalSyncIndicator(snapshot) {
     tone = "error";
   } else if ((Number(snapshot?.totalCount) || 0) > 0) {
     text = `${snapshot.totalCount} pendiente${snapshot.totalCount === 1 ? "" : "s"}`;
-    tone = snapshot?.rtdbConnected ? "pending" : "offline";
-  } else if (!snapshot?.appOnline || !snapshot?.rtdbConnected) {
+    tone = snapshot?.backendConnected ? "pending" : "offline";
+  } else if (!snapshot?.appOnline || !snapshot?.backendConnected) {
     text = "Sin conexión";
     tone = "offline";
   }
@@ -4082,7 +4082,7 @@ window.bootDebug?.ok?.("HTML listo");
 Promise.resolve().then(() => initSyncManager({
   db,
   getUserId: () => auth.currentUser?.uid || "",
-})).then(() => window.bootDebug?.ok?.("Firebase inicializado"))
+})).then(() => window.bootDebug?.ok?.("Datos inicializados"))
   .catch((error) => logBootError(error, { stage: "init-sync-manager" }));
 
 Promise.resolve().then(() => initThemeService()).then(() => window.bootDebug?.ok?.("carga settings"))

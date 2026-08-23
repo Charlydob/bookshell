@@ -13,7 +13,7 @@ import { auth, getUserDataKey } from "../../shared/auth/index.js";
 import { MET_CATALOG } from "./met-catalog.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
 import { upsertPublicCatalogItem } from "../../shared/services/public-catalog.js";
-import { registerCacheMetric, trackedOnValue } from "../../shared/firebase/read-debug.js";
+import { registerCacheMetric, trackedOnValue } from "../../shared/data/read-debug.js";
 
 const uid = auth.currentUser?.uid;
 const userKey = getUserDataKey(auth.currentUser);

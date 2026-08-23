@@ -1,25 +1,31 @@
-import {
-  get as firebaseGet,
-  limitToFirst as firebaseLimitToFirst,
-  onValue as firebaseOnValue,
-  orderByChild as firebaseOrderByChild,
-  push as firebasePush,
-  query as firebaseQuery,
-  ref as firebaseRef,
-  remove as firebaseRemove,
-  runTransaction as firebaseRunTransaction,
-  set as firebaseSet,
-  startAt as firebaseStartAt,
-  endAt as firebaseEndAt,
-  update as firebaseUpdate,
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { DATA_PROVIDER } from "./config.js";
 import { logDataUsage } from "./data-usage.js";
-import {
+
+if (DATA_PROVIDER === "api") {
+  throw new Error("Firebase RTDB runtime access forbidden in API mode");
+}
+
+const {
+  get: firebaseGet,
+  limitToFirst: firebaseLimitToFirst,
+  onValue: firebaseOnValue,
+  orderByChild: firebaseOrderByChild,
+  push: firebasePush,
+  query: firebaseQuery,
+  ref: firebaseRef,
+  remove: firebaseRemove,
+  runTransaction: firebaseRunTransaction,
+  set: firebaseSet,
+  startAt: firebaseStartAt,
+  endAt: firebaseEndAt,
+  update: firebaseUpdate,
+} = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js");
+const {
   db,
   firebasePaths,
   getStorageService,
   PUBLIC_PATHS,
-} from "../firebase/index.js";
+} = await import("../firebase/index.js");
 
 export const providerName = "firebase";
 

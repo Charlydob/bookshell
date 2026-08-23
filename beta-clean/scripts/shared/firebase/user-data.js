@@ -1,4 +1,4 @@
-import { get, ref, set, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { DATA_PROVIDER, get, ref, set, update } from "../data/index.js";
 import { auth, db } from "./app.js";
 import { logDataUsage } from "../data/data-usage.js";
 import { buildUserDataContext, firebasePaths } from "./rtdb-paths.js";
@@ -301,6 +301,9 @@ async function migrateUserDataRootBack(user = auth.currentUser) {
 }
 
 export function ensureUserDataRootReady(user = auth.currentUser) {
+  if (DATA_PROVIDER === "api") {
+    throw new Error("Firebase RTDB runtime access forbidden in API mode");
+  }
   const context = buildUserDataContext(user);
   const cacheKey = `${context.authUid}:${context.emailKey}`;
   if (!context.authUid && !context.userDataRootKey) {

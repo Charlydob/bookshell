@@ -1,8 +1,17 @@
 import { get, ref, set, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { auth, db } from "./app.js";
+import { logDataUsage } from "../data/data-usage.js";
 import { buildUserDataContext, firebasePaths } from "./rtdb-paths.js";
 
 const userDataReadyPromises = new Map();
+
+function logBootstrapDataUsage(path = "", operation = "READ", userId = auth.currentUser?.uid || "") {
+  logDataUsage({
+    userId,
+    path,
+    operation,
+  });
+}
 
 function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -146,6 +155,7 @@ async function syncUserIdentity(context, user = auth.currentUser) {
   };
   if (safeEmail) patch.email = safeEmail;
   if (emailKey) patch.userKey = emailKey;
+  logBootstrapDataUsage(firebasePaths.userMeta(userDataRootKey), "UPDATE", authUid);
   await update(ref(db, firebasePaths.userMeta(userDataRootKey)), patch);
 }
 
@@ -160,6 +170,7 @@ async function trySetUserIndex(context, user = auth.currentUser) {
     updatedAt: Date.now(),
   };
   try {
+    logBootstrapDataUsage(path, "WRITE", authUid);
     await set(ref(db, path), payload);
     console.info("[user-key:index:set]", {
       path,
@@ -231,6 +242,8 @@ async function migrateUserDataRootBack(user = auth.currentUser) {
   });
 
   try {
+    logBootstrapDataUsage(legacyUserRoot, "READ", authUid);
+    logBootstrapDataUsage(privateUserRoot, "READ", authUid);
     const [legacySnap, targetSnap] = await Promise.all([
       get(ref(db, legacyUserRoot)),
       get(ref(db, privateUserRoot)),
@@ -262,6 +275,7 @@ async function migrateUserDataRootBack(user = auth.currentUser) {
       return context;
     }
 
+    logBootstrapDataUsage(privateUserRoot, "WRITE", authUid);
     await set(ref(db, privateUserRoot), mergedValue);
     console.info("[user-key:migrate:back:done]", {
       uid: authUid,

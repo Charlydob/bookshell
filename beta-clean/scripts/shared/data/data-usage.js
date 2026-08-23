@@ -16,6 +16,8 @@ const MAX_FIELD_LENGTHS = Object.freeze({
   path: 640,
   operation: 32,
 });
+const DATA_USAGE_DEBUG = true;
+const DATA_USAGE_USE_FETCH_FIRST = true;
 
 let flushTimer = 0;
 const queue = [];
@@ -45,6 +47,27 @@ function normalizePayload(payload = {}) {
 function sendDataUsage(payload) {
   if (!DATA_USAGE_ENDPOINT || !payload) return;
   const body = JSON.stringify(payload);
+  if (DATA_USAGE_USE_FETCH_FIRST) {
+    try {
+      fetch(DATA_USAGE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        keepalive: true,
+        credentials: "omit",
+      }).catch((error) => {
+        if (typeof console !== "undefined" && typeof console.debug === "function") {
+          console.debug("[data-usage] telemetry ignored", error);
+        }
+      });
+      return;
+    } catch (error) {
+      if (typeof console !== "undefined" && typeof console.debug === "function") {
+        console.debug("[data-usage] telemetry ignored", error);
+      }
+    }
+  }
+
   try {
     if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
       const blob = new Blob([body], { type: "application/json" });
@@ -58,7 +81,7 @@ function sendDataUsage(payload) {
       headers: { "Content-Type": "application/json" },
       body,
       keepalive: true,
-      credentials: "include",
+      credentials: "omit",
     }).catch((error) => {
       if (typeof console !== "undefined" && typeof console.debug === "function") {
         console.debug("[data-usage] telemetry ignored", error);
@@ -93,6 +116,9 @@ export function logDataUsage(payload = {}) {
   const normalized = normalizePayload(payload);
   if (!normalized) return;
   try {
+    if (DATA_USAGE_DEBUG && typeof console !== "undefined" && typeof console.debug === "function") {
+      console.debug("[data-usage]", normalized);
+    }
     queue.push(normalized);
     while (queue.length > MAX_QUEUE_SIZE) queue.shift();
     scheduleFlush();

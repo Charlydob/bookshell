@@ -1,3 +1,8 @@
+import {
+  get as defaultDataGet,
+  onValue as defaultDataOnValue,
+} from "../data/index.js";
+
 const METRICS_STORAGE_KEY = "bookshell:firebase-metrics:v2"
 const MAX_READ_LOGS = 1500
 const MAX_RISK_LOGS = 600
@@ -822,12 +827,10 @@ export function trackFirebasePayload({
 }
 
 export async function trackedGet(targetRef, options = {}, getImpl = null) {
-  if (typeof getImpl !== "function") {
-    throw new Error("trackedGet requiere un getImpl valido")
-  }
+  const effectiveGet = typeof getImpl === "function" ? getImpl : defaultDataGet
   const startedAt = perfNow()
   logFirebaseRead({ ...options, mode: "get" })
-  const snapshot = await getImpl(targetRef)
+  const snapshot = await effectiveGet(targetRef)
   trackFirebasePayload({
     ...options,
     source: "get",
@@ -839,9 +842,7 @@ export async function trackedGet(targetRef, options = {}, getImpl = null) {
 }
 
 export function trackedOnValue(targetRef, handler, options = {}, onValueImpl = null) {
-  if (typeof onValueImpl !== "function") {
-    throw new Error("trackedOnValue requiere un onValueImpl valido")
-  }
+  const effectiveOnValue = typeof onValueImpl === "function" ? onValueImpl : defaultDataOnValue
   const safeOptions = {
     viewId: "global",
     reason: "tracked-onValue",
@@ -850,7 +851,7 @@ export function trackedOnValue(targetRef, handler, options = {}, onValueImpl = n
   }
   let eventCount = 0
   logFirebaseRead({ ...safeOptions, mode: safeOptions.mode || "onValue" })
-  const unsubscribe = onValueImpl(
+  const unsubscribe = effectiveOnValue(
     targetRef,
     (snapshot) => {
       eventCount += 1

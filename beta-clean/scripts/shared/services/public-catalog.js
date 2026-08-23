@@ -1,5 +1,4 @@
-import { db } from "../firebase/index.js";
-import { get, push, ref, set, query, orderByChild, startAt, endAt, limitToFirst, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { db, get, push, ref, set, query, orderByChild, startAt, endAt, limitToFirst, runTransaction } from "../data/index.js";
 
 export function normalizeCatalogName(value = "") {
   return String(value || "")

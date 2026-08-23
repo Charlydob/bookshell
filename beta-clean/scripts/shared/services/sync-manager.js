@@ -4,7 +4,7 @@ import {
   remove,
   set,
   update,
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+} from "../data/index.js";
 import {
   ensureOfflineQueueCacheReady,
   getOfflineQueueSummary,

@@ -1,5 +1,5 @@
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { firebasePaths, getUserDataKey } from "../../shared/firebase/index.js";
+import { firebasePaths, getUserDataKey } from "../../shared/data/index.js";
 
 export function resolveFinancePathCandidates(authUidParam) {
   const authUser = getAuth().currentUser || null;

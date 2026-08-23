@@ -1,5 +1,4 @@
-import { get, ref, remove } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
-import { db, getCurrentUserDataRootKey } from '../shared/firebase/index.js';
+import { db, get, getCurrentUserDataRootKey, ref, remove } from '../shared/data/index.js';
 
 const DELETE_PATHS = ['media','movies','peliculas','games','achievements','logros','missions','misiones','quests','tasks','rewards','badges'];
 const KEEP_PATHS = ['world','mundo','places','locales','stays','notes','finance','habits','recipes','books','gym','settings/profile/auth/meta/schema'];

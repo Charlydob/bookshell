@@ -1,11 +1,12 @@
 import {
+  auth,
+  db,
   push,
   ref,
   remove,
   set,
   update,
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { auth, db } from "./index.js";
+} from "../data/index.js";
 import { enqueueOfflineOperation } from "../storage/offline-queue.js?v=2026-04-05-v5";
 import {
   canWriteDirectly,

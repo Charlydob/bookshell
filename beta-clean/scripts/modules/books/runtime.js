@@ -1,7 +1,10 @@
-// books.js
-import { db, auth, onUserChange, getStorageService, firebasePaths, getUserDataKey } from "../../shared/firebase/index.js";
-
 import {
+  auth,
+  db,
+  firebasePaths,
+  getStorageService,
+  getUserDataKey,
+  onUserChange,
   ref,
   onValue,
   push,
@@ -9,7 +12,7 @@ import {
   update,
   remove,
   runTransaction
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+} from "../../shared/data/index.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 import {

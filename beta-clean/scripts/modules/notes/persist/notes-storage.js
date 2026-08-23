@@ -67,7 +67,7 @@ async function uploadImageToCloudinary(file) {
 
 async function loadFirebaseDeleteApi() {
   const [{ getStorageService }, storageApi] = await Promise.all([
-    import("../../../shared/firebase/index.js"),
+    import("../../../shared/data/index.js"),
     import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js"),
   ]);
   const storage = await getStorageService();

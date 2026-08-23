@@ -7,7 +7,7 @@ import {
   normalizeCountryInput
 } from "./countries.js";
 import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
-import { PUBLIC_PATHS, auth, db, firebasePaths, getUserDataKey, onUserChange } from "../../shared/firebase/index.js";
+import { PUBLIC_PATHS, auth, db, firebasePaths, getUserDataKey, onUserChange } from "../../shared/data/index.js";
 import { resolveFinancePathCandidates } from "./finance-data.js";
 import { FOODREPO_API_BASE, FOODREPO_API_TOKEN } from "./foodrepo.js";
 import { getMetCategoryById } from "./met-catalog.js";
@@ -20,7 +20,7 @@ import {
   get,
   set,
   remove
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+} from "../../shared/data/index.js";
 
 const recipesRuntimeApi = {
   onShow: () => {},

@@ -1,17 +1,20 @@
-import { db, auth, PUBLIC_PATHS, firebasePaths, getUserDataKey } from "../../shared/firebase/index.js";
-import { MET_CATALOG } from "./met-catalog.js";
-import { ensureEcharts } from "../../shared/vendors/echarts.js";
-import { upsertPublicCatalogItem } from "../../shared/services/public-catalog.js";
-import { registerCacheMetric, trackedOnValue } from "../../shared/firebase/read-debug.js";
-
 import {
+  auth,
+  db,
+  PUBLIC_PATHS,
+  firebasePaths,
+  getUserDataKey,
   ref,
   onValue,
   set,
   update,
   push,
   remove
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+} from "../../shared/data/index.js";
+import { MET_CATALOG } from "./met-catalog.js";
+import { ensureEcharts } from "../../shared/vendors/echarts.js";
+import { upsertPublicCatalogItem } from "../../shared/services/public-catalog.js";
+import { registerCacheMetric, trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 const uid = auth.currentUser?.uid;
 const userKey = getUserDataKey(auth.currentUser);

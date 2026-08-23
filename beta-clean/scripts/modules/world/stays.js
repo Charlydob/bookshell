@@ -1,5 +1,4 @@
-import { auth, db, getCurrentUserDataRootKey } from "../../shared/firebase/index.js";
-import { ref, onValue, update, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { auth, db, getCurrentUserDataRootKey, ref, onValue, update, remove } from "../../shared/data/index.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 import { renderCountryHeatmap, renderRegionHeatmap } from "./world-heatmap.js";
 import { normalizeCountryInput } from "./countries.js";

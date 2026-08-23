@@ -1,9 +1,10 @@
 // habits.js
 // Nueva pestaña de hábitos con check-ins, sesiones cronometradas y reportes
 
-import { db, auth, onUserChange } from "../../shared/firebase/index.js";
-
 import {
+  db,
+  auth,
+  onUserChange,
   ref,
   onValue,
   set,
@@ -11,7 +12,7 @@ import {
   get,
   runTransaction,
   push
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+} from "../../shared/data/index.js";
 
 import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";

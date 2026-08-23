@@ -26,9 +26,9 @@ async function importFinanceDependency(modulePath) {
 
 async function ensureFinanceLoaded() {
   if (db && get && onValue && ref && auth && onUserChange) return;
-  const dbMod = await importFinanceDependency('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
+  const dbMod = await importFinanceDependency('../../shared/data/index.js');
   ({ get, onValue, push, ref, remove, set, update } = dbMod);
-  ({ db, auth, onUserChange } = await importFinanceDependency('../../shared/firebase/index.js'));
+  ({ db, auth, onUserChange } = dbMod);
 }
 
 import { DEVICE_KEY, HOME_PANEL_VIEW_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';
@@ -39,7 +39,7 @@ import { ensureEcharts } from '../../shared/vendors/echarts.js';
 import { readProcessedJsonCache, writeProcessedJsonCache } from '../../shared/cache/processed-json-cache.js';
 import { normalizeCatalogName, upsertPublicCatalogItem } from '../../shared/services/public-catalog.js';
 import { logFirebaseRead, logFirebaseWrite, registerViewListener, trackedGet, trackedOnValue } from '../../shared/firebase/read-debug.js';
-import { PUBLIC_PATHS } from '../../shared/firebase/index.js';
+import { PUBLIC_PATHS } from '../../shared/data/index.js';
 import { readModuleSnapshot, writeModuleSnapshot } from '../../shared/storage/offline-snapshots.js';
 import { SUPPORTED_CURRENCIES, getCurrencyRates, getDefaultCurrency, formatCurrency, normalizeMovementCurrencyPayload, resolveExchangeRateFromEUR, convertCurrency, normalizeCurrencyCode } from './finance/currency-utils.js';
 import {

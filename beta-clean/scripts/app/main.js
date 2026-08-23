@@ -8,13 +8,11 @@ import {
   signInWithEmail,
   signOutCurrentUser,
   signUpWithEmail,
-} from "../shared/firebase/index.js";
-import {
   get,
   onValue,
   ref,
   update,
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+} from "../shared/data/index.js";
 import {
   initSyncManager,
   notifySyncUserChanged,

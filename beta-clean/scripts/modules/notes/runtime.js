@@ -1,4 +1,4 @@
-import { onUserChange } from "../../shared/firebase/index.js";
+import { onUserChange } from "../../shared/data/index.js";
 import {
   createLeafletMap,
   DEFAULT_MAP_CENTER_SPAIN,

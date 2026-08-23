@@ -1,10 +1,10 @@
-import { db } from "../../../shared/firebase/index.js";
 import {
+  db,
   push,
   ref,
   remove,
   update,
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+} from "../../../shared/data/index.js";
 
 export async function createBookQuoteRecord(rootPath, payload = {}) {
   const safeRootPath = String(rootPath || "").trim();

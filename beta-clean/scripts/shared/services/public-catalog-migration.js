@@ -1,6 +1,4 @@
-import { db } from "../firebase/index.js";
-import { get, ref, set, push } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { PUBLIC_PATHS, firebasePaths } from "../firebase/rtdb-paths.js";
+import { db, get, ref, set, push, PUBLIC_PATHS, firebasePaths } from "../data/index.js";
 import { normalizeCatalogName } from "./public-catalog.js";
 
 const PRIVATE_KEYS = new Set(["ticketId", "accountId", "movementId", "userId", "priceHistory", "purchaseDate", "lastPurchaseAt", "preferredStore", "privateNotes", "notes", "recipeId", "workoutId", "ticket", "tickets"]);

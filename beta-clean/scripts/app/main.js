@@ -1,19 +1,25 @@
 import {
-  auth,
   db,
   firebasePaths,
-  getCurrentUserDataRootKey,
-  getUserDataRootKey,
-  onUserChange,
-  signInWithEmail,
-  signOutCurrentUser,
-  signUpWithEmail,
   get,
   onValue,
   ref,
   update,
 } from "../shared/data/index.js";
-import { AUTH_PROVIDER, SIGNUP_ENABLED } from "../shared/auth/index.js";
+import {
+  auth,
+  login,
+  logout,
+  getSession,
+  onAuthChange,
+  signInWithEmail,
+  signOutCurrentUser,
+  signUpWithEmail,
+  getCurrentUserDataRootKey,
+  getUserDataRootKey,
+  AUTH_PROVIDER,
+  SIGNUP_ENABLED,
+} from "../shared/auth/index.js";
 import {
   initSyncManager,
   notifySyncUserChanged,
@@ -3648,7 +3654,7 @@ function ensureLoginUI() {
     err.textContent = "";
     const email = box.querySelector("#loginEmail").value.trim();
     const pass = box.querySelector("#loginPass").value;
-    try { await signInWithEmail(email, pass); }
+    try { await login(email, pass); }
     catch (e) { err.textContent = e?.message || String(e); }
   };
 
@@ -3666,7 +3672,7 @@ function ensureLoginUI() {
 
   box.querySelector("#btnLogout").onclick = async () => {
     err.textContent = "";
-    try { await signOutCurrentUser(); }
+    try { await logout(); }
     catch (e) { err.textContent = e?.message || String(e); }
   };
 }
@@ -3811,7 +3817,8 @@ function bindAuthGate() {
   window.bootDebug?.step?.("Auth init");
   startBootReleaseTimeout();
 
-  onUserChange(async (user) => {
+  void getSession();
+  onAuthChange(async (user) => {
     logBootStep("auth-state-changed", { authenticated: !!user, provider: user?.provider || "" });
     window.bootDebug?.step?.("Usuario resuelto", { authenticated: !!user, provider: user?.provider || "" });
     try {

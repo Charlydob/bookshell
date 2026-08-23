@@ -47,7 +47,7 @@ function chooseActiveUser() {
 
 function emitAuthDebug() {
   const current = state.currentUser;
-  console.debug("[auth]", {
+  console.log("[auth]", {
     provider: state.activeProvider || "",
     configuredProvider: AUTH_PROVIDER,
     apiSession: !!state.apiUser,
@@ -115,7 +115,10 @@ async function tryEnsureFirebaseDataSession(email, password, expectedUid = "") {
     }
     state.firebaseUser = firebaseUser;
   } catch (error) {
-    console.warn("[auth] Firebase data session could not be established; API identity remains active.", error);
+    console.warn(
+      "[auth] Firebase data session could not be established; API identity remains active. If RTDB rules still require Firebase Auth and no matching Firebase session is already available, reads/writes need a temporary RTDB authorization strategy.",
+      error,
+    );
   }
 }
 

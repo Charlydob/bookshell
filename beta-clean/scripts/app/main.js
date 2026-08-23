@@ -8,12 +8,9 @@ import {
 } from "../shared/data/index.js";
 import {
   auth,
-  login,
   logout,
   getSession,
   onAuthChange,
-  signInWithEmail,
-  signOutCurrentUser,
   signUpWithEmail,
   getCurrentUserDataRootKey,
   getUserDataRootKey,
@@ -3615,7 +3612,7 @@ function ensureLoginUI() {
   `;
 
   box.innerHTML = `
-    <div style="width:min(420px,92vw); padding:16px; border-radius:16px;
+    <form id="loginForm" autocomplete="off" style="width:min(420px,92vw); padding:16px; border-radius:16px;
       background: rgba(12,20,44,.88); border:1px solid rgba(160,220,255,.25);
       box-shadow: 0 20px 60px rgba(0,0,0,.45); display:grid; gap:10px;">
       <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
@@ -3625,38 +3622,54 @@ function ensureLoginUI() {
           background:rgba(255,255,255,.08);color:#fff; display:none;">Salir</button>
       </div>
 
-      <input id="loginEmail" placeholder="Email"
+      <input id="loginEmail" type="email" inputmode="email" name="bookshell-login-email-${Date.now()}"
+        autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Email"
         style="padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.15);
         background:rgba(255,255,255,.06);color:#fff;">
 
-      <input id="loginPass" type="password" placeholder="Password"
+      <input id="loginPass" type="password" name="bookshell-login-password-${Date.now()}"
+        autocomplete="new-password" autocapitalize="none" spellcheck="false" placeholder="Password"
         style="padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.15);
         background:rgba(255,255,255,.06);color:#fff;">
 
       <div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
-        <button id="btnSignup" ${SIGNUP_ENABLED ? "" : "disabled"}
+        <button id="btnSignup" type="button" ${SIGNUP_ENABLED ? "" : "disabled"}
           title="${SIGNUP_ENABLED ? "Crear cuenta" : "Registro deshabilitado durante la migracion"}"
           style="padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.18);
           background:rgba(255,255,255,.08);color:#fff;${SIGNUP_ENABLED ? "" : "opacity:.48;cursor:not-allowed;"}">Crear cuenta</button>
 
-        <button id="btnLogin"
+        <button id="btnLogin" type="submit"
           style="padding:10px 12px;border-radius:10px;border:1px solid rgba(160,220,255,.35);
           background:rgba(160,220,255,.12);color:#fff;">Entrar</button>
       </div>
 
       <small id="loginErr" style="opacity:.85; color:#ffd1d1;"></small>
-    </div>
+    </form>
   `;
   document.body.appendChild(box);
 
   const err = box.querySelector("#loginErr");
-  box.querySelector("#btnLogin").onclick = async () => {
-    err.textContent = "";
-    const email = box.querySelector("#loginEmail").value.trim();
-    const pass = box.querySelector("#loginPass").value;
-    try { await login(email, pass); }
-    catch (e) { err.textContent = e?.message || String(e); }
+  box.querySelector("#btnLogout")?.setAttribute("type", "button");
+  const readLoginCredentials = (reason = "login") => {
+    const emailInput = box.querySelector("#loginEmail");
+    const passwordInput = box.querySelector("#loginPass");
+    const email = String(emailInput?.value || "").trim();
+    const password = String(passwordInput?.value || "");
+    console.log("[auth:login-form]", {
+      reason,
+      email,
+      passwordLength: password.length,
+    });
+    return { email, password };
   };
+
+  box.querySelector("#loginForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    err.textContent = "";
+    const { email, password } = readLoginCredentials("submit");
+    try { await auth.login(email, password); }
+    catch (e) { err.textContent = e?.message || String(e); }
+  });
 
   box.querySelector("#btnSignup").onclick = async () => {
     err.textContent = "";
@@ -3664,9 +3677,8 @@ function ensureLoginUI() {
       err.textContent = "Registro deshabilitado temporalmente durante la migracion. Usa tu cuenta existente.";
       return;
     }
-    const email = box.querySelector("#loginEmail").value.trim();
-    const pass = box.querySelector("#loginPass").value;
-    try { await signUpWithEmail(email, pass); }
+    const { email, password } = readLoginCredentials("signup");
+    try { await signUpWithEmail(email, password); }
     catch (e) { err.textContent = e?.message || String(e); }
   };
 

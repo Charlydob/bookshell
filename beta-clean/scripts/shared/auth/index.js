@@ -19,6 +19,12 @@ export const auth = {
   get currentUser() {
     return state.currentUser;
   },
+  login(email, password) {
+    return login(email, password);
+  },
+  logout() {
+    return logout();
+  },
 };
 
 function hasLegacyFirebaseUid(user = null) {

@@ -65,7 +65,6 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/shared/cache/processed-json-cache.js",
   "./scripts/shared/config/app-paths.js",
   "./scripts/shared/firebase/app.js",
-  "./scripts/shared/firebase/auth.js",
   "./scripts/shared/firebase/config.js",
   "./scripts/shared/firebase/database.js",
   "./scripts/shared/firebase/index.js",

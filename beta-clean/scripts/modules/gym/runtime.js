@@ -1,9 +1,7 @@
 import {
-  auth,
   db,
   PUBLIC_PATHS,
   firebasePaths,
-  getUserDataKey,
   ref,
   onValue,
   set,
@@ -11,6 +9,7 @@ import {
   push,
   remove
 } from "../../shared/data/index.js";
+import { auth, getUserDataKey } from "../../shared/auth/index.js";
 import { MET_CATALOG } from "./met-catalog.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
 import { upsertPublicCatalogItem } from "../../shared/services/public-catalog.js";

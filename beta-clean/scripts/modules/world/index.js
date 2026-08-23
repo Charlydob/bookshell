@@ -1,4 +1,5 @@
-import { auth, db, firebasePaths, getCurrentUserDataRootKey, ref, onValue, set, remove } from "../../shared/data/index.js";
+import { db, firebasePaths, ref, onValue, set, remove } from "../../shared/data/index.js";
+import { auth, getCurrentUserDataRootKey } from "../../shared/auth/index.js";
 import { createLeafletMap, DEFAULT_MAP_CENTER_SPAIN, destroyLeafletMap, ensureLeaflet, invalidateLeafletMap } from "../../shared/vendors/leaflet.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 import { getCountryEnglishName } from "./countries.js";

@@ -3,8 +3,6 @@
 
 import {
   db,
-  auth,
-  onUserChange,
   ref,
   onValue,
   set,
@@ -13,6 +11,7 @@ import {
   runTransaction,
   push
 } from "../../shared/data/index.js";
+import { auth, onUserChange } from "../../shared/auth/index.js";
 
 import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordTs } from "./time-by-habit.js";
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";

@@ -1,5 +1,4 @@
 import {
-  auth,
   db,
   push,
   ref,
@@ -7,6 +6,7 @@ import {
   set,
   update,
 } from "../data/index.js";
+import { auth } from "../auth/index.js";
 import { enqueueOfflineOperation } from "../storage/offline-queue.js?v=2026-04-05-v5";
 import {
   canWriteDirectly,

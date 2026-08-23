@@ -1,8 +1,6 @@
 import {
-  auth,
   db,
   firebasePaths,
-  getUserDataKey,
   onValue,
   push,
   ref,
@@ -10,6 +8,7 @@ import {
   runTransaction,
   update,
 } from "../../../shared/data/index.js";
+import { auth, getUserDataKey } from "../../../shared/auth/index.js";
 import { trackedOnValue } from "../../../shared/firebase/read-debug.js";
 import { buildTagDefinitionKey } from "../domain/tag-utils.js?v=2026-04-28-v2";
 import {

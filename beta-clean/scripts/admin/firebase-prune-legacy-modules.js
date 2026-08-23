@@ -1,4 +1,5 @@
-import { db, get, getCurrentUserDataRootKey, ref, remove } from '../shared/data/index.js';
+import { db, get, ref, remove } from '../shared/data/index.js';
+import { getCurrentUserDataRootKey } from '../shared/auth/index.js';
 
 const DELETE_PATHS = ['media','movies','peliculas','games','achievements','logros','missions','misiones','quests','tasks','rewards','badges'];
 const KEEP_PATHS = ['world','mundo','places','locales','stays','notes','finance','habits','recipes','books','gym','settings/profile/auth/meta/schema'];

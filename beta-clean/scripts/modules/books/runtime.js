@@ -1,10 +1,7 @@
 import {
-  auth,
   db,
   firebasePaths,
   getStorageService,
-  getUserDataKey,
-  onUserChange,
   ref,
   onValue,
   push,
@@ -13,6 +10,7 @@ import {
   remove,
   runTransaction
 } from "../../shared/data/index.js";
+import { auth, getUserDataKey, onUserChange } from "../../shared/auth/index.js";
 import { trackedOnValue } from "../../shared/firebase/read-debug.js";
 
 import {

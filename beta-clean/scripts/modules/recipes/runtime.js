@@ -7,7 +7,8 @@ import {
   normalizeCountryInput
 } from "./countries.js";
 import { renderCountryHeatmap, renderCountryList } from "./world-heatmap.js";
-import { PUBLIC_PATHS, auth, db, firebasePaths, getUserDataKey, onUserChange } from "../../shared/data/index.js";
+import { PUBLIC_PATHS, db, firebasePaths } from "../../shared/data/index.js";
+import { auth, getUserDataKey, onUserChange } from "../../shared/auth/index.js";
 import { resolveFinancePathCandidates } from "./finance-data.js";
 import { FOODREPO_API_BASE, FOODREPO_API_TOKEN } from "./foodrepo.js";
 import { getMetCategoryById } from "./met-catalog.js";

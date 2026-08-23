@@ -27,8 +27,10 @@ async function importFinanceDependency(modulePath) {
 async function ensureFinanceLoaded() {
   if (db && get && onValue && ref && auth && onUserChange) return;
   const dbMod = await importFinanceDependency('../../shared/data/index.js');
+  const authMod = await importFinanceDependency('../../shared/auth/index.js');
   ({ get, onValue, push, ref, remove, set, update } = dbMod);
-  ({ db, auth, onUserChange } = dbMod);
+  ({ db } = dbMod);
+  ({ auth, onUserChange } = authMod);
 }
 
 import { DEVICE_KEY, HOME_PANEL_VIEW_KEY, RANGE_LABEL, BTC_PRICE_CACHE_KEY, BTC_PRICE_CACHE_TTL_MS, AGG_MODES, FINANCE_DEBUG, state } from './finance/state.js';

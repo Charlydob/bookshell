@@ -13,12 +13,10 @@ export const activeDataProvider = providers[DATA_PROVIDER] || firebaseProvider;
 export const activeDataProviderName = activeDataProvider.providerName;
 export { API_BASE_URL, DATA_PROVIDER };
 
-export const auth = activeDataProvider.auth;
 export const db = activeDataProvider.db;
 export const firebasePaths = activeDataProvider.firebasePaths;
 export const PUBLIC_PATHS = activeDataProvider.PUBLIC_PATHS;
 
-export const getCurrentUserContext = (...args) => activeDataProvider.getCurrentUserContext(...args);
 export const readOnce = (...args) => activeDataProvider.readOnce(...args);
 export const readValue = (...args) => activeDataProvider.readValue(...args);
 export const listen = (...args) => activeDataProvider.listen(...args);
@@ -44,16 +42,4 @@ export const startAt = (...args) => activeDataProvider.startAt(...args);
 export const endAt = (...args) => activeDataProvider.endAt(...args);
 export const limitToFirst = (...args) => activeDataProvider.limitToFirst(...args);
 
-export const ensureCurrentUserDataRootReady = (...args) => activeDataProvider.ensureCurrentUserDataRootReady(...args);
-export const getCurrentUser = (...args) => activeDataProvider.getCurrentUser(...args);
-export const getCurrentUserAuthUid = (...args) => activeDataProvider.getCurrentUserAuthUid(...args);
-export const getCurrentUserDataKey = (...args) => activeDataProvider.getCurrentUserDataKey(...args);
-export const getCurrentUserDataRootKey = (...args) => activeDataProvider.getCurrentUserDataRootKey(...args);
-export const getCurrentUserId = (...args) => activeDataProvider.getCurrentUserId(...args);
 export const getStorageService = (...args) => activeDataProvider.getStorageService(...args);
-export const getUserDataKey = (...args) => activeDataProvider.getUserDataKey(...args);
-export const getUserDataRootKey = (...args) => activeDataProvider.getUserDataRootKey(...args);
-export const onUserChange = (...args) => activeDataProvider.onUserChange(...args);
-export const signInWithEmail = (...args) => activeDataProvider.signInWithEmail(...args);
-export const signOutCurrentUser = (...args) => activeDataProvider.signOutCurrentUser(...args);
-export const signUpWithEmail = (...args) => activeDataProvider.signUpWithEmail(...args);

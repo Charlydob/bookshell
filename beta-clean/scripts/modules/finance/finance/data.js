@@ -1,4 +1,5 @@
-import { auth, firebasePaths, getUserDataKey } from "../../../shared/data/index.js";
+import { firebasePaths } from "../../../shared/data/index.js";
+import { auth, getUserDataKey } from "../../../shared/auth/index.js";
 
 export function resolveFinancePathCandidates(authUidParam) {
   const explicitAuthUid = String(authUidParam || "").trim();

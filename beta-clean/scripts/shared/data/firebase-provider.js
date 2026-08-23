@@ -17,27 +17,9 @@ import { logDataUsage } from "./data-usage.js";
 import {
   db,
   firebasePaths,
-  getAuthUid,
-  getEmailKey,
   getStorageService,
   PUBLIC_PATHS,
 } from "../firebase/index.js";
-import {
-  auth,
-  ensureCurrentUserDataRootReady,
-  getCurrentUser,
-  getCurrentUserAuthUid,
-  getCurrentUserDataKey,
-  getCurrentUserDataRootKey,
-  getCurrentUserEmailKey,
-  getCurrentUserId,
-  getUserDataKey,
-  getUserDataRootKey,
-  onUserChange,
-  signInWithEmail,
-  signOutCurrentUser,
-  signUpWithEmail,
-} from "../auth/index.js";
 
 export const providerName = "firebase";
 
@@ -51,7 +33,7 @@ function resolveTarget(pathOrRef = "") {
 }
 
 function getTelemetryUserId() {
-  return getCurrentUserId() || getCurrentUserAuthUid() || getAuthUid(auth.currentUser) || getUserDataKey(auth.currentUser) || "";
+  return "";
 }
 
 function getPathFromUrl(value = "") {
@@ -117,20 +99,6 @@ function logPatchUsage(operation = "UPDATE", pathOrRef = "", patch = {}) {
       operation,
     });
   }
-}
-
-export function getCurrentUserContext(user = auth.currentUser) {
-  const targetUser = user || auth.currentUser;
-  return {
-    user: targetUser,
-    provider: targetUser?.provider || "",
-    authUid: getCurrentUserAuthUid() || getAuthUid(targetUser),
-    id: getCurrentUserId() || targetUser?.id || getAuthUid(targetUser),
-    uid: getUserDataKey(targetUser),
-    userDataRootKey: getUserDataRootKey(targetUser),
-    emailKey: getEmailKey(targetUser) || getCurrentUserEmailKey(),
-    legacyFirebaseUid: targetUser?.legacyFirebaseUid || getUserDataRootKey(targetUser),
-  };
 }
 
 export function readOnce(pathOrQuery) {
@@ -227,21 +195,8 @@ export const endAt = firebaseEndAt;
 export const limitToFirst = firebaseLimitToFirst;
 
 export {
-  auth,
   db,
-  ensureCurrentUserDataRootReady,
   firebasePaths,
-  getCurrentUser,
-  getCurrentUserAuthUid,
-  getCurrentUserDataKey,
-  getCurrentUserDataRootKey,
-  getCurrentUserId,
   getStorageService,
-  getUserDataKey,
-  getUserDataRootKey,
-  onUserChange,
   PUBLIC_PATHS,
-  signInWithEmail,
-  signOutCurrentUser,
-  signUpWithEmail,
 };

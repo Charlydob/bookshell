@@ -2,7 +2,6 @@ import { API_BASE_URL } from "./config.js";
 export { logDataUsage, DATA_USAGE_OPERATIONS } from "./data-usage.js";
 
 export const providerName = "api";
-export const auth = null;
 export const db = null;
 export const firebasePaths = Object.freeze({});
 export const PUBLIC_PATHS = Object.freeze({});
@@ -13,9 +12,8 @@ function notImplemented(name) {
   };
 }
 
-// Future API implementation should preserve these method names so modules can
-// move one at a time without changing their call sites.
-export const getCurrentUserContext = notImplemented("getCurrentUserContext");
+// Future API implementation should preserve these data method names so modules
+// can move one at a time without changing their database call sites.
 export const readOnce = notImplemented("readOnce");
 export const readValue = notImplemented("readValue");
 export const listen = notImplemented("listen");
@@ -41,16 +39,4 @@ export const startAt = notImplemented("startAt");
 export const endAt = notImplemented("endAt");
 export const limitToFirst = notImplemented("limitToFirst");
 
-export const ensureCurrentUserDataRootReady = notImplemented("ensureCurrentUserDataRootReady");
-export const getCurrentUser = notImplemented("getCurrentUser");
-export const getCurrentUserAuthUid = notImplemented("getCurrentUserAuthUid");
-export const getCurrentUserDataKey = notImplemented("getCurrentUserDataKey");
-export const getCurrentUserDataRootKey = notImplemented("getCurrentUserDataRootKey");
-export const getCurrentUserId = notImplemented("getCurrentUserId");
 export const getStorageService = notImplemented("getStorageService");
-export const getUserDataKey = notImplemented("getUserDataKey");
-export const getUserDataRootKey = notImplemented("getUserDataRootKey");
-export const onUserChange = notImplemented("onUserChange");
-export const signInWithEmail = notImplemented("signInWithEmail");
-export const signOutCurrentUser = notImplemented("signOutCurrentUser");
-export const signUpWithEmail = notImplemented("signUpWithEmail");

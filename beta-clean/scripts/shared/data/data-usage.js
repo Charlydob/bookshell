@@ -54,7 +54,7 @@ function sendDataUsage(payload) {
         headers: { "Content-Type": "application/json" },
         body,
         keepalive: true,
-        credentials: "omit",
+        credentials: "include",
       }).catch((error) => {
         if (typeof console !== "undefined" && typeof console.debug === "function") {
           console.debug("[data-usage] telemetry ignored", error);
@@ -81,7 +81,7 @@ function sendDataUsage(payload) {
       headers: { "Content-Type": "application/json" },
       body,
       keepalive: true,
-      credentials: "omit",
+      credentials: "include",
     }).catch((error) => {
       if (typeof console !== "undefined" && typeof console.debug === "function") {
         console.debug("[data-usage] telemetry ignored", error);

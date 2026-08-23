@@ -90,8 +90,8 @@ const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
 const APP_PUBLISHED_COMMIT = "f01cf4c";
-const SERVICE_WORKER_VERSION = "2026-08-23-f01cf4c-cache-purge-auth-removal";
-const FINANCE_MODULE_VERSION = "2026-08-23-f01cf4c-cache-purge-auth-removal";
+const SERVICE_WORKER_VERSION = "2026-08-23-api-data-provider";
+const FINANCE_MODULE_VERSION = "2026-08-23-api-data-provider";
 const BOOKSHELL_CACHE_PREFIX = "bookshell-";
 const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
   `bookshell-static-${SERVICE_WORKER_VERSION}`,

@@ -1,15 +1,15 @@
 import { API_BASE_URL, DATA_PROVIDER } from "./config.js";
 import * as apiProvider from "./api-provider.js";
-import * as firebaseProvider from "./firebase-provider.js";
 export { logDataUsage, DATA_USAGE_OPERATIONS } from "./data-usage.js";
 
-const providers = Object.freeze({
-  api: apiProvider,
-  firebase: firebaseProvider,
-});
+const firebaseProvider = DATA_PROVIDER === "firebase"
+  ? await import("./firebase-provider.js")
+  : null;
 
 // This is the single provider selection point for app data access.
-export const activeDataProvider = providers[DATA_PROVIDER] || firebaseProvider;
+export const activeDataProvider = DATA_PROVIDER === "firebase" && firebaseProvider
+  ? firebaseProvider
+  : apiProvider;
 export const activeDataProviderName = activeDataProvider.providerName;
 export { API_BASE_URL, DATA_PROVIDER };
 

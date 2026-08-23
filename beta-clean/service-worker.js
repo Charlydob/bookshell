@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-08-23-f01cf4c-cache-purge-auth-removal";
+const APP_VERSION = "2026-08-23-api-data-provider";
 const PUBLISHED_COMMIT = "f01cf4c";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
@@ -66,10 +66,6 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/modules/world/stays.js",
   "./scripts/shared/cache/processed-json-cache.js",
   "./scripts/shared/config/app-paths.js",
-  "./scripts/shared/firebase/app.js",
-  "./scripts/shared/firebase/config.js",
-  "./scripts/shared/firebase/database.js",
-  "./scripts/shared/firebase/index.js",
   "./scripts/shared/firebase/offline-rtdb.js",
   "./scripts/shared/services/sync-manager.js",
   

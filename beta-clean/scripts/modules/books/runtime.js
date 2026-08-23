@@ -1,5 +1,6 @@
 import {
   db,
+  createRecord,
   firebasePaths,
   getStorageService,
   ref,
@@ -1708,8 +1709,7 @@ $bookForm.addEventListener("submit", async (e) => {
         await addBookProgressDeltaToLog(id, progressDiff);
       }
     } else {
-      const newRef = push(ref(db, BOOKS_PATH));
-      await set(newRef, {
+      await createRecord(BOOKS_PATH, {
         ...bookData,
         createdAt: Date.now()
       });

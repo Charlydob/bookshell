@@ -1,6 +1,56 @@
 # Bookshell Backend API Contract
 
-Firebase remains the active production data source. These endpoints are the contract for the external Bookshell backend at `https://api-bookshell.charlydob.com`; do not trust frontend-sent `userId` as authorization once backend auth is migrated. The backend should derive the user from a session or verified token.
+## API Data Provider Runtime
+
+Bookshell production data runtime is `DATA_PROVIDER = "api"`.
+
+All private data calls are sent to `https://api-bookshell.charlydob.com` with `credentials: "include"`.
+
+The frontend keeps accepting legacy app paths such as `v2/users/{anyUid}/books/books`, but the API provider strips the `v2/users/{anyUid}` prefix before calling `/data`, because PostgreSQL stores the authenticated user's JSON tree without that Firebase root prefix.
+
+Current data endpoints used by the provider:
+
+- `GET /data` and `GET /data/{path}`
+- `PUT /data/{path}`
+- `PATCH /data` and `PATCH /data/{path}`
+- `DELETE /data/{path}`
+- `POST /data/push/{path}`
+
+Temporary listeners use safe polling against `GET /data/{path}` every 15 seconds while visible and every 30 seconds while hidden. Replace this with SSE/WebSocket when the backend supports it.
+
+### Transaction Contract
+
+The app has real transaction usages in:
+
+- notes link visit increments
+- books reading-log/book progress updates
+- public catalog usage counters
+
+For true atomicity the backend should expose:
+
+`POST /data/transaction/{path}`
+
+Request body:
+
+```json
+{
+  "currentValue": {},
+  "nextValue": {}
+}
+```
+
+Required backend behavior:
+
+- derive the owner from the session cookie, not from the path
+- run inside a PostgreSQL transaction
+- lock the user JSON row, or the addressed JSON branch if the storage model supports it
+- compare the current stored branch with `currentValue`
+- if equal, write `nextValue` and return the committed value
+- if different, return `409 Conflict` with the latest value, preferably as `{ "latestValue": ... }`, so the frontend can retry
+
+Until that endpoint exists, the frontend falls back to read-then-write and logs that the operation is non-atomic.
+
+These endpoints are the contract for the external Bookshell backend at `https://api-bookshell.charlydob.com`; do not trust frontend-sent `userId` as authorization. The backend should derive the user from a session or verified token.
 
 ## Auth Session Contract
 

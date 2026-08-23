@@ -78,11 +78,11 @@ async function requestJson(path, options = {}) {
 }
 
 export async function login(email, password) {
-  const payload = await requestJson("/auth/login", {
+  await requestJson("/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  return normalizeApiUser(payload) || getSession();
+  return getSession();
 }
 
 export async function logout() {

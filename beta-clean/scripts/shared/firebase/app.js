@@ -1,5 +1,4 @@
 import { getApp, getApps, initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getDatabase } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { firebaseConfig } from "./config.js";
 
@@ -8,7 +7,7 @@ function getOrCreateFirebaseApp() {
 }
 
 export const firebaseApp = getOrCreateFirebaseApp();
-export const auth = getAuth(firebaseApp);
+export const auth = { currentUser: null };
 export const db = getDatabase(firebaseApp);
 
 let storageInstance = null;

@@ -1,6 +1,5 @@
 import { AUTH_PROVIDER, SIGNUP_ENABLED } from "./config.js";
 import * as apiAuth from "./api-auth.js";
-import * as firebaseAuth from "./firebase-auth.js";
 
 const listeners = new Set();
 
@@ -8,11 +7,9 @@ const state = {
   provider: AUTH_PROVIDER,
   activeProvider: "",
   apiUser: null,
-  firebaseUser: firebaseAuth.normalizeFirebaseUser(firebaseAuth.getCurrentUser()),
   currentUser: null,
   initialized: false,
   initPromise: null,
-  firebaseUnsubscribe: null,
 };
 
 export const auth = {
@@ -33,22 +30,13 @@ function hasLegacyFirebaseUid(user = null) {
 
 function normalizeActiveApiUser(user = null) {
   if (!user || !hasLegacyFirebaseUid(user)) return null;
+  const legacyFirebaseUid = String(user.legacyFirebaseUid || user.userDataRootKey || "").trim();
   return {
     ...user,
     provider: "api",
-    uid: String(user.legacyFirebaseUid || user.userDataRootKey || "").trim(),
-    userDataRootKey: String(user.legacyFirebaseUid || user.userDataRootKey || "").trim(),
+    uid: legacyFirebaseUid,
+    userDataRootKey: legacyFirebaseUid,
   };
-}
-
-function chooseActiveUser() {
-  if (AUTH_PROVIDER === "api") {
-    return normalizeActiveApiUser(state.apiUser);
-  }
-  if (AUTH_PROVIDER === "firebase") {
-    return state.firebaseUser;
-  }
-  return normalizeActiveApiUser(state.apiUser) || state.firebaseUser || null;
 }
 
 function emitAuthDebug() {
@@ -57,7 +45,6 @@ function emitAuthDebug() {
     provider: state.activeProvider || "",
     configuredProvider: AUTH_PROVIDER,
     apiSession: !!state.apiUser,
-    firebaseUid: state.firebaseUser?.uid || "",
     legacyFirebaseUid: current?.legacyFirebaseUid || current?.userDataRootKey || "",
   });
 }
@@ -79,11 +66,10 @@ function setCurrentUser(user = null) {
 }
 
 function refreshActiveUser() {
-  setCurrentUser(chooseActiveUser());
+  setCurrentUser(normalizeActiveApiUser(state.apiUser));
 }
 
 async function refreshApiSession({ quiet = false } = {}) {
-  if (AUTH_PROVIDER === "firebase") return null;
   try {
     state.apiUser = await apiAuth.getSession();
     if (state.apiUser && !hasLegacyFirebaseUid(state.apiUser)) {
@@ -97,44 +83,12 @@ async function refreshApiSession({ quiet = false } = {}) {
   }
 }
 
-function bindFirebaseListener() {
-  if (state.firebaseUnsubscribe || AUTH_PROVIDER === "api") return;
-  state.firebaseUnsubscribe = firebaseAuth.onUserChange((user) => {
-    state.firebaseUser = firebaseAuth.normalizeFirebaseUser(user);
-    refreshActiveUser();
-  });
-}
-
-async function tryEnsureFirebaseDataSession(email, password, expectedUid = "") {
-  if (AUTH_PROVIDER === "api") return;
-  const safeExpectedUid = String(expectedUid || "").trim();
-  const currentFirebaseUid = String(firebaseAuth.getCurrentUser()?.uid || "").trim();
-  if (safeExpectedUid && currentFirebaseUid === safeExpectedUid) return;
-  try {
-    const credential = await firebaseAuth.signInWithEmail(email, password);
-    const firebaseUser = firebaseAuth.normalizeFirebaseUser(credential?.user || firebaseAuth.getCurrentUser());
-    if (safeExpectedUid && firebaseUser?.uid && firebaseUser.uid !== safeExpectedUid) {
-      console.warn("[auth] Firebase data session UID did not match API legacyFirebaseUid; signing Firebase out.");
-      await firebaseAuth.signOutCurrentUser().catch(() => {});
-      state.firebaseUser = null;
-      return;
-    }
-    state.firebaseUser = firebaseUser;
-  } catch (error) {
-    console.warn(
-      "[auth] Firebase data session could not be established; API identity remains active. If RTDB rules still require Firebase Auth and no matching Firebase session is already available, reads/writes need a temporary RTDB authorization strategy.",
-      error,
-    );
-  }
-}
-
 export async function getSession() {
   if (state.initPromise) return state.initPromise;
   if (state.initialized) return state.currentUser;
 
   state.initPromise = (async () => {
     await refreshApiSession({ quiet: true });
-    bindFirebaseListener();
     state.initialized = true;
     refreshActiveUser();
     return state.currentUser;
@@ -157,51 +111,20 @@ export function onAuthChange(callback) {
 export const onUserChange = onAuthChange;
 
 export async function login(email, password) {
-  if (AUTH_PROVIDER !== "firebase") {
-    try {
-      state.apiUser = await apiAuth.login(email, password);
-      if (hasLegacyFirebaseUid(state.apiUser)) {
-        await tryEnsureFirebaseDataSession(email, password, state.apiUser.legacyFirebaseUid);
-        refreshActiveUser();
-        return state.currentUser;
-      }
-      console.warn("[auth] API login succeeded but did not include legacyFirebaseUid; trying Firebase fallback.");
-    } catch (error) {
-      if (AUTH_PROVIDER === "api") throw error;
-      console.warn("[auth] API login failed; trying Firebase fallback.", error);
-    }
-  }
-
-  if (AUTH_PROVIDER === "api") {
+  state.apiUser = await apiAuth.login(email, password);
+  if (!hasLegacyFirebaseUid(state.apiUser)) {
+    state.apiUser = null;
+    refreshActiveUser();
     throw new Error("La API ha iniciado sesion, pero /auth/me no devuelve legacyFirebaseUid para cargar tus datos Firebase.");
   }
-
-  const credential = await firebaseAuth.signInWithEmail(email, password);
-  state.firebaseUser = firebaseAuth.normalizeFirebaseUser(credential?.user || firebaseAuth.getCurrentUser());
   refreshActiveUser();
   return state.currentUser;
 }
 
 export async function logout() {
-  const errors = [];
-  if (AUTH_PROVIDER !== "firebase" && state.apiUser) {
-    try {
-      await apiAuth.logout();
-    } catch (error) {
-      errors.push(error);
-    }
-  }
+  await apiAuth.logout();
   state.apiUser = null;
-  if (AUTH_PROVIDER !== "api" && firebaseAuth.getCurrentUser()) {
-    try {
-      await firebaseAuth.signOutCurrentUser();
-    } catch (error) {
-      errors.push(error);
-    }
-  }
-  state.firebaseUser = null;
   refreshActiveUser();
-  if (errors.length) throw errors[0];
 }
 
 export async function getCurrentUser() {
@@ -237,9 +160,6 @@ export const getUserDataRootKey = getUserDataKey;
 export async function ensureCurrentUserDataRootReady() {
   await getSession();
   if (!state.currentUser) return null;
-  if (state.currentUser.provider === "firebase") {
-    return firebaseAuth.ensureCurrentUserDataRootReady();
-  }
   if (!getCurrentUserDataRootKey()) {
     throw new Error("La sesion API no incluye legacyFirebaseUid; no se puede resolver la raiz Firebase.");
   }
@@ -260,10 +180,7 @@ export function signOutCurrentUser() {
 }
 
 export function signUpWithEmail() {
-  if (!SIGNUP_ENABLED) {
-    return Promise.reject(new Error("Registro deshabilitado temporalmente durante la migracion de autenticacion."));
-  }
-  return firebaseAuth.signUpWithEmail(...arguments);
+  return Promise.reject(new Error("Registro deshabilitado: la autenticacion se gestiona exclusivamente desde la API."));
 }
 
 export { AUTH_PROVIDER, SIGNUP_ENABLED } from "./config.js";

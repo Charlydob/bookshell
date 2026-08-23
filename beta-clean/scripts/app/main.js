@@ -11,7 +11,6 @@ import {
   logout,
   getSession,
   onAuthChange,
-  signUpWithEmail,
   getCurrentUserDataRootKey,
   getUserDataRootKey,
   AUTH_PROVIDER,
@@ -3673,13 +3672,7 @@ function ensureLoginUI() {
 
   box.querySelector("#btnSignup").onclick = async () => {
     err.textContent = "";
-    if (!SIGNUP_ENABLED) {
-      err.textContent = "Registro deshabilitado temporalmente durante la migracion. Usa tu cuenta existente.";
-      return;
-    }
-    const { email, password } = readLoginCredentials("signup");
-    try { await signUpWithEmail(email, password); }
-    catch (e) { err.textContent = e?.message || String(e); }
+    err.textContent = "Registro deshabilitado: usa tu cuenta existente.";
   };
 
   box.querySelector("#btnLogout").onclick = async () => {

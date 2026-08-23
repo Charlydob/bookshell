@@ -1,42 +1,34 @@
-import {
-  createUserWithEmailAndPassword,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut,
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { auth } from "./app.js";
 import { getAuthUid, getEmailKey, getUserDataRootKey } from "./rtdb-paths.js";
-import { ensureUserDataRootReady } from "./user-data.js";
 
-export function signUpWithEmail(email, password) {
-  return createUserWithEmailAndPassword(auth, email, password);
+function disabledFirebaseLogin() {
+  return Promise.reject(new Error("Firebase Auth login is disabled. Use shared/auth/api-auth.js through shared/auth/index.js."));
 }
 
-export function signInWithEmail(email, password) {
-  return signInWithEmailAndPassword(auth, email, password);
+export function signUpWithEmail() {
+  return disabledFirebaseLogin();
+}
+
+export function signInWithEmail() {
+  return disabledFirebaseLogin();
 }
 
 export function signOutCurrentUser() {
-  return signOut(auth);
+  return disabledFirebaseLogin();
 }
 
 export function onUserChange(callback) {
-  return onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      try {
-        await ensureUserDataRootReady(user);
-      } catch (_) {}
-    }
-    return callback(user);
-  });
+  if (typeof callback !== "function") return () => {};
+  queueMicrotask(() => callback(null));
+  return () => {};
 }
 
 export function getCurrentUser() {
-  return auth.currentUser;
+  return null;
 }
 
 export function getCurrentUserId() {
-  return auth.currentUser?.uid ?? null;
+  return null;
 }
 
 export function getCurrentUserAuthUid() {
@@ -56,5 +48,5 @@ export function getCurrentUserDataRootKey() {
 }
 
 export function ensureCurrentUserDataRootReady() {
-  return ensureUserDataRootReady(auth.currentUser);
+  return Promise.resolve(null);
 }

@@ -2,7 +2,6 @@ export const FIREBASE_SDK_VERSION = "10.12.0";
 
 export const FIREBASE_MODULE_URLS = Object.freeze({
   app: `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app.js`,
-  auth: `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-auth.js`,
   database: `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-database.js`,
   storage: `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-storage.js`,
 });

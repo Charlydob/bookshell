@@ -205,3 +205,255 @@ Recommended enums:
 - Returns alert rows where `alert.status = pending` and resolved `notifyAt <= until`.
 - For relative alerts, compute `notifyAt` from `targetDate`, `targetTime`, `timezone`, and `minutesBefore`.
 - n8n can poll this endpoint, send Telegram later, then call a future alert status endpoint or `PATCH /reminders/:id` to mark alert status.
+
+## n8n Reminder Webhook Contract
+
+These routes must be implemented in the real Bookshell backend that serves
+`https://api-bookshell.charlydob.com`. Do not create a parallel reminder backend
+inside the frontend.
+
+### Reminder Shape
+
+```json
+{
+  "id": "rem_01J9ABCDEF1234567890",
+  "title": "Pagar seguro",
+  "message": "Revisar recibo y pagar antes del vencimiento",
+  "remindAt": "2026-08-28T08:00:00+02:00",
+  "status": "active",
+  "source": "bookshell",
+  "scheduleVersion": 1,
+  "createdAt": "2026-08-23T20:55:00.000Z",
+  "updatedAt": "2026-08-23T20:55:00.000Z"
+}
+```
+
+Required fields:
+
+- `id`: server-generated stable reminder id.
+- `title`: short notification title.
+- `message`: notification body.
+- `remindAt`: ISO-8601 timestamp with explicit offset or `Z`.
+- `status`: one of `active`, `cancelled`, `sent`.
+- `source`: origin string, for example `bookshell`, `telegram`, `n8n`, `webhook`.
+- `scheduleVersion`: integer used to invalidate stale n8n Wait executions.
+- `createdAt`: ISO-8601 UTC timestamp.
+- `updatedAt`: ISO-8601 UTC timestamp.
+
+### Schedule Version Rules
+
+- On create, set `scheduleVersion = 1`.
+- If `remindAt` changes, increment `scheduleVersion` by 1.
+- Changes to `title` or `message` that do not alter scheduling do not need to increment `scheduleVersion`.
+- Every webhook sent to n8n must include the current `scheduleVersion`.
+- `GET /api/reminders/:id` must return the current `scheduleVersion`.
+- n8n may send the Telegram notification only when both checks pass:
+  - `current.status === "active"`
+  - `current.scheduleVersion === webhook.scheduleVersion`
+
+### Create Reminder
+
+`POST /api/reminders`
+
+Request:
+
+```json
+{
+  "title": "Pagar seguro",
+  "message": "Revisar recibo y pagar antes del vencimiento",
+  "remindAt": "2026-08-28T08:00:00+02:00",
+  "source": "bookshell"
+}
+```
+
+Response:
+
+```json
+{
+  "id": "rem_01J9ABCDEF1234567890",
+  "title": "Pagar seguro",
+  "message": "Revisar recibo y pagar antes del vencimiento",
+  "remindAt": "2026-08-28T08:00:00+02:00",
+  "status": "active",
+  "source": "bookshell",
+  "scheduleVersion": 1,
+  "createdAt": "2026-08-23T20:55:00.000Z",
+  "updatedAt": "2026-08-23T20:55:00.000Z"
+}
+```
+
+Webhook emitted after commit:
+
+```json
+{
+  "event": "reminder.created",
+  "reminder": {
+    "id": "rem_01J9ABCDEF1234567890",
+    "title": "Pagar seguro",
+    "message": "Revisar recibo y pagar antes del vencimiento",
+    "remindAt": "2026-08-28T08:00:00+02:00",
+    "status": "active",
+    "source": "bookshell",
+    "scheduleVersion": 1,
+    "createdAt": "2026-08-23T20:55:00.000Z",
+    "updatedAt": "2026-08-23T20:55:00.000Z"
+  }
+}
+```
+
+### Read Reminder
+
+`GET /api/reminders/:id`
+
+Response:
+
+```json
+{
+  "id": "rem_01J9ABCDEF1234567890",
+  "title": "Pagar seguro",
+  "message": "Revisar recibo y pagar antes del vencimiento",
+  "remindAt": "2026-08-28T08:00:00+02:00",
+  "status": "active",
+  "source": "bookshell",
+  "scheduleVersion": 1,
+  "createdAt": "2026-08-23T20:55:00.000Z",
+  "updatedAt": "2026-08-23T20:55:00.000Z"
+}
+```
+
+### Update Reminder
+
+`PATCH /api/reminders/:id`
+
+Request when `remindAt` changes:
+
+```json
+{
+  "remindAt": "2026-08-29T09:00:00+02:00"
+}
+```
+
+Response:
+
+```json
+{
+  "id": "rem_01J9ABCDEF1234567890",
+  "title": "Pagar seguro",
+  "message": "Revisar recibo y pagar antes del vencimiento",
+  "remindAt": "2026-08-29T09:00:00+02:00",
+  "status": "active",
+  "source": "bookshell",
+  "scheduleVersion": 2,
+  "createdAt": "2026-08-23T20:55:00.000Z",
+  "updatedAt": "2026-08-23T21:10:00.000Z"
+}
+```
+
+Webhook emitted after a scheduling change:
+
+```json
+{
+  "event": "reminder.updated",
+  "reminder": {
+    "id": "rem_01J9ABCDEF1234567890",
+    "title": "Pagar seguro",
+    "message": "Revisar recibo y pagar antes del vencimiento",
+    "remindAt": "2026-08-29T09:00:00+02:00",
+    "status": "active",
+    "source": "bookshell",
+    "scheduleVersion": 2,
+    "createdAt": "2026-08-23T20:55:00.000Z",
+    "updatedAt": "2026-08-23T21:10:00.000Z"
+  }
+}
+```
+
+Request when only copy changes:
+
+```json
+{
+  "title": "Pagar seguro del coche",
+  "message": "Revisar recibo y pagar hoy"
+}
+```
+
+Response keeps the same `scheduleVersion` unless `remindAt` changed.
+
+### Cancel Reminder
+
+`DELETE /api/reminders/:id`
+
+Prefer soft cancellation instead of physical deletion.
+
+Response:
+
+```json
+{
+  "id": "rem_01J9ABCDEF1234567890",
+  "status": "cancelled",
+  "scheduleVersion": 2,
+  "updatedAt": "2026-08-23T21:20:00.000Z"
+}
+```
+
+Webhook emitted after cancellation:
+
+```json
+{
+  "event": "reminder.cancelled",
+  "reminder": {
+    "id": "rem_01J9ABCDEF1234567890",
+    "status": "cancelled",
+    "scheduleVersion": 2,
+    "updatedAt": "2026-08-23T21:20:00.000Z"
+  }
+}
+```
+
+### Mark Reminder As Sent
+
+`POST /api/reminders/:id/sent`
+
+Request:
+
+```json
+{
+  "sentAt": "2026-08-29T07:00:10.000Z",
+  "channel": "telegram",
+  "scheduleVersion": 2
+}
+```
+
+Required backend behavior:
+
+- Authenticate n8n with a machine-to-machine credential, not a browser session cookie.
+- Load the reminder by `id`.
+- Only mark as `sent` if `status === "active"` and stored `scheduleVersion` equals request `scheduleVersion`.
+- Return `409 Conflict` if the version is stale.
+
+Successful response:
+
+```json
+{
+  "id": "rem_01J9ABCDEF1234567890",
+  "status": "sent",
+  "scheduleVersion": 2,
+  "sentAt": "2026-08-29T07:00:10.000Z",
+  "updatedAt": "2026-08-29T07:00:10.000Z"
+}
+```
+
+Stale version response:
+
+```json
+{
+  "error": "stale_schedule_version",
+  "message": "Reminder schedule changed after this n8n execution was scheduled.",
+  "current": {
+    "id": "rem_01J9ABCDEF1234567890",
+    "status": "active",
+    "scheduleVersion": 3,
+    "remindAt": "2026-08-30T09:00:00+02:00"
+  }
+}
+```

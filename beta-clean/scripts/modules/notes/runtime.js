@@ -7173,6 +7173,7 @@ function openReminderModal(reminder = null, options = {}) {
   if ($id("notes-reminder-category-new")) $id("notes-reminder-category-new").value = "";
   renderReminderCategoryDrafts();
   renderReminderColorPalette(reminder?.color);
+  renderReminderAlertDrafts();
   renderReminderChecklistDrafts();
   $id("notes-reminder-checklist-wrap")?.classList.toggle("hidden", (reminder?.type || "normal") !== "checklist");
   openModal("notes-reminder-modal-backdrop");
@@ -7237,7 +7238,11 @@ function appendReminderToast(message, reminderId, key) {
   enqueueReminderToast({ message, reminderId, key });
   const reminder = state.reminders.find((row) => row.id === reminderId);
   if (reminder && state.rootPath) {
-    updateReminder(state.rootPath, reminderId, { ...reminder, notifiedAt: Date.now() }).catch(() => {});
+    const dismissedAlerts = Array.from(new Set([
+      ...(Array.isArray(reminder.dismissedAlerts) ? reminder.dismissedAlerts : []),
+      String(key || "").trim(),
+    ].filter(Boolean)));
+    updateReminder(state.rootPath, reminderId, { ...reminder, dismissedAlerts, notifiedAt: Date.now() }).catch(() => {});
     emitReminderNotificationsUpdated();
   }
 }
@@ -7331,7 +7336,7 @@ function runReminderChecks() {
       const beforeMs = reminderAlertToMs(alert);
       const triggerAt = targetAt - beforeMs;
       const key = `${reminder.id}:${alert.amount}:${alert.unit}:${targetAt}`;
-      if (dismissedAlerts.has(key) || Number(reminder?.notifiedAt || 0) > 0) continue;
+      if (dismissedAlerts.has(key)) continue;
       if (now >= triggerAt && now <= triggerAt + 75 * 1000) {
         const label = alert.unit === "days" ? "días" : alert.unit === "hours" ? "horas" : "minutos";
         const prefix = reminder.type === "cumpleaños" ? "🎂" : (reminder.type === "checklist" ? "🧾" : "⏰");
@@ -7341,7 +7346,7 @@ function runReminderChecks() {
       }
     }
     const dueKey = `${reminder.id}:due:${targetAt}`;
-    if (!Number(reminder?.notifiedAt || 0) && now >= targetAt) {
+    if (!dismissedAlerts.has(dueKey) && now >= targetAt) {
       appendReminderToast(`⏰ Es la hora de: ${reminder.title || "sin título"}`, reminder.id, dueKey);
     }
   }
@@ -9100,7 +9105,7 @@ function bindUiEvents() {
       color,
       status: checklistAllDone ? "completado" : (current?.status === "completado" ? "completado" : "pendiente"),
       categories: reminderDraftCategories,
-      remindBefore: [],
+      remindBefore: reminderDraftAlerts,
       checklistItems,
       repeat: isBirthday ? "yearly" : repeat,
       createdAt: current?.createdAt || Date.now(),

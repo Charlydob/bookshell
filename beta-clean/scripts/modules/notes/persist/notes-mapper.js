@@ -184,7 +184,15 @@ function normalizeReminderType(value = "") {
 
 function normalizeReminderStatus(value = "") {
   const safe = String(value || "").trim().toLowerCase();
-  return ["pendiente", "completado", "vencido"].includes(safe) ? safe : "pendiente";
+  const aliases = {
+    pending: "pendiente",
+    completed: "completado",
+    expired: "vencido",
+    cancelled: "vencido",
+    cancelado: "vencido",
+  };
+  const normalized = aliases[safe] || safe;
+  return ["pendiente", "completado", "vencido"].includes(normalized) ? normalized : "pendiente";
 }
 
 function normalizeReminderDate(value = "") {
@@ -201,14 +209,47 @@ function normalizeReminderRepeat(value = "") {
   return String(value || "").trim() === "yearly" ? "yearly" : "none";
 }
 
+function normalizeReminderTimezone(value = "") {
+  const safe = String(value || "").trim();
+  if (safe) return safe;
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch (_) {
+    return "UTC";
+  }
+}
+
 function normalizeReminderColor(value = "") {
   const safe = String(value || "").trim();
   return /^#[0-9a-fA-F]{6}$/.test(safe) ? safe : DEFAULT_REMINDER_COLOR;
 }
 
-function normalizeReminderAlerts(value = []) {
-  if (!Array.isArray(value)) return [];
-  return value
+function minutesToLegacyAlert(minutes = 0) {
+  const safeMinutes = Math.max(0, Math.round(Number(minutes || 0)));
+  if (!safeMinutes) return null;
+  if (safeMinutes % (24 * 60) === 0) return { amount: safeMinutes / (24 * 60), unit: "days" };
+  if (safeMinutes % 60 === 0) return { amount: safeMinutes / 60, unit: "hours" };
+  return { amount: safeMinutes, unit: "minutes" };
+}
+
+function legacyAlertToMinutes(alert = {}) {
+  const amount = Math.max(0, Math.round(Number(alert?.amount || 0)));
+  if (!amount) return 0;
+  if (alert?.unit === "days") return amount * 24 * 60;
+  if (alert?.unit === "hours") return amount * 60;
+  if (alert?.unit === "minutes") return amount;
+  return 0;
+}
+
+function normalizeReminderAlerts(value = [], fallbackCanonicalAlerts = []) {
+  const source = Array.isArray(value) && value.length
+    ? value
+    : (Array.isArray(fallbackCanonicalAlerts) ? fallbackCanonicalAlerts : [])
+      .filter((row) => row?.mode === "relative" && Number.isFinite(Number(row?.minutesBefore)))
+      .map((row) => minutesToLegacyAlert(row.minutesBefore))
+      .filter(Boolean);
+  if (!Array.isArray(source)) return [];
+  return source
     .map((row) => {
       const amount = Math.max(0, Math.round(Number(row?.amount || 0)));
       const unitRaw = String(row?.unit || "").trim().toLowerCase();
@@ -217,6 +258,84 @@ function normalizeReminderAlerts(value = []) {
       return { amount, unit };
     })
     .filter(Boolean);
+}
+
+function normalizeReminderSource(value = {}) {
+  const allowed = ["bookshell", "gmail", "telegram", "shortcut", "webhook", "manual", "amazon", "n8n"];
+  const type = String(value?.type || "bookshell").trim().toLowerCase();
+  return {
+    type: allowed.includes(type) ? type : "bookshell",
+    externalId: String(value?.externalId || "").trim(),
+    metadata: value?.metadata && typeof value.metadata === "object" ? { ...value.metadata } : {},
+  };
+}
+
+function normalizeCanonicalReminderAlerts(value = [], { reminder = {}, legacyAlerts = [] } = {}) {
+  const source = Array.isArray(value) && value.length
+    ? value
+    : (Array.isArray(legacyAlerts) ? legacyAlerts : []).map((alert, index) => ({
+      id: `relative_${legacyAlertToMinutes(alert)}_${index + 1}`,
+      mode: "relative",
+      minutesBefore: legacyAlertToMinutes(alert),
+      notifyAt: "",
+      channel: "telegram",
+      status: "pending",
+    }));
+  const allowedModes = ["absolute", "relative"];
+  const allowedStatuses = ["pending", "sent", "failed", "cancelled"];
+  return (Array.isArray(source) ? source : [])
+    .map((alert, index) => {
+      const minutesBefore = Number.isFinite(Number(alert?.minutesBefore))
+        ? Math.max(0, Math.round(Number(alert.minutesBefore)))
+        : legacyAlertToMinutes(alert);
+      const modeRaw = String(alert?.mode || (minutesBefore ? "relative" : "absolute")).trim().toLowerCase();
+      const mode = allowedModes.includes(modeRaw) ? modeRaw : "relative";
+      const notifyAt = String(alert?.notifyAt || "").trim();
+      if (mode === "relative" && !minutesBefore) return null;
+      if (mode === "absolute" && !notifyAt) return null;
+      const statusRaw = String(alert?.status || "pending").trim().toLowerCase();
+      return {
+        id: String(alert?.id || `${mode}_${minutesBefore || notifyAt || index + 1}`).trim(),
+        mode,
+        minutesBefore: mode === "relative" ? minutesBefore : null,
+        notifyAt: mode === "absolute" ? notifyAt : "",
+        channel: "telegram",
+        status: allowedStatuses.includes(statusRaw) ? statusRaw : "pending",
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeReminderRecurrence(reminder = {}) {
+  const targetDate = normalizeReminderDate(reminder?.targetDate || reminder?.date);
+  const startDate = normalizeReminderDate(reminder?.startDate) || targetDate;
+  const endDate = normalizeReminderDate(reminder?.endDate) || startDate;
+  const rawDailyTargetCount = Number(reminder?.dailyTargetCount || reminder?.recurrence?.dailyTargetCount || 1);
+  const dailyTargetCount = Number.isFinite(rawDailyTargetCount)
+    ? Math.max(1, Math.min(12, Math.round(rawDailyTargetCount)))
+    : 1;
+  const recurrenceTypeRaw = String(reminder?.recurrence?.type || "").trim().toLowerCase();
+  const recurrenceType = ["none", "yearly", "daily", "custom"].includes(recurrenceTypeRaw)
+    ? recurrenceTypeRaw
+    : (normalizeReminderRepeat(reminder?.repeat) === "yearly"
+      ? "yearly"
+      : ((startDate && endDate && (startDate !== targetDate || endDate !== targetDate || dailyTargetCount > 1)) ? "daily" : "none"));
+  return {
+    type: recurrenceType,
+    startDate: normalizeReminderDate(reminder?.recurrence?.startDate) || startDate,
+    endDate: normalizeReminderDate(reminder?.recurrence?.endDate) || endDate,
+    dailyTargetCount,
+  };
+}
+
+function normalizeCompletionsByDate(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.entries(value).reduce((acc, [dateKey, count]) => {
+    const safeDate = normalizeReminderDate(dateKey);
+    if (!safeDate) return acc;
+    acc[safeDate] = Math.max(0, Math.round(Number(count || 0)));
+    return acc;
+  }, {});
 }
 
 function normalizeReminderDismissedAlerts(value = []) {
@@ -383,21 +502,38 @@ export function mapReminderFromDb(id, value = {}) {
   const type = normalizeReminderType(value?.type);
   const isBirthday = type === "cumpleaños" || Boolean(value?.isBirthday);
   const repeat = normalizeReminderRepeat(value?.repeat || (isBirthday ? "yearly" : "none"));
+  const targetDate = normalizeReminderDate(value?.targetDate);
+  const recurrence = normalizeReminderRecurrence({ ...value, targetDate, repeat });
+  const canonicalAlerts = normalizeCanonicalReminderAlerts(value?.alerts, {
+    reminder: value,
+    legacyAlerts: normalizeReminderAlerts(value?.remindBefore),
+  });
+  const categories = normalizeReminderCategories(value?.categories || value?.category);
 
   return {
     id: String(id || ""),
+    userId: String(value?.userId || "").trim(),
     title: String(value?.title || "").trim(),
     description: String(value?.description || "").trim(),
     emoji: String(value?.emoji || "⏰").trim() || "⏰",
     type: isBirthday ? "cumpleaños" : type,
     status: normalizeReminderStatus(value?.status),
-    targetDate: normalizeReminderDate(value?.targetDate),
+    targetDate,
     targetTime: normalizeReminderTime(value?.targetTime),
+    timezone: normalizeReminderTimezone(value?.timezone),
     color: normalizeReminderColor(value?.color),
-    remindBefore: normalizeReminderAlerts(value?.remindBefore),
+    remindBefore: normalizeReminderAlerts(value?.remindBefore, canonicalAlerts),
+    alerts: canonicalAlerts,
+    source: normalizeReminderSource(value?.source),
+    recurrence,
+    startDate: recurrence.startDate || targetDate,
+    endDate: recurrence.endDate || recurrence.startDate || targetDate,
+    dailyTargetCount: recurrence.dailyTargetCount,
+    completionsByDate: normalizeCompletionsByDate(value?.completionsByDate),
     repeat,
     isBirthday,
-    categories: normalizeReminderCategories(value?.categories),
+    category: String(value?.category || categories[0] || "").trim(),
+    categories,
     checklistItems: normalizeReminderChecklistItems(value?.checklistItems),
     createdAt: Number(value?.createdAt || Date.now()),
     updatedAt: Number(value?.updatedAt || value?.createdAt || Date.now()),
@@ -412,19 +548,37 @@ export function mapReminderToDb(reminder = {}) {
   const type = normalizeReminderType(reminder?.type);
   const isBirthday = type === "cumpleaños" || Boolean(reminder?.isBirthday);
   const repeat = normalizeReminderRepeat(reminder?.repeat || (isBirthday ? "yearly" : "none"));
+  const targetDate = normalizeReminderDate(reminder?.targetDate);
+  const recurrence = normalizeReminderRecurrence({ ...reminder, targetDate, repeat });
+  const legacyAlerts = normalizeReminderAlerts(reminder?.remindBefore, reminder?.alerts);
+  const canonicalAlerts = normalizeCanonicalReminderAlerts(reminder?.alerts, {
+    reminder,
+    legacyAlerts,
+  });
+  const categories = normalizeReminderCategories(reminder?.categories || reminder?.category);
   return {
+    userId: String(reminder?.userId || "").trim(),
     title: String(reminder?.title || "").trim(),
     description: String(reminder?.description || "").trim(),
     emoji: String(reminder?.emoji || "⏰").trim() || "⏰",
     type: isBirthday ? "cumpleaños" : type,
     status: normalizeReminderStatus(reminder?.status),
-    targetDate: normalizeReminderDate(reminder?.targetDate),
+    targetDate,
     targetTime: normalizeReminderTime(reminder?.targetTime),
+    timezone: normalizeReminderTimezone(reminder?.timezone),
     color: normalizeReminderColor(reminder?.color),
-    remindBefore: normalizeReminderAlerts(reminder?.remindBefore),
+    remindBefore: legacyAlerts,
+    alerts: canonicalAlerts,
+    source: normalizeReminderSource(reminder?.source),
+    recurrence,
+    startDate: recurrence.startDate || targetDate,
+    endDate: recurrence.endDate || recurrence.startDate || targetDate,
+    dailyTargetCount: recurrence.dailyTargetCount,
+    completionsByDate: normalizeCompletionsByDate(reminder?.completionsByDate),
     repeat,
     isBirthday,
-    categories: normalizeReminderCategories(reminder?.categories),
+    category: String(reminder?.category || categories[0] || "").trim(),
+    categories,
     checklistItems: normalizeReminderChecklistItems(reminder?.checklistItems),
     createdAt: Number(reminder?.createdAt || Date.now()),
     updatedAt: Number(reminder?.updatedAt || reminder?.createdAt || Date.now()),

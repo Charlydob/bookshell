@@ -1,0 +1,127 @@
+# Bookshell Backend API Contract
+
+Firebase remains the active production data source. These endpoints are the contract for the external Bookshell backend at `https://api-bookshell.charlydob.com`; do not trust frontend-sent `userId` as authorization once backend auth is migrated. The backend should derive the user from a session or verified token.
+
+## Data Usage Telemetry
+
+`POST /data-usage`
+
+Body:
+
+```json
+{
+  "userId": "firebase-uid-or-empty",
+  "path": "v2/users/{uid}/notes/reminders",
+  "operation": "READ",
+  "createdAt": "2026-08-23T10:00:00.000Z"
+}
+```
+
+Validation:
+
+- `operation` must be one of `READ`, `LISTEN`, `CREATE`, `WRITE`, `UPDATE`, `DELETE`, `TRANSACTION`.
+- `path` is required, trimmed, and should be capped to a reasonable length such as 640 chars.
+- `userId` is optional for telemetry, capped to a reasonable length such as 180 chars.
+- Insert with parameterized SQL only:
+
+```sql
+INSERT INTO data_usage_log (user_id, path, operation, created_at)
+VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()));
+```
+
+## Canonical Reminder
+
+```json
+{
+  "id": "",
+  "userId": "",
+  "title": "Amazon package",
+  "description": "",
+  "emoji": "box",
+  "type": "event",
+  "category": "Compras",
+  "targetDate": "2026-08-28",
+  "targetTime": "10:30",
+  "timezone": "Europe/Madrid",
+  "source": {
+    "type": "gmail",
+    "externalId": "gmail-message-id",
+    "metadata": {}
+  },
+  "alerts": [
+    {
+      "id": "morning",
+      "mode": "absolute",
+      "minutesBefore": null,
+      "notifyAt": "2026-08-28T08:00:00+02:00",
+      "channel": "telegram",
+      "status": "pending"
+    },
+    {
+      "id": "two-hours",
+      "mode": "relative",
+      "minutesBefore": 120,
+      "notifyAt": "",
+      "channel": "telegram",
+      "status": "pending"
+    }
+  ],
+  "recurrence": {
+    "type": "none",
+    "startDate": "2026-08-28",
+    "endDate": "",
+    "dailyTargetCount": 1
+  },
+  "status": "pending",
+  "completedAt": "",
+  "createdAt": "2026-08-23T10:00:00.000Z",
+  "updatedAt": "2026-08-23T10:00:00.000Z"
+}
+```
+
+Recommended enums:
+
+- `source.type`: `bookshell`, `gmail`, `telegram`, `shortcut`, `webhook`, `manual`, `amazon`, `n8n`
+- `type`: `normal`, `birthday`, `task`, `event`, `paperwork`, `checklist`, `custom`
+- `recurrence.type`: `none`, `yearly`, `daily`, `custom`
+- `status`: `pending`, `completed`, `expired`, `cancelled`
+- `alerts.mode`: `absolute`, `relative`
+- `alerts.channel`: `telegram` initially
+- `alerts.status`: `pending`, `sent`, `failed`, `cancelled`
+
+## Reminder REST Endpoints
+
+`POST /reminders`
+
+- Creates a reminder.
+- Optional idempotency: if `source.externalId` is present, enforce uniqueness on `(user_id, source.type, source.external_id)` and return the existing reminder on retry.
+- Accept ISO dates and explicit `timezone`.
+
+`GET /reminders`
+
+- Lists reminders for the authenticated user.
+- Suggested filters: `status`, `type`, `category`, `sourceType`, `from`, `until`.
+
+`GET /reminders/:id`
+
+- Returns one reminder owned by the authenticated user.
+
+`PATCH /reminders/:id`
+
+- Applies a partial update.
+- Must not allow changing ownership by trusting `userId`.
+
+`DELETE /reminders/:id`
+
+- Prefer soft-delete/status `cancelled` if auditability matters.
+
+`POST /reminders/:id/complete`
+
+- Marks completed or records one daily completion.
+- Suggested body: `{ "completedAt": "ISO", "date": "YYYY-MM-DD", "count": 1 }`.
+
+`GET /reminders/due?until=2026-08-28T08:00:00Z`
+
+- Returns alert rows where `alert.status = pending` and resolved `notifyAt <= until`.
+- For relative alerts, compute `notifyAt` from `targetDate`, `targetTime`, `timezone`, and `minutesBefore`.
+- n8n can poll this endpoint, send Telegram later, then call a future alert status endpoint or `PATCH /reminders/:id` to mark alert status.

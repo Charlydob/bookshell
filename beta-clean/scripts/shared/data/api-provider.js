@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "./config.js";
+export { logDataUsage, DATA_USAGE_OPERATIONS } from "./data-usage.js";
 
 export const providerName = "api";
 export const auth = null;

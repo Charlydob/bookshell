@@ -270,6 +270,19 @@
             <div class="notes-reminder-color-palette" id="notes-reminder-color-palette" role="radiogroup" aria-label="Color del recordatorio"></div>
           </div>
         </div>
+        <div class="notes-reminder-alert-builder notes-reminder-row-alerts">
+          <div class="field-label">Avisos</div>
+          <div class="notes-reminder-alert-inputs">
+            <input id="notes-reminder-alert-amount" type="number" min="1" max="365" step="1" inputmode="numeric" placeholder="Cantidad" />
+            <select id="notes-reminder-alert-unit" class="field-select">
+              <option value="minutes">Minutos antes</option>
+              <option value="hours">Horas antes</option>
+              <option value="days">Dias antes</option>
+            </select>
+            <button class="notes-icon-action" id="notes-reminder-alert-add" type="button">+</button>
+          </div>
+          <div class="notes-reminder-alert-list" id="notes-reminder-alert-list"></div>
+        </div>
         <div class="notes-reminder-alert-builder notes-reminder-treatment-wrap">
           <div class="field-label">Repetición diaria / tratamiento</div>
           <div class="notes-reminder-treatment-grid">

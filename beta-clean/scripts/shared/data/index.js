@@ -1,6 +1,7 @@
 import { API_BASE_URL, DATA_PROVIDER } from "./config.js";
 import * as apiProvider from "./api-provider.js";
 import * as firebaseProvider from "./firebase-provider.js";
+export { logDataUsage, DATA_USAGE_OPERATIONS } from "./data-usage.js";
 
 const providers = Object.freeze({
   api: apiProvider,

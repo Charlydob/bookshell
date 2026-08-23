@@ -13,6 +13,7 @@ import {
   ref,
   update,
 } from "../shared/data/index.js";
+import { AUTH_PROVIDER, SIGNUP_ENABLED } from "../shared/auth/index.js";
 import {
   initSyncManager,
   notifySyncUserChanged,
@@ -3627,9 +3628,10 @@ function ensureLoginUI() {
         background:rgba(255,255,255,.06);color:#fff;">
 
       <div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
-        <button id="btnSignup"
+        <button id="btnSignup" ${SIGNUP_ENABLED ? "" : "disabled"}
+          title="${SIGNUP_ENABLED ? "Crear cuenta" : "Registro deshabilitado durante la migracion"}"
           style="padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.18);
-          background:rgba(255,255,255,.08);color:#fff;">Crear cuenta</button>
+          background:rgba(255,255,255,.08);color:#fff;${SIGNUP_ENABLED ? "" : "opacity:.48;cursor:not-allowed;"}">Crear cuenta</button>
 
         <button id="btnLogin"
           style="padding:10px 12px;border-radius:10px;border:1px solid rgba(160,220,255,.35);
@@ -3652,6 +3654,10 @@ function ensureLoginUI() {
 
   box.querySelector("#btnSignup").onclick = async () => {
     err.textContent = "";
+    if (!SIGNUP_ENABLED) {
+      err.textContent = "Registro deshabilitado temporalmente durante la migracion. Usa tu cuenta existente.";
+      return;
+    }
     const email = box.querySelector("#loginEmail").value.trim();
     const pass = box.querySelector("#loginPass").value;
     try { await signUpWithEmail(email, pass); }
@@ -3806,8 +3812,8 @@ function bindAuthGate() {
   startBootReleaseTimeout();
 
   onUserChange(async (user) => {
-    logBootStep("auth-state-changed", { authenticated: !!user });
-    window.bootDebug?.step?.("Usuario resuelto", { authenticated: !!user });
+    logBootStep("auth-state-changed", { authenticated: !!user, provider: user?.provider || "" });
+    window.bootDebug?.step?.("Usuario resuelto", { authenticated: !!user, provider: user?.provider || "" });
     try {
     if (!user) {
       void notifySyncUserChanged();
@@ -3835,13 +3841,21 @@ function bindAuthGate() {
     void notifySyncUserChanged();
     document.getElementById("loginBox")?.remove();
     const authUid = getUserDataRootKey(user);
-    window.bootDebug?.ok?.("userKey calculado", { authUid });
-
-    void ensureUserSchema(authUid).catch((error) => {
-      console.warn("[schema] seed failed", error);
-      window.bootDebug?.error?.("Error schema/meta", error, { authUid });
+    window.bootDebug?.ok?.("userKey calculado", {
+      authUid,
+      provider: user?.provider || "",
+      identityId: user?.id || "",
     });
-    window.bootDebug?.step?.("schema/meta");
+
+    if (user?.provider === "api") {
+      window.bootDebug?.step?.("schema/meta omitido en auth API");
+    } else {
+      void ensureUserSchema(authUid).catch((error) => {
+        console.warn("[schema] seed failed", error);
+        window.bootDebug?.error?.("Error schema/meta", error, { authUid });
+      });
+      window.bootDebug?.step?.("schema/meta");
+    }
 
     void primeNavLayoutForUser(authUid)
       .catch((error) => {
@@ -3905,7 +3919,7 @@ function bindAuthGate() {
       authenticatedAt: Date.now(),
       initialViewId: viewId,
     });
-    console.log("[auth] uid", user.uid);
+    console.log("[auth] uid", user.uid, "provider", user.provider || AUTH_PROVIDER);
     console.log("[perf] app-initial-load-ms", Math.round(performance.now() - APP_BOOT_TS));
     } catch (error) {
       logBootError(error, { stage: "auth-change" });

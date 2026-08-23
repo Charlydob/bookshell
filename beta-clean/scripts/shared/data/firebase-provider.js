@@ -15,27 +15,29 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 import { logDataUsage } from "./data-usage.js";
 import {
-  auth,
   db,
-  ensureCurrentUserDataRootReady,
   firebasePaths,
   getAuthUid,
+  getEmailKey,
+  getStorageService,
+  PUBLIC_PATHS,
+} from "../firebase/index.js";
+import {
+  auth,
+  ensureCurrentUserDataRootReady,
   getCurrentUser,
   getCurrentUserAuthUid,
   getCurrentUserDataKey,
   getCurrentUserDataRootKey,
   getCurrentUserEmailKey,
   getCurrentUserId,
-  getEmailKey,
-  getStorageService,
   getUserDataKey,
   getUserDataRootKey,
   onUserChange,
-  PUBLIC_PATHS,
   signInWithEmail,
   signOutCurrentUser,
   signUpWithEmail,
-} from "../firebase/index.js";
+} from "../auth/index.js";
 
 export const providerName = "firebase";
 
@@ -49,7 +51,7 @@ function resolveTarget(pathOrRef = "") {
 }
 
 function getTelemetryUserId() {
-  return getAuthUid(auth.currentUser) || getCurrentUserAuthUid() || getUserDataKey(auth.currentUser) || getCurrentUserId() || "";
+  return getCurrentUserId() || getCurrentUserAuthUid() || getAuthUid(auth.currentUser) || getUserDataKey(auth.currentUser) || "";
 }
 
 function getPathFromUrl(value = "") {
@@ -121,10 +123,13 @@ export function getCurrentUserContext(user = auth.currentUser) {
   const targetUser = user || auth.currentUser;
   return {
     user: targetUser,
-    authUid: getAuthUid(targetUser) || getCurrentUserAuthUid(),
+    provider: targetUser?.provider || "",
+    authUid: getCurrentUserAuthUid() || getAuthUid(targetUser),
+    id: getCurrentUserId() || targetUser?.id || getAuthUid(targetUser),
     uid: getUserDataKey(targetUser),
     userDataRootKey: getUserDataRootKey(targetUser),
     emailKey: getEmailKey(targetUser) || getCurrentUserEmailKey(),
+    legacyFirebaseUid: targetUser?.legacyFirebaseUid || getUserDataRootKey(targetUser),
   };
 }
 

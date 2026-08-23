@@ -2,6 +2,36 @@
 
 Firebase remains the active production data source. These endpoints are the contract for the external Bookshell backend at `https://api-bookshell.charlydob.com`; do not trust frontend-sent `userId` as authorization once backend auth is migrated. The backend should derive the user from a session or verified token.
 
+## Auth Session Contract
+
+Bookshell can authenticate with the backend while data still lives in Firebase Realtime Database. During this dual-auth phase, `GET /auth/me` and preferably `POST /auth/login` must return both the canonical PostgreSQL identity and the linked Firebase data root.
+
+Required normalized shape:
+
+```json
+{
+  "id": "postgres-user-uuid",
+  "email": "charlydob99@gmail.com",
+  "displayName": "Charly",
+  "legacyFirebaseUid": "firebase-auth-uid-that-owns-v2-users-data"
+}
+```
+
+Accepted compatibility shapes:
+
+- `legacy_firebase_uid`
+- `firebaseUid` / `firebase_uid`
+- `legacyUserId` / `legacy_user_id`
+- `legacyIdentities: [{ "provider": "firebase", "legacy_user_id": "..." }]`
+
+Frontend rule: never use the PostgreSQL UUID as a Firebase path key. If an API session is valid but has no Firebase legacy UID, Bookshell ignores that API identity for Firebase data and falls back to Firebase Auth in `AUTH_PROVIDER = "dual"`.
+
+Cookie requirements:
+
+- Session cookie is `HttpOnly`, `Secure`, `SameSite=Lax`.
+- Frontend calls auth endpoints with `credentials: "include"`.
+- No token is stored in `localStorage` or `sessionStorage`.
+
 ## Data Usage Telemetry
 
 `POST /data-usage`

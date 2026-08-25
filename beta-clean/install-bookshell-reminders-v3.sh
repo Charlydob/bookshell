@@ -66,11 +66,15 @@ PY
 chmod 600 "$API_DIR/Bookshell-Reminders-v3-PostgreSQL.json"
 
 echo "[4/7] Validate backend JavaScript..."
+# Node 22 infers the parser from the extension. Validate a temporary .cjs copy
+# because the downloaded staging filename ends in .new.
+cp "$API_DIR/server.js.new" "$API_DIR/server-check.cjs"
 docker run --rm \
   -v "$API_DIR:/app" \
   -w /app \
   node:22-alpine \
-  node --check server.js.new
+  node --check server-check.cjs
+rm -f "$API_DIR/server-check.cjs"
 
 mv "$API_DIR/server.js.new" "$API_DIR/server.js"
 

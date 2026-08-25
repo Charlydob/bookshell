@@ -3,7 +3,7 @@ set -euo pipefail
 
 API_DIR="/opt/bookshell-api"
 N8N_CONTAINER="charly-stack-n8n-1"
-RAW="https://raw.githubusercontent.com/Charlydob/bookshell/main/beta-clean"
+RAW="https://raw.githubusercontent.com/Charlydob/bookshell/5098dcff356649e6072150513bc4bf0777b6fb05/beta-clean"
 SRC="$API_DIR/Bookshell-Reminders-v3-PostgreSQL.json"
 DST="$API_DIR/Bookshell-Reminders-v4-PostgreSQL.json"
 PATCH="/tmp/upgrade-bookshell-reminders-v4.py"

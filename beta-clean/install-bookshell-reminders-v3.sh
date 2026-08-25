@@ -109,6 +109,11 @@ docker cp \
   "$API_DIR/Bookshell-Reminders-v3-PostgreSQL.json" \
   "$N8N_CONTAINER:/tmp/bookshell-reminders-v3.json"
 
+# docker cp creates the file as root. n8n CLI is intentionally executed as the
+# node user so give that user ownership before importing.
+docker exec "$N8N_CONTAINER" \
+  sh -c 'chown node:node /tmp/bookshell-reminders-v3.json && chmod 600 /tmp/bookshell-reminders-v3.json'
+
 docker exec -u node "$N8N_CONTAINER" \
   n8n import:workflow \
   --input=/tmp/bookshell-reminders-v3.json

@@ -40,7 +40,7 @@ import {
   updateFolder,
   updateNote,
   updateReminder,
-} from "./persist/notes-datasource.js?v=2026-05-15-v1";
+} from "./persist/notes-datasource.js?v=2026-08-25-v1";
 import {
   deleteNoteAttachmentImageAsset,
   deleteNoteImageAsset,
@@ -146,6 +146,7 @@ const expandedSnippetNotes = new Set();
 const REMINDER_TYPES = ["normal", "cumpleaños", "tarea", "evento", "trámite", "checklist", "personalizado"];
 const REMINDER_STATUSES = ["pendiente", "completado", "vencido"];
 const REMINDER_RANGES = ["all", "today", "7d", "30d", "overdue"];
+const REMINDER_RECURRENCE_TYPES = ["none", "daily", "weekly", "monthly", "yearly", "custom"];
 const REMINDER_GROUP_BY = ["none", "category", "type", "date", "status"];
 const REMINDER_ACTIVE_FILTER_MODES = ["allPending", "day"];
 const SNIPPET_PREVIEW_PLACEHOLDER = '<div class="demo-target">Demo</div>';
@@ -234,6 +235,11 @@ function normalizeReminderRange(value = "") {
 function normalizeReminderStatus(value = "") {
   const safe = String(value || "").trim();
   return REMINDER_STATUSES.includes(safe) ? safe : "pendiente";
+}
+
+function normalizeReminderRecurrenceType(value = "") {
+  const safe = String(value || "").trim().toLowerCase();
+  return REMINDER_RECURRENCE_TYPES.includes(safe) ? safe : "none";
 }
 
 function normalizeReminderMultiSelection(items = [], allowed = []) {
@@ -371,6 +377,21 @@ function getDateFromDateKey(dateKey = "") {
   const parsed = parseDateKey(dateKey);
   if (!parsed) return null;
   return new Date(parsed.year, parsed.monthIndex, parsed.day);
+}
+
+function addDaysToDateKey(dateKey = "", days = 0) {
+  const date = getDateFromDateKey(dateKey);
+  if (!date) return "";
+  date.setDate(date.getDate() + Number(days || 0));
+  return getDateKeyFromDate(date);
+}
+
+function addMonthsToDateKey(dateKey = "", months = 0) {
+  const parsed = parseDateKey(dateKey);
+  if (!parsed) return "";
+  const next = new Date(parsed.year, parsed.monthIndex + Number(months || 0), 1);
+  const day = clampDayForMonth(next.getFullYear(), next.getMonth(), parsed.day);
+  return getDateKeyFromParts(next.getFullYear(), next.getMonth(), day);
 }
 
 function isTodayDateKey(dateKey = "") {
@@ -2613,7 +2634,19 @@ async function syncPersonBirthdayReminder(noteId = "", note = {}, previous = nul
     if (existing?.id) await deleteReminder(state.rootPath, existing.id);
     return;
   }
-  const payload = { title: `Cumpleaños de ${title}`, date: birthday, type: "cumpleaños", isBirthday: true, repeat: "yearly", status: "pendiente", noteId, updatedAt: Date.now(), createdAt: existing?.createdAt || Date.now() };
+  const payload = {
+    title: `Cumpleaños de ${title}`,
+    date: birthday,
+    targetDate: birthday,
+    type: "cumpleaños",
+    isBirthday: true,
+    repeat: "yearly",
+    recurrence: { type: "yearly", startDate: birthday, endDate: birthday, dailyTargetCount: 1, rule: {} },
+    status: "pendiente",
+    noteId,
+    updatedAt: Date.now(),
+    createdAt: existing?.createdAt || Date.now(),
+  };
   if (existing?.id) await updateReminder(state.rootPath, existing.id, payload);
   else await createReminder(state.rootPath, payload);
 }
@@ -5149,6 +5182,107 @@ function getReminderOccurrenceDateKey(reminder, yearOverride = null) {
   return getDateKeyFromParts(parts.year, parts.monthIndex, parts.day);
 }
 
+function getReminderRecurrenceType(reminder = {}) {
+  const recurrenceType = normalizeReminderRecurrenceType(reminder?.recurrence?.type);
+  if (recurrenceType !== "none") return recurrenceType;
+  const repeat = normalizeReminderRecurrenceType(reminder?.repeat);
+  if (repeat !== "none") return repeat;
+  const startDate = String(reminder?.startDate || reminder?.targetDate || "").trim();
+  const endDate = String(reminder?.endDate || reminder?.targetDate || startDate).trim();
+  const dailyTargetCount = Math.max(1, Number(reminder?.dailyTargetCount || 1));
+  if (startDate && endDate && (startDate !== endDate || dailyTargetCount > 1)) return "daily";
+  return "none";
+}
+
+function buildReminderOccurrenceDateKeys(reminder = {}, visibleDateKeys = []) {
+  const visibleSet = new Set((Array.isArray(visibleDateKeys) ? visibleDateKeys : []).filter(Boolean));
+  if (!visibleSet.size) return [];
+  const sortedVisible = Array.from(visibleSet).sort();
+  const minVisible = sortedVisible[0];
+  const maxVisible = sortedVisible[sortedVisible.length - 1];
+  const normalized = normalizeReminderForTreatment(reminder);
+  const recurrenceType = getReminderRecurrenceType(normalized);
+  const startDate = normalized.startDate || normalized.targetDate;
+  const endDate = normalized.endDate || startDate;
+  if (!startDate) return [];
+
+  if (recurrenceType === "yearly") {
+    return Array.from(new Set(sortedVisible.map((dateKey) => parseDateKey(dateKey)?.year).filter(Boolean)))
+      .map((year) => getReminderOccurrenceDateKey(normalized, year))
+      .filter((dateKey) => dateKey && visibleSet.has(dateKey));
+  }
+
+  if (recurrenceType === "monthly") {
+    const output = [];
+    let cursor = startDate;
+    for (let guard = 0; cursor && cursor <= maxVisible && guard < 240; guard += 1) {
+      if (cursor >= minVisible && visibleSet.has(cursor)) output.push(cursor);
+      cursor = addMonthsToDateKey(cursor, 1);
+    }
+    return output;
+  }
+
+  if (recurrenceType === "weekly") {
+    const output = [];
+    let cursor = startDate;
+    for (let guard = 0; cursor && cursor <= maxVisible && guard < 600; guard += 1) {
+      if (cursor >= minVisible && visibleSet.has(cursor)) output.push(cursor);
+      cursor = addDaysToDateKey(cursor, 7);
+    }
+    return output;
+  }
+
+  if (recurrenceType === "daily" || recurrenceType === "custom") {
+    const output = [];
+    const cappedEndDate = endDate && endDate >= startDate ? endDate : startDate;
+    for (let cursor = startDate, guard = 0; cursor && cursor <= cappedEndDate && cursor <= maxVisible && guard < 600; cursor = addDaysToDateKey(cursor, 1), guard += 1) {
+      if (cursor >= minVisible && visibleSet.has(cursor)) output.push(cursor);
+    }
+    return output;
+  }
+
+  return visibleSet.has(startDate) ? [startDate] : [];
+}
+
+function getNextReminderOccurrenceDateKey(reminder = {}, fromDateKey = getTodayDateKey()) {
+  const normalized = normalizeReminderForTreatment(reminder);
+  const recurrenceType = getReminderRecurrenceType(normalized);
+  const startDate = normalized.startDate || normalized.targetDate;
+  const endDate = normalized.endDate || startDate;
+  const safeFromDate = parseDateKey(fromDateKey) ? fromDateKey : getTodayDateKey();
+  if (!startDate) return "";
+
+  if (recurrenceType === "yearly") {
+    const fromYear = parseDateKey(safeFromDate)?.year || new Date().getFullYear();
+    const thisYear = getReminderOccurrenceDateKey(normalized, fromYear);
+    return thisYear >= safeFromDate ? thisYear : getReminderOccurrenceDateKey(normalized, fromYear + 1);
+  }
+
+  if (recurrenceType === "monthly") {
+    let cursor = startDate;
+    for (let guard = 0; cursor && cursor < safeFromDate && guard < 240; guard += 1) {
+      cursor = addMonthsToDateKey(cursor, 1);
+    }
+    return cursor || startDate;
+  }
+
+  if (recurrenceType === "weekly") {
+    let cursor = startDate;
+    for (let guard = 0; cursor && cursor < safeFromDate && guard < 600; guard += 1) {
+      cursor = addDaysToDateKey(cursor, 7);
+    }
+    return cursor || startDate;
+  }
+
+  if (recurrenceType === "daily" || recurrenceType === "custom") {
+    if (safeFromDate <= startDate) return startDate;
+    if (safeFromDate <= endDate) return safeFromDate;
+    return endDate;
+  }
+
+  return startDate;
+}
+
 function getReminderOccurrenceTimestamp(reminder, { yearOverride = null } = {}) {
   const safeDate = getReminderOccurrenceDateKey(reminder, yearOverride);
   if (!safeDate) return 0;
@@ -5158,17 +5292,13 @@ function getReminderOccurrenceTimestamp(reminder, { yearOverride = null } = {}) 
 }
 
 function getReminderTargetTimestamp(reminder, { annualizeBirthdays = false } = {}) {
-  if (!(annualizeBirthdays && reminder?.repeat === "yearly")) {
-    return getReminderOccurrenceTimestamp(reminder);
-  }
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  let targetAt = getReminderOccurrenceTimestamp(reminder, { yearOverride: currentYear });
-  if (!targetAt) return 0;
-  if (targetAt < now.getTime()) {
-    targetAt = getReminderOccurrenceTimestamp(reminder, { yearOverride: currentYear + 1 });
-  }
-  return targetAt;
+  const shouldResolveNext = annualizeBirthdays && getReminderRecurrenceType(reminder) !== "none";
+  if (!shouldResolveNext) return getReminderOccurrenceTimestamp(reminder);
+  const occurrenceDate = getNextReminderOccurrenceDateKey(reminder);
+  if (!occurrenceDate) return 0;
+  const safeTime = String(reminder?.targetTime || "").trim() || "23:59";
+  const date = new Date(`${occurrenceDate}T${safeTime}:00`);
+  return Number.isFinite(date.getTime()) ? date.getTime() : 0;
 }
 
 function buildReminderCountdown(reminder) {
@@ -5265,6 +5395,8 @@ function handleReminderCountdownClick(event) {
 }
 
 function getReminderComputedStatus(reminder) {
+  const explicitStatus = normalizeReminderStatus(reminder?.status);
+  if (explicitStatus !== "pendiente") return explicitStatus;
   const todayKey = getTodayDateKey();
   const dailyTarget = Math.max(1, Number(reminder?.dailyTargetCount || 1));
   const startDate = String(reminder?.startDate || reminder?.targetDate || "");
@@ -5286,12 +5418,21 @@ function normalizeReminderForTreatment(reminder = {}) {
   const startDate = String(reminder?.startDate || baseDate).trim();
   const endDate = String(reminder?.endDate || baseDate).trim() || startDate;
   const dailyTargetCount = Math.max(1, Math.min(12, Number(reminder?.dailyTargetCount || 1) || 1));
+  const recurrenceType = normalizeReminderRecurrenceType(reminder?.recurrence?.type || reminder?.repeat);
   return {
     ...reminder,
     targetDate: baseDate,
     startDate,
     endDate: endDate < startDate ? startDate : endDate,
     dailyTargetCount,
+    recurrence: {
+      ...(reminder?.recurrence || {}),
+      type: recurrenceType,
+      startDate,
+      endDate: endDate < startDate ? startDate : endDate,
+      dailyTargetCount,
+    },
+    repeat: recurrenceType,
     completionsByDate: typeof reminder?.completionsByDate === "object" && reminder?.completionsByDate ? { ...reminder.completionsByDate } : {},
   };
 }
@@ -5481,16 +5622,12 @@ function buildReminderCalendarCells(monthKey = "") {
 function buildReminderCalendarMap(reminders = [], cells = []) {
   const map = new Map();
   const dateKeys = cells.map((cell) => cell.dateKey).filter(Boolean);
-  const dateKeySet = new Set(dateKeys);
-  const visibleYears = Array.from(new Set(cells.map((cell) => cell.date.getFullYear())));
 
   dateKeys.forEach((dateKey) => map.set(dateKey, []));
 
   reminders.forEach((rawReminder) => {
     const reminder = normalizeReminderForTreatment(rawReminder);
-    for (let cursor = new Date(`${reminder.startDate}T00:00:00`); getDateKeyFromDate(cursor) <= reminder.endDate; cursor.setDate(cursor.getDate() + 1)) {
-      const occurrenceKey = getDateKeyFromDate(cursor);
-      if (!occurrenceKey || !dateKeySet.has(occurrenceKey)) continue;
+    for (const occurrenceKey of buildReminderOccurrenceDateKeys(reminder, dateKeys)) {
       map.set(occurrenceKey, [...(map.get(occurrenceKey) || []), reminder]);
     }
   });
@@ -5498,8 +5635,8 @@ function buildReminderCalendarMap(reminders = [], cells = []) {
   for (const [dateKey, items] of map.entries()) {
     const targetYear = parseDateKey(dateKey)?.year || null;
     items.sort((a, b) => (
-      getReminderOccurrenceTimestamp(a, { yearOverride: a?.repeat === "yearly" ? targetYear : null })
-      - getReminderOccurrenceTimestamp(b, { yearOverride: b?.repeat === "yearly" ? targetYear : null })
+      getReminderOccurrenceTimestamp(a, { yearOverride: getReminderRecurrenceType(a) === "yearly" ? targetYear : null })
+      - getReminderOccurrenceTimestamp(b, { yearOverride: getReminderRecurrenceType(b) === "yearly" ? targetYear : null })
     ));
   }
 
@@ -5510,7 +5647,7 @@ function findFirstReminderDateKeyInMonth(reminders = [], monthKey = "") {
   const parsedMonth = parseMonthKey(monthKey);
   if (!parsedMonth) return "";
   const candidates = reminders
-    .map((reminder) => getReminderOccurrenceDateKey(reminder, reminder?.repeat === "yearly" ? parsedMonth.year : null))
+    .flatMap((reminder) => buildReminderOccurrenceDateKeys(reminder, buildReminderCalendarCells(monthKey).map((cell) => cell.dateKey)))
     .filter((dateKey) => dateKey && getMonthKeyFromDateKey(dateKey) === monthKey)
     .sort();
   return candidates[0] || "";
@@ -5702,7 +5839,9 @@ function flushReminderRemoteRestore() {
 function getRemindersForSelectedCalendarDate(reminders = [], dateKey = state.reminderCalendarSelectedDate) {
   const safeDateKey = parseDateKey(dateKey || "") ? String(dateKey) : "";
   if (!safeDateKey) return Array.isArray(reminders) ? reminders : [];
-  return (Array.isArray(reminders) ? reminders : []).map(normalizeReminderForTreatment).filter((reminder) => safeDateKey >= reminder.startDate && safeDateKey <= reminder.endDate);
+  return (Array.isArray(reminders) ? reminders : [])
+    .map(normalizeReminderForTreatment)
+    .filter((reminder) => buildReminderOccurrenceDateKeys(reminder, [safeDateKey]).includes(safeDateKey));
 }
 
 function selectReminderCalendarDate(dateKey = "", {
@@ -7167,6 +7306,9 @@ function openReminderModal(reminder = null, options = {}) {
   $id("notes-reminder-time").value = reminder?.targetTime || "";
   $id("notes-reminder-color").value = normalizeReminderColor(reminder?.color);
   $id("notes-reminder-is-birthday").checked = reminder?.type === "cumpleaños";
+  if ($id("notes-reminder-recurrence-type")) {
+    $id("notes-reminder-recurrence-type").value = getReminderRecurrenceType(reminder || {});
+  }
   $id("notes-reminder-repeat-yearly").checked = reminder?.repeat === "yearly";
   $id("notes-reminder-delete")?.classList.toggle("hidden", !reminder);
   $id("notes-reminder-modal-title").textContent = reminder ? "Editar recordatorio" : "Nuevo recordatorio";
@@ -7311,8 +7453,7 @@ function getReminderNotificationItems() {
   const today = getTodayDateKey();
   return (state.reminders || [])
     .filter((reminder) => {
-      const reminderDay = getReminderOccurrenceDateKey(reminder, reminder?.repeat === "yearly" ? new Date().getFullYear() : null);
-      return reminderDay === today;
+      return buildReminderOccurrenceDateKeys(reminder, [today]).includes(today);
     })
     .map((reminder) => ({
       id: reminder.id,
@@ -9009,6 +9150,13 @@ function bindUiEvents() {
     if (event.target.checked) {
       $id("notes-reminder-type").value = "cumpleaños";
       $id("notes-reminder-repeat-yearly").checked = true;
+      if ($id("notes-reminder-recurrence-type")) $id("notes-reminder-recurrence-type").value = "yearly";
+    }
+  });
+  $id("notes-reminder-recurrence-type")?.addEventListener("change", (event) => {
+    const recurrenceType = normalizeReminderRecurrenceType(event.target.value);
+    if ($id("notes-reminder-repeat-yearly")) {
+      $id("notes-reminder-repeat-yearly").checked = recurrenceType === "yearly";
     }
   });
   $id("notes-reminder-type")?.addEventListener("change", (event) => {
@@ -9016,6 +9164,7 @@ function bindUiEvents() {
     if (event.target.value === "cumpleaños") {
       $id("notes-reminder-is-birthday").checked = true;
       $id("notes-reminder-repeat-yearly").checked = true;
+      if ($id("notes-reminder-recurrence-type")) $id("notes-reminder-recurrence-type").value = "yearly";
     }
   });
   $id("notes-reminder-checklist-add")?.addEventListener("click", () => {
@@ -9072,7 +9221,13 @@ function bindUiEvents() {
     const startDate = String($id("notes-reminder-start-date").value || targetDate || "").trim();
     const endDate = String($id("notes-reminder-end-date").value || startDate || "").trim();
     const dailyTargetCount = Math.max(1, Math.min(12, Number($id("notes-reminder-daily-target-count").value || 1) || 1));
-    const repeat = $id("notes-reminder-repeat-yearly").checked ? "yearly" : "none";
+    const selectedRecurrenceType = normalizeReminderRecurrenceType($id("notes-reminder-recurrence-type")?.value || "");
+    const impliedRecurrenceType = selectedRecurrenceType === "none" && (endDate !== startDate || dailyTargetCount > 1)
+      ? "daily"
+      : selectedRecurrenceType;
+    const repeat = isBirthday
+      ? "yearly"
+      : ($id("notes-reminder-repeat-yearly").checked ? "yearly" : impliedRecurrenceType);
     const errorField = $id("notes-reminder-form-error");
     errorField.textContent = "";
     if (!state.rootPath || !state.uid) {
@@ -9107,7 +9262,14 @@ function bindUiEvents() {
       categories: reminderDraftCategories,
       remindBefore: reminderDraftAlerts,
       checklistItems,
-      repeat: isBirthday ? "yearly" : repeat,
+      repeat,
+      recurrence: {
+        type: repeat,
+        startDate,
+        endDate,
+        dailyTargetCount,
+        rule: {},
+      },
       createdAt: current?.createdAt || Date.now(),
       updatedAt: Date.now(),
       completedAt: checklistAllDone ? Date.now() : (current?.completedAt || 0),

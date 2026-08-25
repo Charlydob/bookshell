@@ -177,6 +177,14 @@ function normalizeTagDefinitionKey(value = "", fallback = "") {
 
 function normalizeReminderType(value = "") {
   const safe = String(value || "").trim().toLowerCase();
+  const canonicalAliases = {
+    birthday: "cumpleaños",
+    task: "tarea",
+    event: "evento",
+    paperwork: "trámite",
+    custom: "personalizado",
+  };
+  if (canonicalAliases[safe]) return canonicalAliases[safe];
   return ["normal", "cumpleaños", "cumpleanos", "tarea", "evento", "trámite", "tramite", "checklist", "personalizado"].includes(safe)
     ? (safe === "cumpleanos" ? "cumpleaños" : (safe === "tramite" ? "trámite" : safe))
     : "normal";
@@ -205,8 +213,16 @@ function normalizeReminderTime(value = "") {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(safe) ? safe : "";
 }
 
+function normalizeReminderTimestamp(value = 0) {
+  const numeric = Number(value || 0);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function normalizeReminderRepeat(value = "") {
-  return String(value || "").trim() === "yearly" ? "yearly" : "none";
+  const safe = String(value || "").trim().toLowerCase();
+  return ["none", "daily", "weekly", "monthly", "yearly", "custom"].includes(safe) ? safe : "none";
 }
 
 function normalizeReminderTimezone(value = "") {
@@ -265,7 +281,7 @@ function normalizeReminderSource(value = {}) {
   const type = String(value?.type || "bookshell").trim().toLowerCase();
   return {
     type: allowed.includes(type) ? type : "bookshell",
-    externalId: String(value?.externalId || "").trim(),
+    externalId: String(value?.externalId || value?.external_id || "").trim(),
     metadata: value?.metadata && typeof value.metadata === "object" ? { ...value.metadata } : {},
   };
 }
@@ -315,17 +331,24 @@ function normalizeReminderRecurrence(reminder = {}) {
     ? Math.max(1, Math.min(12, Math.round(rawDailyTargetCount)))
     : 1;
   const recurrenceTypeRaw = String(reminder?.recurrence?.type || "").trim().toLowerCase();
-  const recurrenceType = ["none", "yearly", "daily", "custom"].includes(recurrenceTypeRaw)
+  const recurrenceType = ["none", "daily", "weekly", "monthly", "yearly", "custom"].includes(recurrenceTypeRaw)
     ? recurrenceTypeRaw
-    : (normalizeReminderRepeat(reminder?.repeat) === "yearly"
-      ? "yearly"
+    : (normalizeReminderRepeat(reminder?.repeat) !== "none"
+      ? normalizeReminderRepeat(reminder?.repeat)
       : ((startDate && endDate && (startDate !== targetDate || endDate !== targetDate || dailyTargetCount > 1)) ? "daily" : "none"));
   return {
     type: recurrenceType,
     startDate: normalizeReminderDate(reminder?.recurrence?.startDate) || startDate,
     endDate: normalizeReminderDate(reminder?.recurrence?.endDate) || endDate,
     dailyTargetCount,
+    rule: reminder?.recurrence?.rule && typeof reminder.recurrence.rule === "object" ? { ...reminder.recurrence.rule } : {},
   };
+}
+
+function getReminderLegacyMetadata(value = {}) {
+  const metadata = value?.source?.metadata || value?.source_metadata || value?.sourceMetadata || {};
+  const legacy = metadata?.bookshellLegacy || metadata?.bookshell_legacy || {};
+  return legacy && typeof legacy === "object" ? legacy : {};
 }
 
 function normalizeCompletionsByDate(value = {}) {
@@ -499,48 +522,55 @@ export function mapTagDefinitionToDb(tagDefinition = {}) {
 }
 
 export function mapReminderFromDb(id, value = {}) {
+  const legacy = getReminderLegacyMetadata(value);
+  const merged = { ...legacy, ...value };
   const type = normalizeReminderType(value?.type);
   const isBirthday = type === "cumpleaños" || Boolean(value?.isBirthday);
-  const repeat = normalizeReminderRepeat(value?.repeat || (isBirthday ? "yearly" : "none"));
-  const targetDate = normalizeReminderDate(value?.targetDate);
-  const recurrence = normalizeReminderRecurrence({ ...value, targetDate, repeat });
+  const repeat = normalizeReminderRepeat(merged?.repeat || value?.recurrence?.type || (isBirthday ? "yearly" : "none"));
+  const targetDate = normalizeReminderDate(value?.targetDate || value?.target_date || value?.date);
+  const recurrence = normalizeReminderRecurrence({ ...merged, targetDate, repeat });
+  const source = normalizeReminderSource(value?.source || {
+    type: value?.sourceType || value?.source_type,
+    externalId: value?.sourceExternalId || value?.source_external_id,
+    metadata: value?.sourceMetadata || value?.source_metadata,
+  });
   const canonicalAlerts = normalizeCanonicalReminderAlerts(value?.alerts, {
     reminder: value,
-    legacyAlerts: normalizeReminderAlerts(value?.remindBefore),
+    legacyAlerts: normalizeReminderAlerts(merged?.remindBefore),
   });
-  const categories = normalizeReminderCategories(value?.categories || value?.category);
+  const categories = normalizeReminderCategories(merged?.categories || value?.category);
 
   return {
-    id: String(id || ""),
-    userId: String(value?.userId || "").trim(),
+    id: String(value?.id || id || ""),
+    userId: String(value?.userId || value?.user_id || "").trim(),
     title: String(value?.title || "").trim(),
     description: String(value?.description || "").trim(),
     emoji: String(value?.emoji || "⏰").trim() || "⏰",
     type: isBirthday ? "cumpleaños" : type,
     status: normalizeReminderStatus(value?.status),
     targetDate,
-    targetTime: normalizeReminderTime(value?.targetTime),
+    targetTime: normalizeReminderTime(value?.targetTime || value?.target_time),
     timezone: normalizeReminderTimezone(value?.timezone),
-    color: normalizeReminderColor(value?.color),
-    remindBefore: normalizeReminderAlerts(value?.remindBefore, canonicalAlerts),
+    color: normalizeReminderColor(merged?.color),
+    remindBefore: normalizeReminderAlerts(merged?.remindBefore, canonicalAlerts),
     alerts: canonicalAlerts,
-    source: normalizeReminderSource(value?.source),
+    source,
     recurrence,
     startDate: recurrence.startDate || targetDate,
     endDate: recurrence.endDate || recurrence.startDate || targetDate,
     dailyTargetCount: recurrence.dailyTargetCount,
-    completionsByDate: normalizeCompletionsByDate(value?.completionsByDate),
+    completionsByDate: normalizeCompletionsByDate(merged?.completionsByDate),
     repeat,
     isBirthday,
     category: String(value?.category || categories[0] || "").trim(),
     categories,
-    checklistItems: normalizeReminderChecklistItems(value?.checklistItems),
-    createdAt: Number(value?.createdAt || Date.now()),
-    updatedAt: Number(value?.updatedAt || value?.createdAt || Date.now()),
-    completedAt: Number(value?.completedAt || 0),
-    dismissedAlerts: normalizeReminderDismissedAlerts(value?.dismissedAlerts),
-    notifiedAt: Number(value?.notifiedAt || 0),
-    noteId: String(value?.noteId || "").trim(),
+    checklistItems: normalizeReminderChecklistItems(merged?.checklistItems),
+    createdAt: normalizeReminderTimestamp(value?.createdAt || value?.created_at) || Date.now(),
+    updatedAt: normalizeReminderTimestamp(value?.updatedAt || value?.updated_at || value?.createdAt || value?.created_at) || Date.now(),
+    completedAt: normalizeReminderTimestamp(value?.completedAt || value?.completed_at),
+    dismissedAlerts: normalizeReminderDismissedAlerts(merged?.dismissedAlerts),
+    notifiedAt: Number(merged?.notifiedAt || 0),
+    noteId: String(merged?.noteId || "").trim(),
   };
 }
 
@@ -548,7 +578,7 @@ export function mapReminderToDb(reminder = {}) {
   const type = normalizeReminderType(reminder?.type);
   const isBirthday = type === "cumpleaños" || Boolean(reminder?.isBirthday);
   const repeat = normalizeReminderRepeat(reminder?.repeat || (isBirthday ? "yearly" : "none"));
-  const targetDate = normalizeReminderDate(reminder?.targetDate);
+  const targetDate = normalizeReminderDate(reminder?.targetDate || reminder?.date);
   const recurrence = normalizeReminderRecurrence({ ...reminder, targetDate, repeat });
   const legacyAlerts = normalizeReminderAlerts(reminder?.remindBefore, reminder?.alerts);
   const canonicalAlerts = normalizeCanonicalReminderAlerts(reminder?.alerts, {

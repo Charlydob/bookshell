@@ -284,8 +284,19 @@
           <div class="notes-reminder-alert-list" id="notes-reminder-alert-list"></div>
         </div>
         <div class="notes-reminder-alert-builder notes-reminder-treatment-wrap">
-          <div class="field-label">Repetición diaria / tratamiento</div>
+          <div class="field-label">Repetición</div>
           <div class="notes-reminder-treatment-grid">
+            <label class="field">
+              <span class="field-label">Frecuencia</span>
+              <select id="notes-reminder-recurrence-type" class="field-select">
+                <option value="none">No repetir</option>
+                <option value="daily">Diaria</option>
+                <option value="weekly">Semanal</option>
+                <option value="monthly">Mensual</option>
+                <option value="yearly">Anual</option>
+                <option value="custom">Personalizada</option>
+              </select>
+            </label>
             <label class="field">
               <span class="field-label">Fecha inicio</span>
               <input id="notes-reminder-start-date" type="date" />

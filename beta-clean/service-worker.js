@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-08-23-api-data-provider-no-rtdb";
+const APP_VERSION = "2026-08-25-reminders-api-postgres";
 const PUBLISHED_COMMIT = "f01cf4c";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
@@ -73,6 +73,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/shared/data/offline-backend.js",
   "./scripts/shared/data/paths.js",
   "./scripts/shared/data/read-debug.js",
+  "./scripts/shared/data/reminders-api.js",
   "./scripts/shared/services/sync-manager.js",
   
   

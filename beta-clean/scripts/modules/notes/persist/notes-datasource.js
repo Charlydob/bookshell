@@ -10,14 +10,25 @@ import {
 } from "../../../shared/data/index.js";
 import { auth, getUserDataKey } from "../../../shared/auth/index.js";
 import { trackedOnValue } from "../../../shared/data/read-debug.js";
+import {
+  createReminder as createCanonicalReminder,
+  deleteReminder as deleteCanonicalReminder,
+  listReminders as listCanonicalReminders,
+  updateReminder as updateCanonicalReminder,
+} from "../../../shared/data/reminders-api.js?v=2026-08-25-v1";
 import { buildTagDefinitionKey } from "../domain/tag-utils.js?v=2026-04-28-v2";
 import {
   mapFolderToDb,
   mapNoteToDb,
   mapReminderToDb,
+  mapReminderFromDb,
   mapSnapshotToDomain,
   mapTagDefinitionToDb,
-} from "./notes-mapper.js?v=2026-05-15-v1";
+} from "./notes-mapper.js?v=2026-08-25-v1";
+
+const REMINDER_REFRESH_EVENT = "bookshell:notes-reminders-refresh";
+const REMINDER_POLL_VISIBLE_MS = 15 * 1000;
+const REMINDER_POLL_HIDDEN_MS = 30 * 1000;
 
 function resolveRootPath(uidParam = "") {
   const explicitAuthUid = String(uidParam || "").trim();
@@ -29,13 +40,77 @@ function resolveRootPath(uidParam = "") {
   return firebasePaths.notes(authUid);
 }
 
+function normalizeReminderApiRows(payload = null) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.reminders)) return payload.reminders;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
+async function loadReminderDomainRows() {
+  const payload = await listCanonicalReminders({ limit: 100 });
+  return normalizeReminderApiRows(payload)
+    .map((row) => mapReminderFromDb(row?.id, row))
+    .filter((row) => row?.id)
+    .sort((a, b) => {
+      const aAt = Date.parse(`${a.targetDate || ""}T${a.targetTime || "23:59"}:00`);
+      const bAt = Date.parse(`${b.targetDate || ""}T${b.targetTime || "23:59"}:00`);
+      return aAt - bAt;
+    });
+}
+
+function requestReminderRefresh() {
+  try {
+    window.dispatchEvent(new CustomEvent(REMINDER_REFRESH_EVENT));
+  } catch (_) {}
+}
+
 export function subscribeNotesRoot(uid, onData, onError) {
   const rootPath = resolveRootPath(uid);
+  let latestValue = {};
+  let latestReminders = [];
+  let dataReady = false;
+  let remindersReady = false;
+  let disposed = false;
+  let refreshVersion = 0;
+
+  const emitSnapshot = () => {
+    const payload = mapSnapshotToDomain(latestValue);
+    onData?.({
+      ...payload,
+      reminders: latestReminders,
+    }, rootPath);
+  };
+
+  const refreshReminders = async ({ emit = true } = {}) => {
+    const version = ++refreshVersion;
+    try {
+      const rows = await loadReminderDomainRows();
+      if (disposed || version !== refreshVersion) return;
+      latestReminders = rows;
+      remindersReady = true;
+      if (emit && dataReady) emitSnapshot();
+    } catch (error) {
+      if (disposed) return;
+      console.warn("[notes] no se pudieron cargar recordatorios desde /reminders", error);
+      onError?.(error);
+      remindersReady = true;
+      if (emit && dataReady) emitSnapshot();
+    }
+  };
+
   const unsubscribe = trackedOnValue(
     ref(db, rootPath),
     (snapshot) => {
-      const value = snapshot.val() || {};
-      onData?.(mapSnapshotToDomain(value), rootPath);
+      latestValue = snapshot.val() || {};
+      dataReady = true;
+      if (!remindersReady) {
+        void refreshReminders({ emit: true });
+        return;
+      }
+      emitSnapshot();
+      void refreshReminders({ emit: true });
     },
     {
     key: "notes-root",
@@ -48,9 +123,34 @@ export function subscribeNotesRoot(uid, onData, onError) {
   },
     onValue);
 
+  let pollTimer = null;
+  const schedulePoll = () => {
+    if (disposed) return;
+    if (pollTimer) window.clearTimeout(pollTimer);
+    const delay = document.hidden ? REMINDER_POLL_HIDDEN_MS : REMINDER_POLL_VISIBLE_MS;
+    pollTimer = window.setTimeout(async () => {
+      await refreshReminders({ emit: true });
+      schedulePoll();
+    }, delay);
+  };
+  const handleVisibility = () => schedulePoll();
+  const handleRefresh = () => {
+    void refreshReminders({ emit: true });
+  };
+  document.addEventListener("visibilitychange", handleVisibility);
+  window.addEventListener(REMINDER_REFRESH_EVENT, handleRefresh);
+  void refreshReminders({ emit: false });
+  schedulePoll();
+
   return {
     rootPath,
-    unsubscribe,
+    unsubscribe: () => {
+      disposed = true;
+      unsubscribe?.();
+      if (pollTimer) window.clearTimeout(pollTimer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener(REMINDER_REFRESH_EVENT, handleRefresh);
+    },
   };
 }
 
@@ -127,33 +227,30 @@ export async function deleteNote(rootPath, noteId) {
 }
 
 export async function createReminder(rootPath, payload = {}) {
-  const remindersRef = ref(db, `${rootPath}/reminders`);
-  const nextRef = push(remindersRef);
-  await update(ref(db), {
-    [`${rootPath}/reminders/${nextRef.key}`]: mapReminderToDb({
-      ...payload,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    }),
-  });
-  return nextRef.key;
+  const reminder = await createCanonicalReminder(mapReminderToDb({
+    ...payload,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }));
+  requestReminderRefresh();
+  return reminder?.id || "";
 }
 
 export async function updateReminder(rootPath, reminderId, payload = {}) {
   const safeReminderId = String(reminderId || "").trim();
   if (!safeReminderId) return;
-  await update(ref(db), {
-    [`${rootPath}/reminders/${safeReminderId}`]: mapReminderToDb({
-      ...payload,
-      updatedAt: Date.now(),
-    }),
-  });
+  await updateCanonicalReminder(safeReminderId, mapReminderToDb({
+    ...payload,
+    updatedAt: Date.now(),
+  }));
+  requestReminderRefresh();
 }
 
 export async function deleteReminder(rootPath, reminderId) {
   const safeReminderId = String(reminderId || "").trim();
   if (!safeReminderId) return;
-  await remove(ref(db, `${rootPath}/reminders/${safeReminderId}`));
+  await deleteCanonicalReminder(safeReminderId);
+  requestReminderRefresh();
 }
 
 export async function upsertReminderCategory(rootPath, categoryId, payload = {}) {
@@ -187,10 +284,7 @@ export async function patchReminderChecklistItem(rootPath, reminderId, itemId, p
   const safeReminderId = String(reminderId || "").trim();
   const safeItemId = String(itemId || "").trim();
   if (!safeReminderId || !safeItemId) return;
-  await update(ref(db), {
-    [`${rootPath}/reminders/${safeReminderId}/checklistItems/${safeItemId}`]: payload,
-    [`${rootPath}/reminders/${safeReminderId}/updatedAt`]: Date.now(),
-  });
+  requestReminderRefresh();
 }
 
 export async function incrementNoteVisits(rootPath, noteId) {

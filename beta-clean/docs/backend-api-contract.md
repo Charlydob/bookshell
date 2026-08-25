@@ -163,7 +163,7 @@ Recommended enums:
 
 - `source.type`: `bookshell`, `gmail`, `telegram`, `shortcut`, `webhook`, `manual`, `amazon`, `n8n`
 - `type`: `normal`, `birthday`, `task`, `event`, `paperwork`, `checklist`, `custom`
-- `recurrence.type`: `none`, `yearly`, `daily`, `custom`
+- `recurrence.type`: `none`, `daily`, `weekly`, `monthly`, `yearly`, `custom`
 - `status`: `pending`, `completed`, `expired`, `cancelled`
 - `alerts.mode`: `absolute`, `relative`
 - `alerts.channel`: `telegram` initially
@@ -199,6 +199,43 @@ Recommended enums:
 
 - Marks completed or records one daily completion.
 - Suggested body: `{ "completedAt": "ISO", "date": "YYYY-MM-DD", "count": 1 }`.
+
+## Automation Reminder Endpoints
+
+All automation routes are server-to-server only and must require
+`X-Bookshell-Automation-Secret` equal to `BOOKSHELL_AUTOMATION_SECRET`.
+
+`GET /automation/reminders/due?limit=50`
+
+- Returns pending alert rows where `reminder_alerts.status = pending`,
+  `notify_at <= NOW()`, and the parent reminder is `pending`.
+- Maximum `limit` is 100.
+- Claim rows transactionally with row locks, for example
+  `FOR UPDATE SKIP LOCKED`, and set `locked_at`/`locked_by` to avoid duplicate
+  n8n processing.
+- Response rows should include `alertId`, `reminderId`, `title`,
+  `description` or `message`, `targetDate`, `targetTime`, `timezone`,
+  `minutesBefore`, and `sourceType`.
+
+`POST /automation/reminder-alerts/:alertId/sent`
+
+- Marks the claimed alert as `sent`, stores `sent_at`, clears any lock/error,
+  and advances recurring reminders by creating only the next due alert set.
+
+`POST /automation/reminder-alerts/:alertId/failed`
+
+- Stores `error_message`, increments `attempt_count`, clears the lock, and
+  leaves the alert retryable while attempts remain reasonable.
+
+`GET /automation/reminders?range=today`
+`GET /automation/reminders?range=tomorrow`
+`GET /automation/reminders?range=this_week`
+`GET /automation/reminders?range=next_week`
+`GET /automation/reminders?range=all&limit=20`
+
+- Returns reminders for Telegram/n8n queries using `Europe/Zurich` as the
+  fallback timezone when a reminder has none.
+- `range=all` is capped at 20 by default and 100 as a hard maximum.
 
 `GET /reminders/due?until=2026-08-28T08:00:00Z`
 

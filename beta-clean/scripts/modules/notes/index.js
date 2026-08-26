@@ -1,6 +1,6 @@
 let runtimeModule = null;
 let runtimePromise = null;
-const NOTES_RUNTIME_VERSION = "2026-08-25-v1";
+const NOTES_RUNTIME_VERSION = "2026-08-26-v3";
 
 async function ensureRuntime() {
   if (runtimeModule) return runtimeModule;

@@ -40,14 +40,16 @@ import {
   updateFolder,
   updateNote,
   updateReminder,
-} from "./persist/notes-datasource.js?v=2026-08-25-v1";
+} from "./persist/notes-datasource.js?v=2026-08-26-v3";
 import {
   buildReminderOccurrenceKey,
+  createGenerationGate,
   createReminderNotificationGuard,
+  createSingleTimerController,
   isTerminalReminderAlert,
   isTerminalReminderStatus,
   normalizeReminderRuntimeStatus,
-} from "./reminders-runtime-guards.js?v=2026-08-26-v2";
+} from "./reminders-runtime-guards.js?v=2026-08-26-v3";
 import {
   deleteNoteAttachmentImageAsset,
   deleteNoteImageAsset,
@@ -128,7 +130,10 @@ let activeNotesStatsSection = "ratings";
 let reminderDraftAlerts = [];
 let reminderDraftCategories = [];
 let reminderDraftChecklistItems = {};
-let reminderCheckTimer = null;
+const reminderCheckTimer = createSingleTimerController({
+  setIntervalFn: (callback, delay) => window.setInterval(callback, delay),
+  clearIntervalFn: (timerId) => window.clearInterval(timerId),
+});
 let reminderToastQueue = [];
 let reminderToastActive = null;
 let reminderNotificationsOpen = false;
@@ -137,6 +142,11 @@ let reminderToastActiveClose = null;
 let reminderToastTimers = new Set();
 let reminderToastOutsideClickAbort = null;
 let reminderNotificationGuard = createReminderNotificationGuard();
+const notesLoadGeneration = createGenerationGate();
+const REMINDER_DEBUG = (() => {
+  try { return window.localStorage?.getItem("bookshell:debug:reminders") === "1"; } catch (_) { return false; }
+})();
+const reminderDebug = (label, detail) => { if (REMINDER_DEBUG) console.debug(label, detail); };
 let reminderChecklistToggleVersion = new Map();
 let reminderChecklistToggleQueue = new Map();
 let notesLocationSearchTimer = null;
@@ -5548,6 +5558,7 @@ async function deleteReminderOptimistic(reminderOrId = "") {
     (state.reminders || []).find((row) => row.id === reminderId) || reminderOrId || {},
   );
   if (!reminderNotificationGuard.markDeleted(reminderId)) return false;
+  reminderDebug("[REMINDER DELETE]", { reminderId, decision: "start" });
   dropReminderToastState(reminderId);
   const nextReminders = removeReminderFromState(reminderId);
   if (shouldResetReminderFilterToAllPending(nextReminders)) {
@@ -5558,10 +5569,12 @@ async function deleteReminderOptimistic(reminderOrId = "") {
   try {
     await deleteReminderRemote(state.rootPath, reminderId);
     reminderNotificationGuard.markDeleteSettled(reminderId);
+    reminderDebug("[REMINDER DELETE]", { reminderId, decision: "success" });
     return true;
   } catch (error) {
     console.warn("[notes] no se pudo borrar el recordatorio", error);
     const shouldRestore = reminderNotificationGuard.markDeleteSettled(reminderId, { restore: true });
+    reminderDebug("[REMINDER DELETE]", { reminderId, decision: "rollback" });
     if (shouldRestore && previousReminder?.id) {
       state.reminders = [...(state.reminders || []), previousReminder]
         .sort((a, b) => getReminderTargetTimestamp(a, { annualizeBirthdays: true }) - getReminderTargetTimestamp(b, { annualizeBirthdays: true }));
@@ -7502,7 +7515,10 @@ function getReminderToastAlerts(reminder = {}) {
 
 function appendReminderToast(message, reminderId, key, alert = null) {
   const reminder = state.reminders.find((row) => row.id === reminderId);
-  if (!reminder || !reminderNotificationGuard.shouldQueue({ reminder, alert, key })) return;
+  const decision = !reminder ? "deleted" : (isTerminalReminderStatus(reminder.status) || (alert && isTerminalReminderAlert(alert))
+    ? "terminal" : (reminderNotificationGuard.shouldQueue({ reminder, alert, key }) ? "enqueue" : "already_seen"));
+  reminderDebug("[REMINDER CHECK]", { reminderId, occurrenceKey: key, decision });
+  if (decision !== "enqueue") return;
   const nextReminder = mergeLocalReminderDismissal(reminderId, key) || reminder;
   enqueueReminderToast({ message, reminderId, key });
   if (reminder && state.rootPath) {
@@ -7609,7 +7625,6 @@ function getReminderNotificationItems() {
 }
 
 function runReminderChecks() {
-  console.info('[reminders:global-check]', { total: (state.reminders || []).length });
   refreshReminderCountdownElements($id("notes-reminders-list"));
   refreshReminderCountdownElements($id("notes-reminders-history-list"));
   const now = Date.now();
@@ -7647,15 +7662,13 @@ function runReminderChecks() {
 }
 
 function startReminderChecker() {
-  if (reminderCheckTimer) return;
+  if (reminderCheckTimer.isRunning()) return;
   runReminderChecks();
-  reminderCheckTimer = window.setInterval(runReminderChecks, 45 * 1000);
+  reminderCheckTimer.start(runReminderChecks, 45 * 1000);
 }
 
 function stopReminderChecker() {
-  if (!reminderCheckTimer) return;
-  window.clearInterval(reminderCheckTimer);
-  reminderCheckTimer = null;
+  reminderCheckTimer.stop();
 }
 
 async function handleFolderDelete(folder) {
@@ -9450,6 +9463,7 @@ function bindUiEvents() {
 }
 
 function subscribeData(uid) {
+  const generation = notesLoadGeneration.next();
   unbindData?.();
   if (!uid) {
     resetReminderNotificationRuntime();
@@ -9473,6 +9487,15 @@ function subscribeData(uid) {
   const { rootPath, unsubscribe } = subscribeNotesRoot(
     uid,
     (payload, safeRootPath) => {
+      if (!notesLoadGeneration.accepts(generation)) {
+        reminderDebug("[REMINDER SNAPSHOT]", { generation, decision: "stale_generation" });
+        return;
+      }
+      if (REMINDER_DEBUG) (payload.reminders || []).forEach((reminder) => reminderDebug("[REMINDER SNAPSHOT]", {
+        reminderId: reminder.id, status: reminder.status, scheduleVersion: reminder.scheduleVersion,
+        alerts: (reminder.alerts || []).map(({ id, status }) => ({ id, status })),
+        notifiedAt: reminder.notifiedAt, dismissedAlerts: reminder.dismissedAlerts,
+      }));
       state.loading = false;
       state.rootPath = safeRootPath;
       state.folders = payload.folders;
@@ -9511,6 +9534,7 @@ function subscribeData(uid) {
       emitNotesData("remote:notes");
     },
     (error) => {
+      if (!notesLoadGeneration.accepts(generation)) return;
       console.warn("[notes] error de carga", error);
     },
   );

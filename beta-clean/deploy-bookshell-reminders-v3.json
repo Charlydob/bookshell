@@ -1,0 +1,861 @@
+{
+  "name": "Bookshell - Reminders v3 PostgreSQL",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "c51cb0c9-c69e-4a58-814c-0ab9ea73cfc8",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xEdigNQXObdqM4XH",
+          "name": "Bot recordatorios"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const update = $('Telegram Trigger').first().json;\nconst callback = update.callback_query;\nconst message = update.message;\nconst text = String(message?.text || '').trim();\nconst chatId = String(message?.chat?.id || callback?.message?.chat?.id || '');\nconst messageId = message?.message_id || callback?.message?.message_id || Date.now();\nconst callbackData = String(callback?.data || '').trim();\n\nconst TZ = 'Europe/Zurich';\nconst DEFAULT_HOUR = 9;\nconst now = new Date();\n\nconst days = {\n  domingo: 0,\n  lunes: 1,\n  martes: 2,\n  miércoles: 3,\n  miercoles: 3,\n  jueves: 4,\n  viernes: 5,\n  sábado: 6,\n  sabado: 6,\n};\n\nconst dayNames = [\n  'Domingo', 'Lunes', 'Martes', 'Miércoles',\n  'Jueves', 'Viernes', 'Sábado'\n];\n\nconst months = {\n  enero: 1, febrero: 2, marzo: 3, abril: 4,\n  mayo: 5, junio: 6, julio: 7, agosto: 8,\n  septiembre: 9, setiembre: 9, octubre: 10,\n  noviembre: 11, diciembre: 12,\n};\n\nconst numberWords = {\n  una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4,\n  cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9,\n  diez: 10, once: 11, doce: 12, trece: 13,\n  catorce: 14, quince: 15, dieciseis: 16, dieciséis: 16,\n  diecisiete: 17, dieciocho: 18, diecinueve: 19,\n  veinte: 20, veintiuna: 21, veintiuno: 21,\n  veintidós: 22, veintidos: 22, veintitrés: 23, veintitres: 23,\n};\n\nconst pad = n => String(n).padStart(2, '0');\n\nfunction zonedParts(date) {\n  const parts = new Intl.DateTimeFormat('en-CA', {\n    timeZone: TZ,\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit',\n    hour: '2-digit',\n    minute: '2-digit',\n    second: '2-digit',\n    hourCycle: 'h23',\n  }).formatToParts(date);\n\n  const out = {};\n  for (const p of parts) {\n    if (p.type !== 'literal') out[p.type] = Number(p.value);\n  }\n  return out;\n}\n\nfunction tzOffsetMs(date) {\n  const p = zonedParts(date);\n  const asUTC = Date.UTC(\n    p.year, p.month - 1, p.day,\n    p.hour, p.minute, p.second\n  );\n  return asUTC - date.getTime();\n}\n\nfunction localDate(y, m, d, h = 0, min = 0, sec = 0) {\n  const wall = Date.UTC(y, m - 1, d, h, min, sec);\n  let probe = new Date(wall);\n  let offset = tzOffsetMs(probe);\n  let result = new Date(wall - offset);\n  const offset2 = tzOffsetMs(result);\n  if (offset2 !== offset) result = new Date(wall - offset2);\n  return result;\n}\n\nfunction addLocalDays(ymd, amount) {\n  const d = new Date(Date.UTC(ymd.year, ymd.month - 1, ymd.day + amount));\n  return {\n    year: d.getUTCFullYear(),\n    month: d.getUTCMonth() + 1,\n    day: d.getUTCDate(),\n  };\n}\n\nfunction weekdayOf(ymd) {\n  return new Date(Date.UTC(ymd.year, ymd.month - 1, ymd.day)).getUTCDay();\n}\n\nfunction ymdIso(ymd) {\n  return `${ymd.year}-${pad(ymd.month)}-${pad(ymd.day)}`;\n}\n\nfunction calculateDefaultReminder(eventDate) {\n  const twoHoursBefore = new Date(eventDate.getTime() - 2 * 60 * 60 * 1000);\n  const ep = zonedParts(eventDate);\n  const nineAM = localDate(ep.year, ep.month, ep.day, 9, 0, 0);\n\n  let remindAt = twoHoursBefore > nineAM ? nineAM : twoHoursBefore;\n\n  if (remindAt <= now && eventDate > now) {\n    remindAt = twoHoursBefore > now ? twoHoursBefore : new Date(eventDate);\n  }\n\n  return remindAt;\n}\n\nfunction recurrenceFromText(value) {\n  if (/\\b(cada\\s+d[ií]a|diariamente|diario)\\b/i.test(value)) return 'daily';\n  if (/\\b(cada\\s+semana|semanalmente|semanal)\\b/i.test(value)) return 'weekly';\n  if (/\\b(cada\\s+mes|mensualmente|mensual)\\b/i.test(value)) return 'monthly';\n  if (/\\b(cada\\s+a[ñn]o|anualmente|anual|todos\\s+los\\s+a[ñn]os)\\b/i.test(value)) return 'yearly';\n  return 'none';\n}\n\nfunction customAdvance(value) {\n  const m = value.match(\n    /\\b(?:av[ií]same|avisame|recu[eé]rdame)\\s+(?:con\\s+)?(\\d+)\\s*(min(?:uto)?s?|h(?:ora)?s?|d[ií]as?|semanas?)\\s+antes\\b/i\n  );\n  if (!m) return null;\n\n  const amount = Number(m[1]);\n  const unit = m[2].toLowerCase();\n\n  if (unit.startsWith('min')) return amount;\n  if (unit.startsWith('h')) return amount * 60;\n  if (unit.startsWith('d')) return amount * 24 * 60;\n  if (unit.startsWith('sem')) return amount * 7 * 24 * 60;\n  return null;\n}\n\nfunction cleanTitle(value) {\n  const monthNames = Object.keys(months).join('|');\n  const numberWordRegex = Object.keys(numberWords).join('|');\n\n  let result = String(value || '');\n\n  result = result\n    .replace(/\\b(cada\\s+d[ií]a|diariamente|diario|cada\\s+semana|semanalmente|semanal|cada\\s+mes|mensualmente|mensual|cada\\s+a[ñn]o|anualmente|anual|todos\\s+los\\s+a[ñn]os)\\b/gi, '')\n    .replace(/\\b(?:av[ií]same|avisame|recu[eé]rdame)\\s+(?:con\\s+)?\\d+\\s*(?:min(?:uto)?s?|h(?:ora)?s?|d[ií]as?|semanas?)\\s+antes\\b/gi, '')\n    .replace(/\\bpasado\\s+mañana\\b/gi, '')\n    .replace(/\\b(hoy|mañana)\\b/gi, '')\n    .replace(/\\b(domingo|lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado)\\b/gi, '')\n    .replace(/\\b\\d{1,2}[\\/-]\\d{1,2}(?:[\\/-]\\d{2,4})?\\b/g, '')\n    .replace(new RegExp(`\\\\b\\\\d{1,2}\\\\s+(?:de\\\\s+)?(?:${monthNames})(?:\\\\s+(?:de\\\\s+)?\\\\d{4})?\\\\b`, 'gi'), '')\n    .replace(/\\ba\\s+las?\\s+\\d{1,2}(?::[0-5]\\d)?\\b/gi, '')\n    .replace(/\\b([01]?\\d|2[0-3]):[0-5]\\d\\b/g, '')\n    .replace(new RegExp(`\\\\ba\\\\s+las?\\\\s+(?:${numberWordRegex})\\\\b`, 'gi'), '')\n    .replace(/^\\s*recuerda\\s+que\\s+/i, '')\n    .replace(/^\\s*recu[eé]rdame\\s+/i, '')\n    .replace(/^\\s*recordatorio\\s*:?\\s*/i, '')\n    .replace(/^\\s*tenemos\\s+/i, '')\n    .replace(/^\\s*hay\\s+/i, '')\n    .replace(/^\\s*(el|la)\\s+/i, '')\n    .replace(/\\s+/g, ' ')\n    .replace(/\\s+([?.!,])/g, '$1')\n    .replace(/^[,.;:¿?¡!\\s]+|[,.;:¿?¡!\\s]+$/g, '')\n    .trim();\n\n  result = result || 'Recordatorio';\n  return result.charAt(0).toUpperCase() + result.slice(1);\n}\n\nfunction listRange(value) {\n  const t = value.toLowerCase();\n\n  if (/^\\/?hoy$/.test(t) || /\\b(recordatorios?|qu[eé]\\s+tengo|mu[eé]strame|lista).*\\bhoy\\b/i.test(value)) {\n    return 'today';\n  }\n  if (/^\\/?ma[ñn]ana$/.test(t) || /\\b(recordatorios?|qu[eé]\\s+tengo|mu[eé]strame|lista).*\\bma[ñn]ana\\b/i.test(value)) {\n    return 'tomorrow';\n  }\n  if (/^\\/?(proxima|próxima)$/.test(t) || /\\b(pr[oó]xima|siguiente)\\s+semana\\b/i.test(value)) {\n    return 'next_week';\n  }\n  if (/^\\/?semana$/.test(t) || /\\b(esta|la)\\s+semana\\b/i.test(value)) {\n    return 'this_week';\n  }\n  if (\n    /^\\/?(todos|recordatorios)$/.test(t) ||\n    /\\b(todos?|lista|mu[eé]strame|ens[eé][ñn]ame).*(recordatorios?)\\b/i.test(value) ||\n    /\\brecordatorios?\\s+en\\s+general\\b/i.test(value)\n  ) {\n    return 'all';\n  }\n\n  return '';\n}\n\n// ----- CALLBACKS -----\nif (callbackData) {\n  if (callbackData.startsWith('cancel:')) {\n    return [{\n      json: {\n        action: 'cancel',\n        chatId,\n        reminderId: callbackData.split(':')[1],\n      }\n    }];\n  }\n\n  if (callbackData.startsWith('add_alert:')) {\n    return [{\n      json: {\n        action: 'alert_menu',\n        chatId,\n        reminderId: callbackData.split(':')[1],\n      }\n    }];\n  }\n\n  const alertMatch = callbackData.match(/^alert_(5m|15m|1h|2h|1d|1w):(.+)$/);\n  if (alertMatch) {\n    const amounts = {\n      '5m': [5, '5 min'],\n      '15m': [15, '15 min'],\n      '1h': [60, '1 hora'],\n      '2h': [120, '2 horas'],\n      '1d': [1440, '1 día'],\n      '1w': [10080, '1 semana'],\n    };\n\n    return [{\n      json: {\n        action: 'add_alert',\n        chatId,\n        reminderId: alertMatch[2],\n        minutesBefore: amounts[alertMatch[1]][0],\n        alertLabel: amounts[alertMatch[1]][1],\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      action: 'reply',\n      chatId,\n      replyText: 'No reconozco ese botón.',\n    }\n  }];\n}\n\nif (!text) {\n  return [{\n    json: {\n      action: 'reply',\n      chatId,\n      replyText: 'Envíame un recordatorio por texto.',\n    }\n  }];\n}\n\n// ----- CONSULTAS -----\nconst range = listRange(text);\nif (range) {\n  return [{\n    json: {\n      action: 'list',\n      chatId,\n      range,\n    }\n  }];\n}\n\nconst nowLocal = zonedParts(now);\nconst todayYmd = {\n  year: nowLocal.year,\n  month: nowLocal.month,\n  day: nowLocal.day,\n};\n\n// ----- VARIOS EVENTOS EN UN MENSAJE -----\nconst rawLines = text\n  .split(/\\n+/)\n  .map(line => line.trim())\n  .filter(Boolean);\n\nconst timeToken = '(\\\\d{1,2})(?::([0-5]\\\\d))?';\nconst eventLineRegex = new RegExp(\n  `\\\\b(domingo|lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado)\\\\b.*?\\\\b(?:de\\\\s+)?${timeToken}\\\\s+(?:a|hasta)\\\\s+(?:las?\\\\s+)?${timeToken}(?:\\\\s*\\\\(([^)]+)\\\\))?`,\n  'i'\n);\n\nconst firstEventIndex = rawLines.findIndex(line => eventLineRegex.test(line));\nconst multiEvents = [];\nconst recurrenceType = recurrenceFromText(text);\n\nif (firstEventIndex >= 0) {\n  let baseTitle = 'Evento';\n\n  if (firstEventIndex > 0) {\n    const context = rawLines\n      .slice(0, firstEventIndex)\n      .filter(line => !/^(entonces\\s+hacemos|hacemos|quedamos|vale|ok|perfecto)\\s*:?\\s*$/i.test(line));\n\n    if (context.length) {\n      baseTitle = cleanTitle(context[0].replace(/[:\\-–—]+$/g, ''));\n    }\n  }\n\n  for (const line of rawLines.slice(firstEventIndex)) {\n    const match = line.match(eventLineRegex);\n    if (!match) continue;\n\n    const dayName = match[1].toLowerCase();\n    const startHour = Number(match[2]);\n    const startMinute = Number(match[3] || 0);\n    const endHour = Number(match[4]);\n    const endMinute = Number(match[5] || 0);\n    const extra = String(match[6] || '').trim();\n\n    if (startHour > 23 || endHour > 23) continue;\n\n    let diff = (days[dayName] - weekdayOf(todayYmd) + 7) % 7;\n    let eventYmd = addLocalDays(todayYmd, diff);\n    let eventDate = localDate(\n      eventYmd.year, eventYmd.month, eventYmd.day,\n      startHour, startMinute\n    );\n\n    if (diff === 0 && eventDate <= now) {\n      eventYmd = addLocalDays(todayYmd, 7);\n      eventDate = localDate(\n        eventYmd.year, eventYmd.month, eventYmd.day,\n        startHour, startMinute\n      );\n    }\n\n    let thisTitle = baseTitle;\n    if (thisTitle === 'Evento') {\n      const weekdayMatch = line.match(\n        /\\b(domingo|lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado)\\b/i\n      );\n      if (weekdayMatch && weekdayMatch.index > 0) {\n        const prefix = line.slice(0, weekdayMatch.index)\n          .replace(/[:\\-–—]+$/g, '')\n          .trim();\n        if (prefix) thisTitle = cleanTitle(prefix);\n      }\n    }\n\n    const eventLabel =\n      `${dayNames[weekdayOf(eventYmd)]} ${eventYmd.day} · ` +\n      `${pad(startHour)}:${pad(startMinute)}–${pad(endHour)}:${pad(endMinute)}`;\n\n    const alertMinutes = customAdvance(text);\n    const defaultAt = calculateDefaultReminder(eventDate);\n\n    multiEvents.push({\n      json: {\n        action: 'create',\n        chatId,\n        payload: {\n          title: extra ? `${thisTitle} — ${extra.toUpperCase()}` : thisTitle,\n          description: eventLabel,\n          emoji: '⏰',\n          type: 'event',\n          targetDate: ymdIso(eventYmd),\n          targetTime: `${pad(startHour)}:${pad(startMinute)}`,\n          timezone: TZ,\n          source: {\n            type: 'telegram',\n            externalId: `telegram-${messageId}-${multiEvents.length + 1}`,\n            metadata: {\n              telegramChatId: chatId,\n              telegramMessageId: messageId,\n              eventLabel,\n              endTime: `${pad(endHour)}:${pad(endMinute)}`,\n            },\n          },\n          alerts: alertMinutes !== null\n            ? [{\n                mode: 'relative',\n                minutesBefore: alertMinutes,\n                channel: 'telegram',\n              }]\n            : [{\n                mode: 'absolute',\n                notifyAt: defaultAt.toISOString(),\n                channel: 'telegram',\n              }],\n          recurrence: {\n            type: recurrenceType,\n            startDate: ymdIso(eventYmd),\n            endDate: '',\n            dailyTargetCount: 1,\n            rule: {},\n          },\n          status: 'pending',\n        },\n      },\n      pairedItem: { item: 0 },\n    });\n  }\n\n  if (multiEvents.length) {\n    multiEvents.sort((a, b) => {\n      const da = `${a.json.payload.targetDate}T${a.json.payload.targetTime || '00:00'}`;\n      const db = `${b.json.payload.targetDate}T${b.json.payload.targetTime || '00:00'}`;\n      return da.localeCompare(db);\n    });\n    return multiEvents;\n  }\n}\n\n// ----- UN EVENTO -----\nlet eventYmd = { ...todayYmd };\nlet foundDate = false;\nlet foundTime = false;\nlet weekdayRequested = null;\nlet explicitYear = false;\n\nconst relativeDelay = text.match(\n  /\\ben\\s+(\\d+)\\s*(min(?:uto)?s?|h(?:ora)?s?|d[ií]as?|semanas?)\\b/i\n);\n\nif (relativeDelay) {\n  const amount = Number(relativeDelay[1]);\n  const unit = relativeDelay[2].toLowerCase();\n  let ms = 0;\n\n  if (unit.startsWith('min')) ms = amount * 60 * 1000;\n  else if (unit.startsWith('h')) ms = amount * 60 * 60 * 1000;\n  else if (unit.startsWith('d')) ms = amount * 24 * 60 * 60 * 1000;\n  else if (unit.startsWith('sem')) ms = amount * 7 * 24 * 60 * 60 * 1000;\n\n  const target = new Date(now.getTime() + ms);\n  const p = zonedParts(target);\n  eventYmd = { year: p.year, month: p.month, day: p.day };\n\n  const payload = {\n    title: cleanTitle(text.replace(relativeDelay[0], '')),\n    description: '',\n    emoji: '⏰',\n    type: 'normal',\n    targetDate: ymdIso(eventYmd),\n    targetTime: `${pad(p.hour)}:${pad(p.minute)}`,\n    timezone: TZ,\n    source: {\n      type: 'telegram',\n      externalId: `telegram-${messageId}`,\n      metadata: {\n        telegramChatId: chatId,\n        telegramMessageId: messageId,\n      },\n    },\n    alerts: [{\n      mode: 'absolute',\n      notifyAt: target.toISOString(),\n      channel: 'telegram',\n    }],\n    recurrence: {\n      type: recurrenceFromText(text),\n      startDate: ymdIso(eventYmd),\n      endDate: '',\n      dailyTargetCount: 1,\n      rule: {},\n    },\n    status: 'pending',\n  };\n\n  return [{\n    json: { action: 'create', chatId, payload },\n    pairedItem: { item: 0 },\n  }];\n}\n\nif (/\\bhoy\\b/i.test(text)) foundDate = true;\n\nif (/\\bpasado\\s+mañana\\b/i.test(text)) {\n  eventYmd = addLocalDays(todayYmd, 2);\n  foundDate = true;\n} else if (/\\bmañana\\b/i.test(text)) {\n  eventYmd = addLocalDays(todayYmd, 1);\n  foundDate = true;\n}\n\nconst numericDate = text.match(\n  /\\b(\\d{1,2})[\\/-](\\d{1,2})(?:[\\/-](\\d{2,4}))?\\b/\n);\n\nif (numericDate) {\n  const day = Number(numericDate[1]);\n  const month = Number(numericDate[2]);\n  let year = numericDate[3] ? Number(numericDate[3]) : nowLocal.year;\n\n  explicitYear = Boolean(numericDate[3]);\n  if (year < 100) year += 2000;\n\n  eventYmd = { year, month, day };\n\n  if (!explicitYear) {\n    const candidate = localDate(year, month, day, 23, 59, 59);\n    if (candidate < now) eventYmd.year += 1;\n  }\n  foundDate = true;\n}\n\nconst monthNames = Object.keys(months).join('|');\nconst writtenDate = text.match(\n  new RegExp(\n    `\\\\b(\\\\d{1,2})\\\\s+(?:de\\\\s+)?(${monthNames})(?:\\\\s+(?:de\\\\s+)?(\\\\d{4}))?\\\\b`,\n    'i'\n  )\n);\n\nif (writtenDate) {\n  const day = Number(writtenDate[1]);\n  const month = months[writtenDate[2].toLowerCase()];\n  let year = writtenDate[3] ? Number(writtenDate[3]) : nowLocal.year;\n\n  explicitYear = Boolean(writtenDate[3]);\n  eventYmd = { year, month, day };\n\n  if (!explicitYear) {\n    const candidate = localDate(year, month, day, 23, 59, 59);\n    if (candidate < now) eventYmd.year += 1;\n  }\n  foundDate = true;\n}\n\nif (\n  !numericDate &&\n  !writtenDate &&\n  !/\\b(hoy|mañana|pasado\\s+mañana)\\b/i.test(text)\n) {\n  for (const [name, dayNumber] of Object.entries(days)) {\n    if (new RegExp(`\\\\b${name}\\\\b`, 'i').test(text)) {\n      weekdayRequested = dayNumber;\n      foundDate = true;\n      break;\n    }\n  }\n}\n\nlet hour = null;\nlet minute = 0;\n\nconst colonTime = text.match(/\\b([01]?\\d|2[0-3]):([0-5]\\d)\\b/);\nif (colonTime) {\n  hour = Number(colonTime[1]);\n  minute = Number(colonTime[2]);\n  foundTime = true;\n}\n\nif (!foundTime) {\n  const simpleTime = text.match(/\\ba\\s+las?\\s+(\\d{1,2})(?:[:.]([0-5]\\d))?\\b/i);\n  if (simpleTime) {\n    hour = Number(simpleTime[1]);\n    minute = Number(simpleTime[2] || 0);\n    foundTime = hour <= 23;\n  }\n}\n\nif (!foundTime) {\n  const words = Object.keys(numberWords).join('|');\n  const wordTime = text.match(\n    new RegExp(`\\\\ba\\\\s+las?\\\\s+(${words})\\\\b`, 'i')\n  );\n  if (wordTime) {\n    hour = numberWords[wordTime[1].toLowerCase()];\n    minute = 0;\n    foundTime = true;\n  }\n}\n\nif (!foundTime) {\n  hour = DEFAULT_HOUR;\n  minute = 0;\n}\n\nif (weekdayRequested !== null) {\n  let diff = (weekdayRequested - weekdayOf(todayYmd) + 7) % 7;\n  eventYmd = addLocalDays(todayYmd, diff);\n\n  const candidate = localDate(\n    eventYmd.year, eventYmd.month, eventYmd.day,\n    hour, minute\n  );\n\n  if (diff === 0 && candidate <= now) {\n    eventYmd = addLocalDays(todayYmd, 7);\n  }\n}\n\nlet eventDate = localDate(\n  eventYmd.year, eventYmd.month, eventYmd.day,\n  hour, minute\n);\n\nif (!foundDate && eventDate <= now) {\n  eventYmd = addLocalDays(todayYmd, 1);\n  eventDate = localDate(\n    eventYmd.year, eventYmd.month, eventYmd.day,\n    hour, minute\n  );\n}\n\nif (foundDate && explicitYear && eventDate < now) {\n  return [{\n    json: {\n      action: 'reply',\n      chatId,\n      replyText: 'Esa fecha ya pasó.',\n    }\n  }];\n}\n\nconst alertMinutes = customAdvance(text);\nlet alerts;\n\nif (alertMinutes !== null) {\n  alerts = [{\n    mode: 'relative',\n    minutesBefore: alertMinutes,\n    channel: 'telegram',\n  }];\n} else if (!foundTime) {\n  const remindAt = localDate(\n    eventYmd.year, eventYmd.month, eventYmd.day,\n    9, 0\n  );\n\n  alerts = [{\n    mode: 'absolute',\n    notifyAt: remindAt.toISOString(),\n    channel: 'telegram',\n  }];\n} else {\n  alerts = [{\n    mode: 'absolute',\n    notifyAt: calculateDefaultReminder(eventDate).toISOString(),\n    channel: 'telegram',\n  }];\n}\n\nconst title = cleanTitle(text);\nconst recurrence = recurrenceFromText(text);\n\nconst payload = {\n  title,\n  description: '',\n  emoji: '⏰',\n  type: 'normal',\n  targetDate: ymdIso(eventYmd),\n  targetTime: foundTime ? `${pad(hour)}:${pad(minute)}` : '',\n  timezone: TZ,\n  source: {\n    type: 'telegram',\n    externalId: `telegram-${messageId}`,\n    metadata: {\n      telegramChatId: chatId,\n      telegramMessageId: messageId,\n    },\n  },\n  alerts,\n  recurrence: {\n    type: recurrence,\n    startDate: ymdIso(eventYmd),\n    endDate: '',\n    dailyTargetCount: 1,\n    rule: {},\n  },\n  status: 'pending',\n};\n\nreturn [{\n  json: {\n    action: 'create',\n    chatId,\n    payload,\n  },\n  pairedItem: { item: 0 },\n}];"
+      },
+      "id": "8ff85b0a-dbd5-494e-bbb0-8645ed4ea45b",
+      "name": "Interpretar Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "2d76709b-65d9-42b5-941d-82aa424644ec",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "create",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "crear"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6f0971e2-f330-43fa-ad14-5b614319dafb",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "list",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "listar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "ce399a07-e463-4238-a11c-9954206b9df0",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "cancel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cancelar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "32b8eef6-f8e2-49e8-8e1b-d74fc93ad2d2",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "alert_menu",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "menu aviso"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "52544433-07f6-4f75-aa88-74a208fb82e6",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "add_alert",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "añadir aviso"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "21f226a1-9a54-4724-8bdc-4bfb4d775339",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "reply",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "respuesta"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4c089932-9ecf-498e-a436-b186ef3ae6a0",
+      "name": "Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://bookshell-api-api-1:3002/automation/reminders",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Bookshell-Automation-Secret",
+              "value": "__BOOKSHELL_AUTOMATION_SECRET__"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.payload) }}",
+        "options": {}
+      },
+      "id": "04c2546c-8b71-429e-814a-e2e060c179e2",
+      "name": "Crear en Bookshell",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "1451166389",
+        "text": "=✅ {{$json.reminder.emoji || '⏰'}} {{$json.reminder.title}}\n📅 {{$json.reminder.targetDate}}{{$json.reminder.targetTime ? ' · ' + $json.reminder.targetTime : ''}}{{$json.reminder.recurrence?.type && $json.reminder.recurrence.type !== 'none' ? '\\n🔁 ' + $json.reminder.recurrence.type : ''}}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "➕ Añadir aviso",
+                    "additionalFields": {
+                      "callback_data": "=add_alert:{{$json.reminder.id}}"
+                    }
+                  },
+                  {
+                    "text": "❌ Cancelar",
+                    "additionalFields": {
+                      "callback_data": "=cancel:{{$json.reminder.id}}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "2f95ccdb-870e-45af-9395-42606c1ccbbe",
+      "name": "Confirmar creación",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1020,
+        -260
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xEdigNQXObdqM4XH",
+          "name": "Bot recordatorios"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=http://bookshell-api-api-1:3002/automation/reminders?range={{$json.range}}&limit=20",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Bookshell-Automation-Secret",
+              "value": "__BOOKSHELL_AUTOMATION_SECRET__"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0984927b-26ac-4175-9795-d55d27a83763",
+      "name": "Consultar lista",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $json || {};\nconst reminders = Array.isArray(response.reminders) ? response.reminders : [];\nconst total = Number(response.total || reminders.length || 0);\nconst range = String(response.range || 'all');\n\nconst labels = {\n  today: 'Recordatorios de hoy',\n  tomorrow: 'Recordatorios de mañana',\n  this_week: 'Recordatorios de esta semana',\n  next_week: 'Recordatorios de la próxima semana',\n  all: 'Recordatorios pendientes',\n};\n\nif (!reminders.length) {\n  return [{\n    json: {\n      text: `📭 ${labels[range] || labels.all}: ninguno.`,\n    }\n  }];\n}\n\nconst recurrenceIcon = {\n  daily: ' ↻ diario',\n  weekly: ' ↻ semanal',\n  monthly: ' ↻ mensual',\n  yearly: ' ↻ anual',\n  custom: ' ↻',\n};\n\nconst rows = reminders.map((r, i) => {\n  const date = String(r.targetDate || '');\n  const time = String(r.targetTime || '');\n  const when = `${date}${time ? ` · ${time}` : ''}`;\n  const recurrence = recurrenceIcon[r?.recurrence?.type] || '';\n  return `${i + 1}. ${r.emoji || '⏰'} ${r.title}\\n   ${when}${recurrence}`;\n});\n\nlet text = `📋 ${labels[range] || labels.all} (${total})\\n\\n${rows.join('\\n\\n')}`;\n\nif (total > reminders.length) {\n  text += `\\n\\n…mostrando ${reminders.length} de ${total}.`;\n}\n\nreturn [{ json: { text } }];"
+      },
+      "id": "c59c5390-c8be-40ea-83b8-df25479240e8",
+      "name": "Formatear lista",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "1451166389",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "64f71f0e-f41c-4bf2-8011-52f5fc0ef136",
+      "name": "Enviar lista",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1280,
+        -100
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xEdigNQXObdqM4XH",
+          "name": "Bot recordatorios"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=http://bookshell-api-api-1:3002/automation/reminders/{{$json.reminderId}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Bookshell-Automation-Secret",
+              "value": "__BOOKSHELL_AUTOMATION_SECRET__"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d47ee255-209d-4522-bfd6-9d80bc67f83a",
+      "name": "Cancelar en Bookshell",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "1451166389",
+        "text": "=❌ Recordatorio cancelado: {{$json.reminder.title}}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "6c6b641b-500f-4f2f-bf78-b74d8544e66e",
+      "name": "Confirmar cancelación",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1020,
+        60
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xEdigNQXObdqM4XH",
+          "name": "Bot recordatorios"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "1451166389",
+        "text": "🔔 ¿Cuánto antes quieres otro aviso?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "5 min",
+                    "additionalFields": {
+                      "callback_data": "=alert_5m:{{$json.reminderId}}"
+                    }
+                  },
+                  {
+                    "text": "15 min",
+                    "additionalFields": {
+                      "callback_data": "=alert_15m:{{$json.reminderId}}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "1 h",
+                    "additionalFields": {
+                      "callback_data": "=alert_1h:{{$json.reminderId}}"
+                    }
+                  },
+                  {
+                    "text": "2 h",
+                    "additionalFields": {
+                      "callback_data": "=alert_2h:{{$json.reminderId}}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "1 día",
+                    "additionalFields": {
+                      "callback_data": "=alert_1d:{{$json.reminderId}}"
+                    }
+                  },
+                  {
+                    "text": "1 semana",
+                    "additionalFields": {
+                      "callback_data": "=alert_1w:{{$json.reminderId}}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "8d4bf827-0d96-472b-af2c-9079a3ff9a8e",
+      "name": "Menú avisos",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        220
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xEdigNQXObdqM4XH",
+          "name": "Bot recordatorios"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://bookshell-api-api-1:3002/automation/reminders/{{$json.reminderId}}/alerts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Bookshell-Automation-Secret",
+              "value": "__BOOKSHELL_AUTOMATION_SECRET__"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({mode:'relative', minutesBefore:$json.minutesBefore, channel:'telegram'}) }}",
+        "options": {}
+      },
+      "id": "747f4656-8297-44d8-98bd-fbf4a4494cab",
+      "name": "Añadir aviso en Bookshell",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "1451166389",
+        "text": "=✅ Aviso añadido: {{ $('Interpretar Telegram').first().json.alertLabel }} antes.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "c309a701-b234-4ffb-bcc3-fd38e30ea181",
+      "name": "Confirmar aviso",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1020,
+        380
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xEdigNQXObdqM4XH",
+          "name": "Bot recordatorios"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "1451166389",
+        "text": "={{ $json.replyText }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "3ce8d9ab-27e0-4259-95e1-8012d7645bef",
+      "name": "Responder",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        540
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xEdigNQXObdqM4XH",
+          "name": "Bot recordatorios"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "81809387-73bb-4c29-9bd7-8850ff23f805",
+      "name": "Cada minuto",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://bookshell-api-api-1:3002/automation/reminders/due?limit=50",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Bookshell-Automation-Secret",
+              "value": "__BOOKSHELL_AUTOMATION_SECRET__"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "71ecf656-73d1-4407-886d-5c2c2e08216f",
+      "name": "Consultar avisos vencidos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const alerts = Array.isArray($json.alerts) ? $json.alerts : [];\nreturn alerts.map((alert) => ({\n  json: alert,\n  pairedItem: { item: 0 },\n}));"
+      },
+      "id": "dd471dc8-ad36-4ea9-9e63-5c58a299fc8a",
+      "name": "Separar avisos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "1451166389",
+        "text": "=🔔 {{$json.emoji || '⏰'}} {{$json.title}}\n{{$json.description ? '\\n' + $json.description : ''}}\n📅 {{$json.targetDate}}{{$json.targetTime ? ' · ' + $json.targetTime : ''}}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "57bf3a9c-a383-4d0c-b712-67b2ad711faf",
+      "name": "Enviar recordatorio",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        760
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xEdigNQXObdqM4XH",
+          "name": "Bot recordatorios"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://bookshell-api-api-1:3002/automation/reminder-alerts/{{ $('Separar avisos').item.json.alertId }}/sent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Bookshell-Automation-Secret",
+              "value": "__BOOKSHELL_AUTOMATION_SECRET__"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "{}",
+        "options": {}
+      },
+      "id": "ea41b478-0011-44a4-b8dc-5915c2e46ae5",
+      "name": "Marcar enviado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://bookshell-api-api-1:3002/automation/reminder-alerts/{{ $('Separar avisos').item.json.alertId }}/failed",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Bookshell-Automation-Secret",
+              "value": "__BOOKSHELL_AUTOMATION_SECRET__"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({error: $json.error?.message || $json.message || 'telegram_send_failed'}) }}",
+        "options": {}
+      },
+      "id": "4823fb16-2875-44a5-a67f-038ca96ffacb",
+      "name": "Marcar fallido",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        840
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Interpretar Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar Telegram": {
+      "main": [
+        [
+          {
+            "node": "Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router": {
+      "main": [
+        [
+          {
+            "node": "Crear en Bookshell",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Consultar lista",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cancelar en Bookshell",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Menú avisos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Añadir aviso en Bookshell",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear en Bookshell": {
+      "main": [
+        [
+          {
+            "node": "Confirmar creación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar lista": {
+      "main": [
+        [
+          {
+            "node": "Formatear lista",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear lista": {
+      "main": [
+        [
+          {
+            "node": "Enviar lista",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancelar en Bookshell": {
+      "main": [
+        [
+          {
+            "node": "Confirmar cancelación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Añadir aviso en Bookshell": {
+      "main": [
+        [
+          {
+            "node": "Confirmar aviso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cada minuto": {
+      "main": [
+        [
+          {
+            "node": "Consultar avisos vencidos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar avisos vencidos": {
+      "main": [
+        [
+          {
+            "node": "Separar avisos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar avisos": {
+      "main": [
+        [
+          {
+            "node": "Enviar recordatorio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar recordatorio": {
+      "main": [
+        [
+          {
+            "node": "Marcar enviado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Marcar fallido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Zurich"
+  },
+  "versionId": "6bd9bda2-111f-45c7-926e-bddc87686b53",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [],
+  "id": "BR3pgX7kL2nQ9mTs"
+}

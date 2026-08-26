@@ -134,7 +134,7 @@ await test("canonical response maps back to legacy UI fields", () => {
     },
   });
   assert.equal(reminder.type, "tarea");
-  assert.equal(reminder.status, "vencido");
+  assert.equal(reminder.status, "cancelado");
   assert.equal(reminder.repeat, "weekly");
   assert.deepEqual(reminder.categories, ["Coche"]);
   assert.equal(reminder.remindBefore[0].amount, 1);

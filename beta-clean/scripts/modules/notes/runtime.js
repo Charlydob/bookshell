@@ -28,7 +28,7 @@ import {
   createNote,
   createNoteId,
   createReminder,
-  deleteReminder,
+  deleteReminder as deleteReminderRemote,
   deleteFolder,
   deleteNote,
   incrementNoteVisits,
@@ -41,6 +41,13 @@ import {
   updateNote,
   updateReminder,
 } from "./persist/notes-datasource.js?v=2026-08-25-v1";
+import {
+  buildReminderOccurrenceKey,
+  createReminderNotificationGuard,
+  isTerminalReminderAlert,
+  isTerminalReminderStatus,
+  normalizeReminderRuntimeStatus,
+} from "./reminders-runtime-guards.js?v=2026-08-26-v1";
 import {
   deleteNoteAttachmentImageAsset,
   deleteNoteImageAsset,
@@ -125,6 +132,11 @@ let reminderCheckTimer = null;
 let reminderToastQueue = [];
 let reminderToastActive = null;
 let reminderNotificationsOpen = false;
+let reminderToastActiveElement = null;
+let reminderToastActiveClose = null;
+let reminderToastTimers = new Set();
+let reminderToastOutsideClickAbort = null;
+let reminderNotificationGuard = createReminderNotificationGuard();
 let reminderChecklistToggleVersion = new Map();
 let reminderChecklistToggleQueue = new Map();
 let notesLocationSearchTimer = null;
@@ -144,7 +156,7 @@ const noteLocationMapState = {
 const reminderExpandedChecklist = new Set();
 const expandedSnippetNotes = new Set();
 const REMINDER_TYPES = ["normal", "cumpleaños", "tarea", "evento", "trámite", "checklist", "personalizado"];
-const REMINDER_STATUSES = ["pendiente", "completado", "vencido"];
+const REMINDER_STATUSES = ["pendiente", "completado", "vencido", "cancelado", "enviado", "fallido"];
 const REMINDER_RANGES = ["all", "today", "7d", "30d", "overdue"];
 const REMINDER_RECURRENCE_TYPES = ["none", "daily", "weekly", "monthly", "yearly", "custom"];
 const REMINDER_GROUP_BY = ["none", "category", "type", "date", "status"];
@@ -233,7 +245,7 @@ function normalizeReminderRange(value = "") {
 }
 
 function normalizeReminderStatus(value = "") {
-  const safe = String(value || "").trim();
+  const safe = normalizeReminderRuntimeStatus(value);
   return REMINDER_STATUSES.includes(safe) ? safe : "pendiente";
 }
 
@@ -2631,7 +2643,7 @@ async function syncPersonBirthdayReminder(noteId = "", note = {}, previous = nul
   const title = getNoteDisplayTitle(note) || String(note?.title || "Persona").trim();
   const existing = (state.reminders || []).find((row) => row?.noteId === noteId && row?.type === "cumpleaños");
   if (!birthday) {
-    if (existing?.id) await deleteReminder(state.rootPath, existing.id);
+    if (existing?.id) await deleteReminderOptimistic(existing);
     return;
   }
   const payload = {
@@ -5395,6 +5407,7 @@ function handleReminderCountdownClick(event) {
 }
 
 function getReminderComputedStatus(reminder) {
+  if (isTerminalReminderStatus(reminder?.status)) return normalizeReminderRuntimeStatus(reminder?.status);
   const explicitStatus = normalizeReminderStatus(reminder?.status);
   if (explicitStatus !== "pendiente") return explicitStatus;
   const todayKey = getTodayDateKey();
@@ -5474,6 +5487,90 @@ function replaceReminderInState(reminderId = "", nextReminder = null) {
     return nextReminder;
   });
   return updatedReminder;
+}
+
+function removeReminderFromState(reminderId = "") {
+  const safeReminderId = String(reminderId || "").trim();
+  if (!safeReminderId) return [];
+  state.reminders = (state.reminders || []).filter((row) => row.id !== safeReminderId);
+  reminderExpandedChecklist.delete(safeReminderId);
+  return state.reminders;
+}
+
+function resetReminderNotificationRuntime() {
+  reminderNotificationGuard.clear();
+  reminderToastQueue = [];
+  reminderToastActiveClose?.();
+  reminderToastOutsideClickAbort?.abort?.();
+  reminderToastActive = null;
+  reminderToastActiveElement?.remove?.();
+  reminderToastActiveElement = null;
+  reminderToastActiveClose = null;
+  reminderToastOutsideClickAbort = null;
+  reminderToastTimers.forEach((timerId) => window.clearTimeout(timerId));
+  reminderToastTimers.clear();
+}
+
+function dropReminderToastState(reminderId = "") {
+  const safeReminderId = String(reminderId || "").trim();
+  if (!safeReminderId) return;
+  reminderToastQueue = reminderToastQueue.filter((payload) => String(payload?.reminderId || "").trim() !== safeReminderId);
+  if (String(reminderToastActive?.reminderId || "").trim() === safeReminderId) {
+    reminderToastActiveClose?.();
+  }
+}
+
+function mergeLocalReminderDismissal(reminderId = "", key = "") {
+  const safeReminderId = String(reminderId || "").trim();
+  const safeKey = String(key || "").trim();
+  if (!safeReminderId || !safeKey) return null;
+  const reminder = (state.reminders || []).find((row) => row.id === safeReminderId);
+  if (!reminder) return null;
+  const dismissedAlerts = Array.from(new Set([
+    ...(Array.isArray(reminder.dismissedAlerts) ? reminder.dismissedAlerts : []),
+    safeKey,
+  ]));
+  const nextReminder = { ...reminder, dismissedAlerts, notifiedAt: Date.now() };
+  replaceReminderInState(safeReminderId, nextReminder);
+  return nextReminder;
+}
+
+function applyRemoteReminders(reminders = []) {
+  state.reminders = reminderNotificationGuard
+    .filterDeleted(reminders)
+    .map((row) => normalizeReminderForTreatment(row));
+}
+
+async function deleteReminderOptimistic(reminderOrId = "") {
+  const reminderId = String(reminderOrId?.id || reminderOrId || "").trim();
+  if (!reminderId || reminderNotificationGuard.isDeleteInFlight(reminderId)) return false;
+  const previousReminder = cloneReminderForLocalState(
+    (state.reminders || []).find((row) => row.id === reminderId) || reminderOrId || {},
+  );
+  if (!reminderNotificationGuard.markDeleted(reminderId)) return false;
+  dropReminderToastState(reminderId);
+  const nextReminders = removeReminderFromState(reminderId);
+  if (shouldResetReminderFilterToAllPending(nextReminders)) {
+    clearReminderActiveFilter();
+  }
+  renderRemindersPanel();
+  emitReminderNotificationsUpdated();
+  try {
+    await deleteReminderRemote(state.rootPath, reminderId);
+    reminderNotificationGuard.markDeleteSettled(reminderId);
+    return true;
+  } catch (error) {
+    console.warn("[notes] no se pudo borrar el recordatorio", error);
+    const shouldRestore = reminderNotificationGuard.markDeleteSettled(reminderId, { restore: true });
+    if (shouldRestore && previousReminder?.id) {
+      state.reminders = [...(state.reminders || []), previousReminder]
+        .sort((a, b) => getReminderTargetTimestamp(a, { annualizeBirthdays: true }) - getReminderTargetTimestamp(b, { annualizeBirthdays: true }));
+      renderRemindersPanel();
+      emitReminderNotificationsUpdated();
+      enqueueReminderToast({ message: "No se ha podido borrar el recordatorio." });
+    }
+    return false;
+  }
 }
 
 function applyReminderChecklistToggle(reminderId = "", itemId = "", done = false) {
@@ -6276,7 +6373,14 @@ function renderReminderFilterControls() {
     checklist: "checklist",
     personalizado: "personalizado",
   };
-  const labelsByStatus = { pendiente: "pendiente", completado: "completado", vencido: "vencido" };
+  const labelsByStatus = {
+    pendiente: "pendiente",
+    completado: "completado",
+    vencido: "vencido",
+    cancelado: "cancelado",
+    enviado: "enviado",
+    fallido: "fallido",
+  };
   const labelsByRange = {
     all: "todos",
     today: "hoy",
@@ -7356,11 +7460,7 @@ async function handleReminderPrimaryAction(action = "", reminder = null) {
   }
   if (action === "delete-reminder") {
     if (window.confirm(`Â¿Eliminar recordatorio "${reminder.title}"?`)) {
-      const nextReminders = (state.reminders || []).filter((item) => item.id !== reminder.id);
-      if (shouldResetReminderFilterToAllPending(nextReminders)) {
-        clearReminderActiveFilter();
-      }
-      await deleteReminder(state.rootPath, reminder.id);
+      await deleteReminderOptimistic(reminder);
     }
     return true;
   }
@@ -7376,15 +7476,39 @@ function reminderAlertToMs(alert) {
   return 0;
 }
 
-function appendReminderToast(message, reminderId, key) {
-  enqueueReminderToast({ message, reminderId, key });
+function canonicalAlertToReminderToastAlert(alert = {}) {
+  if (!alert || typeof alert !== "object") return null;
+  if (String(alert?.mode || "").trim() === "absolute") {
+    const notifyAt = Date.parse(String(alert?.notifyAt || "").trim());
+    if (!Number.isFinite(notifyAt)) return null;
+    return { ...alert, triggerAt: notifyAt, amount: 0, unit: "minutes" };
+  }
+  const minutesBefore = Math.max(0, Math.round(Number(alert?.minutesBefore || 0)));
+  if (!minutesBefore) return null;
+  if (minutesBefore % (24 * 60) === 0) {
+    return { ...alert, amount: minutesBefore / (24 * 60), unit: "days" };
+  }
+  if (minutesBefore % 60 === 0) {
+    return { ...alert, amount: minutesBefore / 60, unit: "hours" };
+  }
+  return { ...alert, amount: minutesBefore, unit: "minutes" };
+}
+
+function getReminderToastAlerts(reminder = {}) {
+  const canonicalAlerts = Array.isArray(reminder?.alerts)
+    ? reminder.alerts.map(canonicalAlertToReminderToastAlert).filter(Boolean)
+    : [];
+  if (canonicalAlerts.length) return canonicalAlerts;
+  return Array.isArray(reminder?.remindBefore) ? reminder.remindBefore : [];
+}
+
+function appendReminderToast(message, reminderId, key, alert = null) {
   const reminder = state.reminders.find((row) => row.id === reminderId);
+  if (!reminder || !reminderNotificationGuard.shouldQueue({ reminder, alert, key })) return;
+  const nextReminder = mergeLocalReminderDismissal(reminderId, key) || reminder;
+  enqueueReminderToast({ message, reminderId, key });
   if (reminder && state.rootPath) {
-    const dismissedAlerts = Array.from(new Set([
-      ...(Array.isArray(reminder.dismissedAlerts) ? reminder.dismissedAlerts : []),
-      String(key || "").trim(),
-    ].filter(Boolean)));
-    updateReminder(state.rootPath, reminderId, { ...reminder, dismissedAlerts, notifiedAt: Date.now() }).catch(() => {});
+    updateReminder(state.rootPath, reminderId, nextReminder).catch(() => {});
     emitReminderNotificationsUpdated();
   }
 }
@@ -7409,18 +7533,37 @@ function showNextReminderToast() {
   const payload = reminderToastQueue.shift();
   reminderToastActive = payload;
   const toast = document.createElement("article");
+  reminderToastActiveElement = toast;
   toast.className = "notes-reminder-toast reminder-toast";
   toast.dataset.reminderId = payload.reminderId || "";
   toast.innerHTML = `<p>${escapeHtml(payload.message || "Recordatorio")}</p>`;
   stack.innerHTML = "";
   stack.appendChild(toast);
+  let autoCloseTimer = null;
+  let bindOutsideClickTimer = null;
+  let outsideClickAbort = typeof AbortController === "function" ? new AbortController() : null;
+  reminderToastOutsideClickAbort = outsideClickAbort;
   const closeNow = () => {
-    if (!toast.isConnected) return;
-    toast.remove();
+    if (reminderToastActive !== payload) return;
+    if (autoCloseTimer) {
+      window.clearTimeout(autoCloseTimer);
+      reminderToastTimers.delete(autoCloseTimer);
+    }
+    if (bindOutsideClickTimer) {
+      window.clearTimeout(bindOutsideClickTimer);
+      reminderToastTimers.delete(bindOutsideClickTimer);
+    }
+    outsideClickAbort?.abort?.();
+    if (toast.isConnected) toast.remove();
     reminderToastActive = null;
+    reminderToastActiveElement = null;
+    reminderToastActiveClose = null;
+    reminderToastOutsideClickAbort = null;
     showNextReminderToast();
   };
-  window.setTimeout(closeNow, 2600);
+  reminderToastActiveClose = closeNow;
+  autoCloseTimer = window.setTimeout(closeNow, 2600);
+  reminderToastTimers.add(autoCloseTimer);
   if (navigator.vibrate) navigator.vibrate(50);
   toast.addEventListener("click", async (event) => {
     event.stopPropagation();
@@ -7428,11 +7571,14 @@ function showNextReminderToast() {
     await navigateToReminder(reminderId);
     closeNow();
   });
-  window.setTimeout(() => {
+  bindOutsideClickTimer = window.setTimeout(() => {
+    reminderToastTimers.delete(bindOutsideClickTimer);
+    const options = outsideClickAbort ? { once: true, signal: outsideClickAbort.signal } : { once: true };
     document.addEventListener("click", (event) => {
       if (!toast.contains(event.target)) closeNow();
-    }, { once: true });
+    }, options);
   }, 0);
+  reminderToastTimers.add(bindOutsideClickTimer);
 }
 
 async function navigateToReminder(reminderId = "") {
@@ -7453,13 +7599,14 @@ function getReminderNotificationItems() {
   const today = getTodayDateKey();
   return (state.reminders || [])
     .filter((reminder) => {
+      if (isTerminalReminderStatus(reminder?.status)) return false;
       return buildReminderOccurrenceDateKeys(reminder, [today]).includes(today);
     })
     .map((reminder) => ({
       id: reminder.id,
       title: reminder.title || "Sin título",
       targetTime: reminder.targetTime || "",
-      status: reminder.status === "completado" ? "hecho" : (getReminderComputedStatus(reminder) === "vencido" ? "vencido" : "pendiente"),
+      status: getReminderComputedStatus(reminder) === "completado" ? "hecho" : (getReminderComputedStatus(reminder) === "vencido" ? "vencido" : "pendiente"),
     }));
 }
 
@@ -7469,24 +7616,31 @@ function runReminderChecks() {
   refreshReminderCountdownElements($id("notes-reminders-history-list"));
   const now = Date.now();
   for (const reminder of state.reminders || []) {
-    if (getReminderComputedStatus(reminder) !== "pendiente") continue;
+    if (isTerminalReminderStatus(reminder?.status) || getReminderComputedStatus(reminder) !== "pendiente") continue;
     const targetAt = getReminderTargetTimestamp(reminder, { annualizeBirthdays: true });
     if (!targetAt) continue;
     const dismissedAlerts = new Set(Array.isArray(reminder.dismissedAlerts) ? reminder.dismissedAlerts : []);
-    for (const alert of reminder.remindBefore || []) {
+    for (const alert of getReminderToastAlerts(reminder)) {
+      if (isTerminalReminderAlert(alert)) continue;
       const beforeMs = reminderAlertToMs(alert);
-      const triggerAt = targetAt - beforeMs;
-      const key = `${reminder.id}:${alert.amount}:${alert.unit}:${targetAt}`;
-      if (dismissedAlerts.has(key)) continue;
+      const triggerAt = Number.isFinite(Number(alert?.triggerAt)) ? Number(alert.triggerAt) : targetAt - beforeMs;
+      const legacyKey = `${reminder.id}:${alert.amount}:${alert.unit}:${targetAt}`;
+      const key = buildReminderOccurrenceKey(reminder, {
+        alert,
+        targetAt,
+        fallback: legacyKey,
+        kind: "alert",
+      });
+      if (dismissedAlerts.has(key) || dismissedAlerts.has(legacyKey)) continue;
       if (now >= triggerAt && now <= triggerAt + 75 * 1000) {
         const label = alert.unit === "days" ? "días" : alert.unit === "hours" ? "horas" : "minutos";
         const prefix = reminder.type === "cumpleaños" ? "🎂" : (reminder.type === "checklist" ? "🧾" : "⏰");
         const noun = reminder.type === "checklist" ? "checklist" : "recordatorio";
         const msg = alert.unit === 'days' ? `${prefix} En ${alert.amount} días: ${reminder.title || "sin título"}` : `${prefix} Quedan ${alert.amount} ${label} para ${noun}: ${reminder.title || "sin título"}`;
-        appendReminderToast(msg, reminder.id, key);
+        appendReminderToast(msg, reminder.id, key, alert);
       }
     }
-    const dueKey = `${reminder.id}:due:${targetAt}`;
+    const dueKey = buildReminderOccurrenceKey(reminder, { targetAt, kind: "due" });
     if (!dismissedAlerts.has(dueKey) && now >= targetAt) {
       appendReminderToast(`⏰ Es la hora de: ${reminder.title || "sin título"}`, reminder.id, dueKey);
     }
@@ -9082,7 +9236,7 @@ function bindUiEvents() {
     }
     if (target.dataset.act === "delete-reminder") {
       if (window.confirm(`¿Eliminar recordatorio "${reminder.title}"?`)) {
-        await deleteReminder(state.rootPath, reminder.id);
+        await deleteReminderOptimistic(reminder);
       }
     }
   });
@@ -9099,7 +9253,7 @@ function bindUiEvents() {
     if (!reminder) return;
     if (await handleReminderPrimaryAction(target.dataset.act, reminder)) return;
     if (target.dataset.act === "delete-reminder" && window.confirm(`¿Eliminar recordatorio "${reminder.title}"?`)) {
-      await deleteReminder(state.rootPath, reminder.id);
+      await deleteReminderOptimistic(reminder);
     }
   });
 
@@ -9204,7 +9358,7 @@ function bindUiEvents() {
     const reminderId = String($id("notes-reminder-id").value || "").trim();
     if (!reminderId) return;
     if (!window.confirm("¿Eliminar este recordatorio?")) return;
-    await deleteReminder(state.rootPath, reminderId);
+    await deleteReminderOptimistic(reminderId);
     closeReminderModal();
   });
   $id("notes-reminder-form")?.addEventListener("submit", async (event) => {
@@ -9300,6 +9454,8 @@ function bindUiEvents() {
 function subscribeData(uid) {
   unbindData?.();
   if (!uid) {
+    resetReminderNotificationRuntime();
+    stopReminderChecker();
     state.uid = "";
     state.rootPath = "";
     state.folders = [];
@@ -9323,7 +9479,7 @@ function subscribeData(uid) {
       state.rootPath = safeRootPath;
       state.folders = payload.folders;
       state.notes = payload.notes;
-      state.reminders = (payload.reminders || []).map((row) => normalizeReminderForTreatment(row));
+      applyRemoteReminders(payload.reminders || []);
       state.reminderCategories = payload.reminderCategories || [];
       state.reminderPreferences = payload.reminderPreferences || {};
       if (state.reminderPreferences && !state._reminderPrefsApplied) {
@@ -9369,8 +9525,10 @@ function bindAuth() {
   if (unbindAuth) return;
   unbindAuth = onUserChange((user) => {
     const uid = user?.uid || "";
+    if (uid !== state.uid) resetReminderNotificationRuntime();
     state.uid = uid;
     subscribeData(uid);
+    if (uid) startReminderChecker();
   });
 }
 
@@ -9465,6 +9623,7 @@ export function destroy() {
   reminderDraftCategories = [];
   reminderDraftChecklistItems = {};
   stopReminderChecker();
+  resetReminderNotificationRuntime();
   if (window.__bookshellNotes) {
     delete window.__bookshellNotes;
   }

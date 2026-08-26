@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-08-26-reminders-guards-search-v2";
-const PUBLISHED_COMMIT = "local-reminders-v2";
+const APP_VERSION = "2026-08-26-reminders-occurrences-v3";
+const PUBLISHED_COMMIT = "local-reminders-v3";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;

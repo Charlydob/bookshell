@@ -24,7 +24,7 @@ import {
   mapReminderFromDb,
   mapSnapshotToDomain,
   mapTagDefinitionToDb,
-} from "./notes-mapper.js?v=2026-08-25-v1";
+} from "./notes-mapper.js?v=2026-08-26-v3";
 
 const REMINDER_REFRESH_EVENT = "bookshell:notes-reminders-refresh";
 const REMINDER_POLL_VISIBLE_MS = 15 * 1000;
@@ -74,13 +74,18 @@ export function subscribeNotesRoot(uid, onData, onError) {
   let remindersReady = false;
   let disposed = false;
   let refreshVersion = 0;
+  let lastEmittedSignature = "";
 
   const emitSnapshot = () => {
     const payload = mapSnapshotToDomain(latestValue);
-    onData?.({
+    const nextPayload = {
       ...payload,
       reminders: latestReminders,
-    }, rootPath);
+    };
+    const signature = JSON.stringify(nextPayload);
+    if (signature === lastEmittedSignature) return;
+    lastEmittedSignature = signature;
+    onData?.(nextPayload, rootPath);
   };
 
   const refreshReminders = async ({ emit = true } = {}) => {

@@ -8,6 +8,9 @@ const TERMINAL_REMINDER_STATUSES = new Set([
 ]);
 
 const TERMINAL_ALERT_STATUSES = new Set(["sent", "failed", "cancelled"]);
+const DEFAULT_SEEN_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_SEEN_LIMIT = 500;
+const SEEN_STORAGE_KEY = "bookshell:notes:reminder-occurrences:v3";
 
 function readScheduleVersion(reminder = {}, alert = {}) {
   return String(
@@ -65,18 +68,48 @@ export function buildReminderOccurrenceKey(reminder = {}, {
   return String(fallback || [reminderId, kind, targetAt || ""].join(":")).trim();
 }
 
-export function createReminderNotificationGuard() {
+export function createReminderNotificationGuard({
+  storage = globalThis?.sessionStorage,
+  now = () => Date.now(),
+  ttlMs = DEFAULT_SEEN_TTL_MS,
+  limit = DEFAULT_SEEN_LIMIT,
+  storageKey = SEEN_STORAGE_KEY,
+} = {}) {
   const queuedOrShownKeys = new Set();
   const deletedReminderIds = new Set();
   const deleteInFlightIds = new Set();
   const deleteRestoreIds = new Set();
 
+  const readSeen = () => {
+    try {
+      const rows = JSON.parse(storage?.getItem?.(storageKey) || "[]");
+      const cutoff = now() - ttlMs;
+      return new Map((Array.isArray(rows) ? rows : [])
+        .filter(([key, seenAt]) => key && Number(seenAt) >= cutoff)
+        .slice(-limit));
+    } catch (_) {
+      return new Map();
+    }
+  };
+  let seenOccurrences = readSeen();
+  const persistSeen = () => {
+    const cutoff = now() - ttlMs;
+    seenOccurrences = new Map(Array.from(seenOccurrences)
+      .filter(([, seenAt]) => Number(seenAt) >= cutoff)
+      .slice(-limit));
+    try { storage?.setItem?.(storageKey, JSON.stringify(Array.from(seenOccurrences))); } catch (_) {}
+  };
+
   return {
-    clear() {
+    clear({ occurrences = false } = {}) {
       queuedOrShownKeys.clear();
       deletedReminderIds.clear();
       deleteInFlightIds.clear();
       deleteRestoreIds.clear();
+      if (occurrences) {
+        seenOccurrences.clear();
+        try { storage?.removeItem?.(storageKey); } catch (_) {}
+      }
     },
     clearReminder(reminderId = "") {
       const safeId = String(reminderId || "").trim();
@@ -121,9 +154,43 @@ export function createReminderNotificationGuard() {
       if (isTerminalReminderStatus(reminder?.status)) return false;
       if (alert && isTerminalReminderAlert(alert)) return false;
       if (Array.isArray(reminder?.dismissedAlerts) && reminder.dismissedAlerts.includes(safeKey)) return false;
+      persistSeen();
+      if (seenOccurrences.has(safeKey)) return false;
       if (queuedOrShownKeys.has(safeKey)) return false;
       queuedOrShownKeys.add(safeKey);
+      seenOccurrences.set(safeKey, now());
+      persistSeen();
       return true;
     },
+    hasSeen(key = "") {
+      persistSeen();
+      return seenOccurrences.has(String(key || "").trim());
+    },
+  };
+}
+
+export function createGenerationGate() {
+  let generation = 0;
+  return {
+    next: () => { generation += 1; return generation; },
+    current: () => generation,
+    accepts: (candidate) => candidate === generation,
+  };
+}
+
+export function createSingleTimerController({ setIntervalFn, clearIntervalFn } = {}) {
+  let timer = null;
+  return {
+    start(callback, delay) {
+      if (timer !== null) return timer;
+      timer = setIntervalFn(callback, delay);
+      return timer;
+    },
+    stop() {
+      if (timer === null) return;
+      clearIntervalFn(timer);
+      timer = null;
+    },
+    isRunning: () => timer !== null,
   };
 }

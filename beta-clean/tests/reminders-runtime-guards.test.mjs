@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import {
   buildReminderOccurrenceKey,
   createReminderNotificationGuard,
+  isTerminalReminderStatus,
+  normalizeReminderRuntimeStatus,
 } from "../scripts/modules/notes/reminders-runtime-guards.js";
 
 async function test(name, fn) {
@@ -48,13 +50,17 @@ await test("dos ticks simultaneos no duplican la misma ocurrencia", () => {
   assert.deepEqual(results, [true, false]);
 });
 
-await test("reminder sent/cancelled y alertas sent/cancelled/failed no se muestran", () => {
+await test("reminder solo usa estados terminales canonicos; alertas sent/cancelled/failed no se muestran", () => {
   const guard = createReminderNotificationGuard();
-  for (const status of ["sent", "cancelled", "completed", "failed", "enviado", "cancelado", "completado", "fallido"]) {
+  for (const status of ["cancelled", "completed", "expired", "cancelado", "completado", "vencido"]) {
     const reminder = { id: `rem_${status}`, status };
     const key = buildReminderOccurrenceKey(reminder, { targetAt: 1787745600000 });
     assert.equal(guard.shouldQueue({ reminder, key }), false);
   }
+  assert.equal(normalizeReminderRuntimeStatus("sent"), "completado");
+  assert.equal(normalizeReminderRuntimeStatus("failed"), "vencido");
+  assert.equal(isTerminalReminderStatus("sent"), true);
+  assert.equal(isTerminalReminderStatus("failed"), true);
   const reminder = { id: "rem_alert_terminal", status: "pendiente" };
   for (const status of ["sent", "cancelled", "failed"]) {
     const alert = { id: `alert_${status}`, status };
@@ -86,7 +92,20 @@ await test("delete fallido restaura sin reencolar la ocurrencia anterior", () =>
   assert.equal(guard.shouldQueue({ reminder, key }), true);
   assert.equal(guard.markDeleted(reminder.id), true);
   assert.equal(guard.markDeleteSettled(reminder.id, { restore: true }), true);
+  assert.equal(guard.markDeleteSettled(reminder.id, { restore: true }), false);
   assert.equal(guard.shouldQueue({ reminder, key }), false);
+});
+
+await test("cambio de usuario limpia colas, tombstones y dedupe", () => {
+  const guard = createReminderNotificationGuard();
+  const reminder = { id: "rem_user_switch", status: "pendiente" };
+  const key = buildReminderOccurrenceKey(reminder, { targetAt: 1787745600000 });
+  assert.equal(guard.shouldQueue({ reminder, key }), true);
+  assert.equal(guard.markDeleted(reminder.id), true);
+  guard.clear();
+  assert.equal(guard.isDeleted(reminder.id), false);
+  assert.equal(guard.isDeleteInFlight(reminder.id), false);
+  assert.equal(guard.shouldQueue({ reminder, key }), true);
 });
 
 await test("deduplica por reminderId mas alertId o scheduleVersion", () => {

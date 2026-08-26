@@ -221,11 +221,93 @@ All automation routes are server-to-server only and must require
 
 - Marks the claimed alert as `sent`, stores `sent_at`, clears any lock/error,
   and advances recurring reminders by creating only the next due alert set.
+- Body should include the schedule version received from `/due`:
+  `{ "scheduleVersion": 3 }`.
+- If `scheduleVersion` is older than the reminder's current
+  `schedule_version`, the ACK is ignored and must not advance or mutate the
+  new occurrence.
 
 `POST /automation/reminder-alerts/:alertId/failed`
 
 - Stores `error_message`, increments `attempt_count`, clears the lock, and
   leaves the alert retryable while attempts remain reasonable.
+- Body may include `{ "scheduleVersion": 3, "error": "telegram_failed" }`.
+- Once retries are exhausted, `failed` is terminal for the current occurrence;
+  recurring reminders may advance when no `pending` alerts remain.
+
+`GET /automation/reminders/search`
+
+- Generic query endpoint for future and historical automation lookups.
+- Requires `X-Bookshell-Automation-Secret`.
+- Optional query params:
+  - `q`: free-text match against title, description, source external id, and
+    metadata.
+  - `eventType`: canonical metadata event type, for example `guardia`.
+  - `subject`: canonical metadata subject, for example `Laura`.
+  - `from` / `until`: `YYYY-MM-DD` inclusive bounds.
+  - `temporalScope`: `today`, `future`, `past`, or `all`.
+  - `status`: `pending`, `completed`, `expired`, `cancelled`, or `all`.
+  - `limit`: default 50, max 100.
+- `eventType` and `subject` prefer `source.metadata.eventType` and
+  `source.metadata.subject`. For older reminders without metadata, the backend
+  falls back to title/description text matching.
+- Results are chronological by `targetDate`, `targetTime`, then creation time.
+- Historical `past` queries exclude `cancelled` by default unless
+  `status=all` or `status=cancelled` is explicitly supplied.
+
+Example:
+
+```http
+GET /automation/reminders/search?eventType=guardia&subject=Laura&temporalScope=future&status=pending&limit=2
+X-Bookshell-Automation-Secret: ***
+```
+
+```json
+{
+  "ok": true,
+  "total": 2,
+  "limit": 2,
+  "filters": {
+    "q": "",
+    "eventType": "guardia",
+    "subject": "Laura",
+    "from": "",
+    "until": "",
+    "temporalScope": "future",
+    "status": "pending"
+  },
+  "results": [
+    {
+      "id": "7a6c0000-0000-4000-9000-000000000001",
+      "title": "Guardia Laura",
+      "type": "event",
+      "status": "pending",
+      "targetDate": "2026-09-14",
+      "targetTime": "09:00",
+      "source": {
+        "type": "telegram",
+        "externalId": "guardia-laura-2026-09-3",
+        "metadata": {
+          "groupId": "batch_guardia_laura_sep_2026",
+          "seriesKey": "guardia:laura",
+          "eventType": "guardia",
+          "subject": "Laura",
+          "groupIndex": 3,
+          "groupSize": 4
+        }
+      },
+      "recurrence": {
+        "type": "none",
+        "startDate": "2026-09-14",
+        "endDate": "",
+        "dailyTargetCount": 1,
+        "rule": {}
+      },
+      "alerts": []
+    }
+  ]
+}
+```
 
 `GET /automation/reminders?range=today`
 `GET /automation/reminders?range=tomorrow`

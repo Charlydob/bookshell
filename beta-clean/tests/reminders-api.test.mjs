@@ -149,3 +149,91 @@ await test("source external id survives for idempotency", () => {
   assert.equal(reminder.source.type, "gmail");
   assert.equal(reminder.source.externalId, "message-123");
 });
+
+await test("crear 4 reminders multifecha conserva group metadata sin recurrencia", () => {
+  const groupId = "batch_guardia_laura_sep_2026";
+  const dates = ["2026-09-02", "2026-09-07", "2026-09-14", "2026-09-28"];
+  const reminders = dates.map((targetDate, index) => normalizeCanonicalReminder({
+    title: "Guardia Laura",
+    type: "event",
+    targetDate,
+    recurrence: { type: "none" },
+    source: {
+      type: "telegram",
+      externalId: `guardia-laura-2026-09-${index + 1}`,
+      metadata: {
+        groupId,
+        seriesKey: "guardia:laura",
+        eventType: "guardia",
+        subject: "Laura",
+        groupIndex: index + 1,
+        groupSize: dates.length,
+      },
+    },
+  }));
+
+  assert.deepEqual(reminders.map((reminder) => reminder.targetDate), dates);
+  assert.deepEqual(reminders.map((reminder) => reminder.source.externalId), [
+    "guardia-laura-2026-09-1",
+    "guardia-laura-2026-09-2",
+    "guardia-laura-2026-09-3",
+    "guardia-laura-2026-09-4",
+  ]);
+  assert.equal(new Set(reminders.map((reminder) => reminder.source.metadata.groupId)).size, 1);
+  assert.deepEqual(reminders.map((reminder) => reminder.source.metadata.groupIndex), [1, 2, 3, 4]);
+  assert.deepEqual(reminders.map((reminder) => reminder.recurrence.type), ["none", "none", "none", "none"]);
+});
+
+await test("metadata round-trip entre reminders-api y notes-mapper", () => {
+  const canonical = normalizeCanonicalReminder({
+    title: "Guardia Laura",
+    type: "event",
+    targetDate: "2026-09-02",
+    source: {
+      type: "telegram",
+      externalId: "guardia-laura-2026-09-02",
+      metadata: {
+        groupId: "batch_guardia_laura_sep_2026",
+        seriesKey: "guardia:laura",
+        eventType: "guardia",
+        subject: "Laura",
+        groupIndex: 1,
+        groupSize: 4,
+      },
+    },
+  });
+  const mapped = mapReminderFromDb("rem_guardia_1", canonical);
+
+  assert.equal(mapped.source.metadata.groupId, "batch_guardia_laura_sep_2026");
+  assert.equal(mapped.source.metadata.seriesKey, "guardia:laura");
+  assert.equal(mapped.source.metadata.eventType, "guardia");
+  assert.equal(mapped.source.metadata.subject, "Laura");
+  assert.equal(mapped.source.metadata.groupIndex, 1);
+  assert.equal(mapped.source.metadata.groupSize, 4);
+});
+
+await test("sent/failed en reminder status no salen como estados canonicos invalidos", () => {
+  assert.equal(normalizeCanonicalReminder({ targetDate: "2026-08-26", status: "sent" }).status, "completed");
+  assert.equal(normalizeCanonicalReminder({ targetDate: "2026-08-26", status: "failed" }).status, "expired");
+  assert.equal(mapReminderFromDb("rem_sent", { targetDate: "2026-08-26", status: "sent" }).status, "completado");
+  assert.equal(mapReminderFromDb("rem_failed", { targetDate: "2026-08-26", status: "failed" }).status, "vencido");
+});
+
+await test("borrar una ocurrencia no borra el grupo completo", async () => {
+  await deleteReminder("rem_guardia_laura_2");
+  assert.equal(lastCall().url, "https://api-bookshell.charlydob.com/reminders/rem_guardia_laura_2");
+  assert.equal(lastCall().options.method, "DELETE");
+  assert.equal(lastCall().options.body, null);
+});
+
+await test("reminders antiguos sin metadata siguen mapeando source vacio", () => {
+  const mapped = mapReminderFromDb("rem_legacy_guardia", {
+    title: "Guardia Laura",
+    type: "event",
+    status: "pending",
+    targetDate: "2026-09-02",
+  });
+
+  assert.equal(mapped.title, "Guardia Laura");
+  assert.deepEqual(mapped.source.metadata, {});
+});

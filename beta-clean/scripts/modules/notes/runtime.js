@@ -47,7 +47,7 @@ import {
   isTerminalReminderAlert,
   isTerminalReminderStatus,
   normalizeReminderRuntimeStatus,
-} from "./reminders-runtime-guards.js?v=2026-08-26-v1";
+} from "./reminders-runtime-guards.js?v=2026-08-26-v2";
 import {
   deleteNoteAttachmentImageAsset,
   deleteNoteImageAsset,
@@ -156,7 +156,7 @@ const noteLocationMapState = {
 const reminderExpandedChecklist = new Set();
 const expandedSnippetNotes = new Set();
 const REMINDER_TYPES = ["normal", "cumpleaños", "tarea", "evento", "trámite", "checklist", "personalizado"];
-const REMINDER_STATUSES = ["pendiente", "completado", "vencido", "cancelado", "enviado", "fallido"];
+const REMINDER_STATUSES = ["pendiente", "completado", "vencido", "cancelado"];
 const REMINDER_RANGES = ["all", "today", "7d", "30d", "overdue"];
 const REMINDER_RECURRENCE_TYPES = ["none", "daily", "weekly", "monthly", "yearly", "custom"];
 const REMINDER_GROUP_BY = ["none", "category", "type", "date", "status"];
@@ -6378,8 +6378,6 @@ function renderReminderFilterControls() {
     completado: "completado",
     vencido: "vencido",
     cancelado: "cancelado",
-    enviado: "enviado",
-    fallido: "fallido",
   };
   const labelsByRange = {
     all: "todos",

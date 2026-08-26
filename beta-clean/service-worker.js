@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-08-25-reminders-api-postgres";
-const PUBLISHED_COMMIT = "f01cf4c";
+const APP_VERSION = "2026-08-26-reminders-guards-search-v2";
+const PUBLISHED_COMMIT = "local-reminders-v2";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
@@ -52,6 +52,7 @@ const LOCAL_PRECACHE_ASSETS = [
   
   "./scripts/modules/notes/index.js",
   "./scripts/modules/notes/runtime.js",
+  "./scripts/modules/notes/reminders-runtime-guards.js",
   "./scripts/modules/notes/domain/store.js",
   "./scripts/modules/notes/persist/notes-datasource.js",
   "./scripts/modules/notes/persist/notes-mapper.js",

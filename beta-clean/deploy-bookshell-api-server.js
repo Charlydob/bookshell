@@ -1,10 +1,29 @@
 const http = require("http");
 const crypto = require("crypto");
-const { Pool } = require("pg");
+let Pool = null;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+try {
+  ({ Pool } = require("pg"));
+} catch (_) {
+  Pool = null;
+}
+
+function createMissingPgPool() {
+  const throwMissingPg = async () => {
+    throw new Error("pg_dependency_missing");
+  };
+
+  return {
+    query: throwMissingPg,
+    connect: throwMissingPg,
+  };
+}
+
+const pool = Pool
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+    })
+  : createMissingPgPool();
 
 const PORT = 3002;
 
@@ -345,6 +364,11 @@ const REMINDER_STATUSES = new Set([
   "pending",
   "completed",
   "expired",
+  "cancelled",
+]);
+const REMINDER_ALERT_TERMINAL_STATUSES = new Set([
+  "sent",
+  "failed",
   "cancelled",
 ]);
 const REMINDER_SOURCE_TYPES = new Set([
@@ -1494,6 +1518,270 @@ function getRangeBounds(range = "all") {
   return { from: "", until: "" };
 }
 
+function readSearchParam(params = {}, key = "") {
+  if (params && typeof params.get === "function") {
+    return params.get(key);
+  }
+
+  return params?.[key];
+}
+
+function normalizeSearchText(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function normalizeTemporalScope(value = "") {
+  const safe = String(value || "").trim().toLowerCase();
+  return ["today", "future", "past", "all"].includes(safe)
+    ? safe
+    : "all";
+}
+
+function normalizeAutomationSearchStatus(value = "") {
+  const safe = String(value || "").trim().toLowerCase();
+  if (safe === "all") return "all";
+  return REMINDER_STATUSES.has(safe) ? safe : "all";
+}
+
+function normalizeAutomationReminderSearchParams(params = {}, options = {}) {
+  const now = options?.now instanceof Date && !Number.isNaN(options.now.getTime())
+    ? options.now
+    : new Date();
+  const todayParts = zonedParts(now, DEFAULT_REMINDER_TIMEZONE);
+  const today = options?.today || dateStringFromUtcParts(
+    todayParts.year,
+    todayParts.month,
+    todayParts.day
+  );
+  const rawStatus = normalizeSearchText(readSearchParam(params, "status"));
+  const temporalScope = normalizeTemporalScope(
+    readSearchParam(params, "temporalScope")
+  );
+
+  return {
+    q: normalizeSearchText(readSearchParam(params, "q")),
+    eventType: normalizeSearchText(readSearchParam(params, "eventType")),
+    subject: normalizeSearchText(readSearchParam(params, "subject")),
+    from: normalizeDateOnly(readSearchParam(params, "from")),
+    until: normalizeDateOnly(readSearchParam(params, "until")),
+    temporalScope,
+    status: normalizeAutomationSearchStatus(rawStatus),
+    statusExplicit: Boolean(rawStatus),
+    limit: clampInt(readSearchParam(params, "limit"), 50, 1, 100),
+    today,
+  };
+}
+
+function lowerIncludes(haystack = "", needle = "") {
+  return String(haystack || "")
+    .toLowerCase()
+    .includes(String(needle || "").toLowerCase());
+}
+
+function rowSearchText(row = {}) {
+  return [
+    row.title,
+    row.description,
+    row.source_external_id,
+    JSON.stringify(row.source_metadata || {}),
+  ].join(" ");
+}
+
+function matchesMetadataOrLegacyText(row = {}, field = "", value = "") {
+  const safeValue = normalizeSearchText(value);
+  if (!safeValue) return true;
+
+  const metadata = row.source_metadata && typeof row.source_metadata === "object"
+    ? row.source_metadata
+    : {};
+  const metadataValue = normalizeSearchText(metadata?.[field]);
+
+  if (metadataValue) {
+    return metadataValue.toLowerCase() === safeValue.toLowerCase();
+  }
+
+  return lowerIncludes(`${row.title || ""} ${row.description || ""}`, safeValue);
+}
+
+function matchesAutomationReminderSearch(row = {}, filters = {}) {
+  const targetDate = normalizeDateOnly(row.target_date || row.targetDate);
+  const status = normalizeReminderStatus(row.status);
+
+  if (filters.q && !lowerIncludes(rowSearchText(row), filters.q)) return false;
+  if (!matchesMetadataOrLegacyText(row, "eventType", filters.eventType)) return false;
+  if (!matchesMetadataOrLegacyText(row, "subject", filters.subject)) return false;
+  if (filters.from && targetDate < filters.from) return false;
+  if (filters.until && targetDate > filters.until) return false;
+  if (filters.temporalScope === "today" && targetDate !== filters.today) return false;
+  if (filters.temporalScope === "future" && targetDate < filters.today) return false;
+  if (filters.temporalScope === "past" && targetDate >= filters.today) return false;
+  if (filters.status !== "all" && status !== filters.status) return false;
+  if (
+    filters.temporalScope === "past" &&
+    !filters.statusExplicit &&
+    status === "cancelled"
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function compareAutomationReminderRows(a = {}, b = {}) {
+  const aDate = normalizeDateOnly(a.target_date || a.targetDate);
+  const bDate = normalizeDateOnly(b.target_date || b.targetDate);
+  if (aDate !== bDate) return aDate.localeCompare(bDate);
+
+  const aTime = normalizeTimeOnly(a.target_time || a.targetTime);
+  const bTime = normalizeTimeOnly(b.target_time || b.targetTime);
+  if (aTime !== bTime) return aTime.localeCompare(bTime);
+
+  return String(a.created_at || a.createdAt || a.id || "")
+    .localeCompare(String(b.created_at || b.createdAt || b.id || ""));
+}
+
+function searchAutomationReminderRows(rows = [], params = {}, options = {}) {
+  const filters = normalizeAutomationReminderSearchParams(params, options);
+  const matched = (Array.isArray(rows) ? rows : [])
+    .filter((row) => matchesAutomationReminderSearch(row, filters))
+    .sort(compareAutomationReminderRows);
+
+  return {
+    filters,
+    total: matched.length,
+    results: matched.slice(0, filters.limit),
+  };
+}
+
+function buildAutomationReminderSearchQuery(params = {}, options = {}) {
+  const filters = normalizeAutomationReminderSearchParams(params, options);
+  const where = ["firebase_uid = $1"];
+  const values = [LEGACY_FIREBASE_UID];
+  const likeValue = (value) => `%${String(value || "").replace(/[%_\\]/g, "\\$&")}%`;
+
+  if (filters.q) {
+    values.push(likeValue(filters.q));
+    where.push(`(
+      title ILIKE $${values.length} ESCAPE '\\'
+      OR description ILIKE $${values.length} ESCAPE '\\'
+      OR source_external_id ILIKE $${values.length} ESCAPE '\\'
+      OR source_metadata::text ILIKE $${values.length} ESCAPE '\\'
+    )`);
+  }
+
+  for (const [field, value] of [
+    ["eventType", filters.eventType],
+    ["subject", filters.subject],
+  ]) {
+    if (!value) continue;
+    values.push(value);
+    const exactIndex = values.length;
+    values.push(likeValue(value));
+    const likeIndex = values.length;
+    where.push(`(
+      LOWER(COALESCE(source_metadata->>'${field}', '')) = LOWER($${exactIndex})
+      OR (
+        COALESCE(source_metadata->>'${field}', '') = ''
+        AND (
+          title ILIKE $${likeIndex} ESCAPE '\\'
+          OR description ILIKE $${likeIndex} ESCAPE '\\'
+        )
+      )
+    )`);
+  }
+
+  if (filters.from) {
+    values.push(filters.from);
+    where.push(`target_date >= $${values.length}`);
+  }
+
+  if (filters.until) {
+    values.push(filters.until);
+    where.push(`target_date <= $${values.length}`);
+  }
+
+  if (filters.temporalScope === "today") {
+    values.push(filters.today);
+    where.push(`target_date = $${values.length}`);
+  } else if (filters.temporalScope === "future") {
+    values.push(filters.today);
+    where.push(`target_date >= $${values.length}`);
+  } else if (filters.temporalScope === "past") {
+    values.push(filters.today);
+    where.push(`target_date < $${values.length}`);
+  }
+
+  if (filters.status !== "all") {
+    values.push(filters.status);
+    where.push(`status = $${values.length}`);
+  } else if (filters.temporalScope === "past" && !filters.statusExplicit) {
+    where.push("status <> 'cancelled'");
+  }
+
+  const whereSql = where.join(" AND ");
+  const countQuery = `
+    SELECT COUNT(*)::int AS total
+    FROM reminders
+    WHERE ${whereSql}
+  `;
+  const rowValues = [...values, filters.limit];
+  const rowsQuery = `
+    SELECT *
+    FROM reminders
+    WHERE ${whereSql}
+    ORDER BY
+      target_date ASC,
+      target_time ASC NULLS FIRST,
+      created_at ASC
+    LIMIT $${rowValues.length}
+  `;
+
+  return {
+    filters,
+    countQuery,
+    countValues: values,
+    rowsQuery,
+    rowValues,
+  };
+}
+
+async function searchAutomationReminders(params = {}) {
+  const query = buildAutomationReminderSearchQuery(params);
+  const countResult = await pool.query(
+    query.countQuery,
+    query.countValues
+  );
+  const rows = await pool.query(
+    query.rowsQuery,
+    query.rowValues
+  );
+  const results = [];
+
+  for (const row of rows.rows) {
+    results.push(
+      serializeReminder(
+        row,
+        await getReminderAlerts(pool, row.id)
+      )
+    );
+  }
+
+  return {
+    total: Number(countResult.rows[0]?.total || 0),
+    limit: query.filters.limit,
+    filters: {
+      q: query.filters.q,
+      eventType: query.filters.eventType,
+      subject: query.filters.subject,
+      from: query.filters.from,
+      until: query.filters.until,
+      temporalScope: query.filters.temporalScope,
+      status: query.filters.status,
+    },
+    results,
+  };
+}
+
 async function listAutomationReminders(range = "all", limit = 20) {
   const allowedRanges = new Set([
     "today",
@@ -1563,9 +1851,35 @@ async function listAutomationReminders(range = "all", limit = 20) {
 async function claimDueReminderAlerts(limit = 50) {
   const client = await pool.connect();
   const workerId = `n8n-${crypto.randomUUID()}`;
+  let staleReminderIds = [];
 
   try {
     await client.query("BEGIN");
+
+    const staleResult = await client.query(
+      `
+        UPDATE reminder_alerts a
+        SET
+          status = 'failed',
+          failed_at = NOW(),
+          error_message = 'expired_before_delivery',
+          locked_at = NULL,
+          locked_by = NULL,
+          updated_at = NOW()
+        FROM reminders r
+        WHERE r.id = a.reminder_id
+          AND a.status = 'pending'
+          AND a.notify_at IS NOT NULL
+          AND a.notify_at < NOW() - INTERVAL '30 minutes'
+          AND r.firebase_uid = $1
+        RETURNING a.reminder_id
+      `,
+      [LEGACY_FIREBASE_UID]
+    );
+
+    staleReminderIds = Array.from(new Set(
+      staleResult.rows.map((row) => row.reminder_id).filter(Boolean)
+    ));
 
     const picked = await client.query(
       `
@@ -1596,6 +1910,10 @@ async function claimDueReminderAlerts(limit = 50) {
 
     if (!ids.length) {
       await client.query("COMMIT");
+
+      for (const reminderId of staleReminderIds) {
+        await advanceRecurringReminderIfFinished(reminderId);
+      }
 
       return {
         workerId,
@@ -1644,6 +1962,10 @@ async function claimDueReminderAlerts(limit = 50) {
     );
 
     await client.query("COMMIT");
+
+    for (const reminderId of staleReminderIds) {
+      await advanceRecurringReminderIfFinished(reminderId);
+    }
 
     return {
       workerId,
@@ -1716,7 +2038,7 @@ async function advanceRecurringReminderIfFinished(reminderId) {
         SELECT COUNT(*)::int AS count
         FROM reminder_alerts
         WHERE reminder_id = $1
-          AND status IN ('pending', 'failed')
+          AND status = 'pending'
       `,
       [reminderId]
     );
@@ -1762,12 +2084,12 @@ async function advanceRecurringReminderIfFinished(reminderId) {
       reminder.timezone
     );
 
-    const sentAlerts = await client.query(
+    const terminalAlerts = await client.query(
       `
         SELECT *
         FROM reminder_alerts
         WHERE reminder_id = $1
-          AND status = 'sent'
+          AND status IN ('sent', 'failed')
         FOR UPDATE
       `,
       [reminderId]
@@ -1786,7 +2108,7 @@ async function advanceRecurringReminderIfFinished(reminderId) {
       [reminderId, nextDate]
     );
 
-    for (const alert of sentAlerts.rows) {
+    for (const alert of terminalAlerts.rows) {
       let nextNotifyAt;
 
       if (alert.mode === "relative") {
@@ -1835,49 +2157,149 @@ async function advanceRecurringReminderIfFinished(reminderId) {
   }
 }
 
-async function markReminderAlertSent(alertId) {
-  const result = await pool.query(
-    `
-      UPDATE reminder_alerts
-      SET
-        status = 'sent',
-        sent_at = NOW(),
-        failed_at = NULL,
-        error_message = NULL,
-        locked_at = NULL,
-        locked_by = NULL,
-        updated_at = NOW()
-      WHERE id = $1
-      RETURNING reminder_id
-    `,
-    [alertId]
-  );
+async function markReminderAlertSent(alertId, scheduleVersion = null) {
+  const client = await pool.connect();
+  let reminderId = "";
+  let shouldAdvance = false;
 
-  if (!result.rows.length) return null;
+  try {
+    await client.query("BEGIN");
 
-  const reminderId = result.rows[0].reminder_id;
+    const current = await client.query(
+      `
+        SELECT
+          a.id,
+          a.status,
+          a.reminder_id,
+          r.schedule_version
+        FROM reminder_alerts a
+        INNER JOIN reminders r
+          ON r.id = a.reminder_id
+        WHERE a.id = $1
+          AND r.firebase_uid = $2
+        FOR UPDATE OF a, r
+      `,
+      [alertId, LEGACY_FIREBASE_UID]
+    );
 
-  await advanceRecurringReminderIfFinished(reminderId);
+    if (!current.rows.length) {
+      await client.query("ROLLBACK");
+      return null;
+    }
 
-  return {
-    alertId,
-    reminderId,
-    status: "sent",
-  };
+    const row = current.rows[0];
+    reminderId = row.reminder_id;
+    const currentScheduleVersion = Number(row.schedule_version || 1);
+    const suppliedScheduleVersion = Number(scheduleVersion);
+    const hasScheduleVersion = Number.isFinite(suppliedScheduleVersion);
+
+    if (
+      hasScheduleVersion &&
+      suppliedScheduleVersion !== currentScheduleVersion
+    ) {
+      await client.query("COMMIT");
+      return {
+        alertId,
+        reminderId,
+        status: row.status,
+        scheduleVersion: currentScheduleVersion,
+        ignored: true,
+        reason: "stale_schedule_version",
+      };
+    }
+
+    if (row.status !== "pending") {
+      await client.query("COMMIT");
+      return {
+        alertId,
+        reminderId,
+        status: row.status,
+        scheduleVersion: currentScheduleVersion,
+        ignored: true,
+        reason: REMINDER_ALERT_TERMINAL_STATUSES.has(row.status)
+          ? "terminal_alert"
+          : "not_pending",
+      };
+    }
+
+    await client.query(
+      `
+        UPDATE reminder_alerts
+        SET
+          status = 'sent',
+          sent_at = NOW(),
+          failed_at = NULL,
+          error_message = NULL,
+          locked_at = NULL,
+          locked_by = NULL,
+          updated_at = NOW()
+        WHERE id = $1
+      `,
+      [alertId]
+    );
+
+    shouldAdvance = true;
+
+    await client.query("COMMIT");
+
+    if (shouldAdvance) {
+      await advanceRecurringReminderIfFinished(reminderId);
+    }
+
+    return {
+      alertId,
+      reminderId,
+      status: "sent",
+      scheduleVersion: currentScheduleVersion,
+      ignored: false,
+    };
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
-async function markReminderAlertFailed(alertId, errorMessage = "") {
+async function markReminderAlertFailed(alertId, errorMessage = "", scheduleVersion = null) {
   const current = await pool.query(
     `
-      SELECT attempt_count, reminder_id
-      FROM reminder_alerts
-      WHERE id = $1
+      SELECT
+        a.attempt_count,
+        a.reminder_id,
+        r.schedule_version
+      FROM reminder_alerts a
+      INNER JOIN reminders r
+        ON r.id = a.reminder_id
+      WHERE a.id = $1
+        AND r.firebase_uid = $2
       LIMIT 1
     `,
-    [alertId]
+    [alertId, LEGACY_FIREBASE_UID]
   );
 
   if (!current.rows.length) return null;
+
+  const currentScheduleVersion = Number(current.rows[0].schedule_version || 1);
+  const suppliedScheduleVersion = Number(scheduleVersion);
+
+  if (
+    Number.isFinite(suppliedScheduleVersion) &&
+    suppliedScheduleVersion !== currentScheduleVersion
+  ) {
+    return {
+      alertId,
+      reminderId: current.rows[0].reminder_id,
+      status: "ignored",
+      scheduleVersion: currentScheduleVersion,
+      retrying: false,
+      ignored: true,
+      reason: "stale_schedule_version",
+    };
+  }
 
   const attemptCount = Number(
     current.rows[0].attempt_count || 0
@@ -1911,10 +2333,17 @@ async function markReminderAlertFailed(alertId, errorMessage = "") {
     ]
   );
 
+  const reminderId = result.rows[0]?.reminder_id;
+
+  if (!shouldRetry && reminderId) {
+    await advanceRecurringReminderIfFinished(reminderId);
+  }
+
   return {
     alertId,
-    reminderId: result.rows[0]?.reminder_id,
+    reminderId,
     status: shouldRetry ? "pending" : "failed",
+    scheduleVersion: currentScheduleVersion,
     retrying: shouldRetry,
   };
 }
@@ -2536,6 +2965,27 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (
+    req.method === "GET" &&
+    url.pathname === "/automation/reminders/search"
+  ) {
+    try {
+      const result = await searchAutomationReminders(url.searchParams);
+
+      return sendJson(req, res, 200, {
+        ok: true,
+        ...result,
+      });
+    } catch (error) {
+      console.error(error);
+
+      return sendJson(req, res, 500, {
+        ok: false,
+        error: "internal_error",
+      });
+    }
+  }
+
+  if (
     req.method === "POST" &&
     url.pathname === "/automation/reminders"
   ) {
@@ -2727,8 +3177,10 @@ const server = http.createServer(async (req, res) => {
     alertSentMatch
   ) {
     try {
+      const body = await readJson(req);
       const result = await markReminderAlertSent(
-        alertSentMatch[1]
+        alertSentMatch[1],
+        body?.scheduleVersion
       );
 
       if (!result) {
@@ -2764,7 +3216,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const result = await markReminderAlertFailed(
         alertFailedMatch[1],
-        body?.error || body?.message || ""
+        body?.error || body?.message || "",
+        body?.scheduleVersion
       );
 
       if (!result) {
@@ -3243,8 +3696,24 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(
-    `Bookshell API listening on port ${PORT} - AUTH DISABLED`
-  );
-});
+if (require.main === module) {
+  if (!Pool) {
+    throw new Error("pg_dependency_missing");
+  }
+
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(
+      `Bookshell API listening on port ${PORT} - AUTH DISABLED`
+    );
+  });
+}
+
+module.exports = {
+  __test: {
+    buildAutomationReminderSearchQuery,
+    matchesAutomationReminderSearch,
+    normalizeAutomationReminderSearchParams,
+    searchAutomationReminderRows,
+    serializeReminder,
+  },
+};

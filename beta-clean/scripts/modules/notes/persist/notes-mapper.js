@@ -198,13 +198,13 @@ function normalizeReminderStatus(value = "") {
     expired: "vencido",
     cancelled: "cancelado",
     cancelado: "cancelado",
-    sent: "enviado",
-    enviado: "enviado",
-    failed: "fallido",
-    fallido: "fallido",
+    sent: "completado",
+    enviado: "completado",
+    failed: "vencido",
+    fallido: "vencido",
   };
   const normalized = aliases[safe] || safe;
-  return ["pendiente", "completado", "vencido", "cancelado", "enviado", "fallido"].includes(normalized) ? normalized : "pendiente";
+  return ["pendiente", "completado", "vencido", "cancelado"].includes(normalized) ? normalized : "pendiente";
 }
 
 function normalizeReminderDate(value = "") {

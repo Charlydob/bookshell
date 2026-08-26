@@ -3,10 +3,8 @@ const TERMINAL_REMINDER_STATUSES = new Set([
   "completed",
   "cancelado",
   "cancelled",
-  "enviado",
-  "sent",
-  "fallido",
-  "failed",
+  "vencido",
+  "expired",
 ]);
 
 const TERMINAL_ALERT_STATUSES = new Set(["sent", "failed", "cancelled"]);
@@ -32,10 +30,10 @@ export function normalizeReminderRuntimeStatus(value = "") {
     expired: "vencido",
     cancelled: "cancelado",
     cancelado: "cancelado",
-    sent: "enviado",
-    enviado: "enviado",
-    failed: "fallido",
-    fallido: "fallido",
+    sent: "completado",
+    enviado: "completado",
+    failed: "vencido",
+    fallido: "vencido",
   };
   return aliases[safe] || safe;
 }

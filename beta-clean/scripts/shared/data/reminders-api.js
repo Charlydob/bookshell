@@ -57,6 +57,10 @@ function normalizeReminderStatus(value = "") {
     completado: "completed",
     vencido: "expired",
     cancelado: "cancelled",
+    enviado: "completed",
+    sent: "completed",
+    fallido: "expired",
+    failed: "expired",
   };
   const safe = String(value || "").trim().toLowerCase();
   return normalizeEnum(aliases[safe] || safe, REMINDER_STATUSES, "pending");

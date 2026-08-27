@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-08-27-ios-push-diagnostics-v2";
-const PUBLISHED_COMMIT = "ios-push-diagnostics-v2";
+const APP_VERSION = "2026-08-27-pwa-root-scope-v3";
+const PUBLISHED_COMMIT = "pwa-root-scope-v3";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
@@ -222,7 +222,7 @@ function isServiceWorkerScript(url) {
 
 async function purgeBookshellCaches(reason = "unknown") {
   const keys = await caches.keys();
-  const staleKeys = keys.filter((key) => key.startsWith(CACHE_PREFIX));
+  const staleKeys = keys.filter((key) => key.startsWith(CACHE_PREFIX) && !ACTIVE_CACHE_NAMES.includes(key));
   console.info("[sw:cache:keys-before-purge]", {
     reason,
     keys,
@@ -260,9 +260,8 @@ self.addEventListener("activate", (event) => {
   console.info("[offline:boot]", { phase: "sw-activate", version: APP_VERSION, commit: PUBLISHED_COMMIT });
   event.waitUntil(
     (async () => {
-      await self.skipWaiting();
-      const purgedKeys = await purgeBookshellCaches("activate-force-purge");
       await precacheLocalAssets();
+      const purgedKeys = await purgeBookshellCaches("activate-stale-cache-cleanup");
       const activeKeys = (await caches.keys()).filter((key) => key.startsWith(CACHE_PREFIX));
       console.info("[sw:cache:active-after-purge]", {
         activeKeys,

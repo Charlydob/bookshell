@@ -90,8 +90,8 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
-const APP_PUBLISHED_COMMIT = "ios-push-diagnostics-v2";
-const SERVICE_WORKER_VERSION = "2026-08-27-ios-push-diagnostics-v2";
+const APP_PUBLISHED_COMMIT = "pwa-root-scope-v3";
+const SERVICE_WORKER_VERSION = "2026-08-27-pwa-root-scope-v3";
 const FINANCE_MODULE_VERSION = "2026-08-23-api-data-provider-no-rtdb";
 const BOOKSHELL_CACHE_PREFIX = "bookshell-";
 const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
@@ -99,7 +99,6 @@ const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
   `bookshell-runtime-${SERVICE_WORKER_VERSION}`,
 ]);
 const BOOKSHELL_CACHE_PURGE_MARKER_KEY = "bookshell:cache-purge-version";
-const BOOKSHELL_CACHE_PURGE_RELOAD_KEY = "bookshell:cache-purge-reloaded";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
@@ -225,24 +224,12 @@ function isOldBookshellServiceWorker(registration) {
   return scriptUrl && scriptUrl.includes("service-worker.js") && !scriptUrl.includes(SERVICE_WORKER_VERSION);
 }
 
-function buildCachePurgeReloadUrl() {
-  try {
-    const url = new URL(window.location.href);
-    url.searchParams.set("cachePurge", SERVICE_WORKER_VERSION);
-    url.searchParams.set("cachePurgeTs", String(Date.now()));
-    return url.href;
-  } catch (_) {
-    return window.location.href;
-  }
-}
-
 async function purgeBookshellRuntimeCachesIfNeeded(reason = "startup") {
   const markerBefore = getStoredValue(window.localStorage, BOOKSHELL_CACHE_PURGE_MARKER_KEY);
   const cacheKeys = "caches" in window && caches.keys ? await caches.keys() : [];
   const bookshellKeys = cacheKeys.filter((key) => key.startsWith(BOOKSHELL_CACHE_PREFIX));
   const staleBookshellKeys = bookshellKeys.filter((key) => !BOOKSHELL_EXPECTED_CACHE_NAMES.includes(key));
-  const markerMismatch = markerBefore !== SERVICE_WORKER_VERSION;
-  const mustPurge = markerMismatch || staleBookshellKeys.length > 0;
+  const mustPurge = staleBookshellKeys.length > 0;
   let registrations = [];
   let oldRegistrations = [];
 
@@ -251,27 +238,21 @@ async function purgeBookshellRuntimeCachesIfNeeded(reason = "startup") {
     oldRegistrations = registrations.filter(isOldBookshellServiceWorker);
   }
 
-  if (!mustPurge && oldRegistrations.length === 0) {
+  setStoredValue(window.localStorage, BOOKSHELL_CACHE_PURGE_MARKER_KEY, SERVICE_WORKER_VERSION);
+
+  if (!mustPurge) {
     window.__bookshellVersion.cacheKeysAtRuntimeBoot = cacheKeys;
-    return { purged: false, cacheKeys, staleBookshellKeys, oldServiceWorkers: 0 };
+    window.__bookshellVersion.oldServiceWorkersAtRuntimeBoot = oldRegistrations.length;
+    return { purged: false, cacheKeys, staleBookshellKeys, oldServiceWorkers: oldRegistrations.length };
   }
 
-  const keysToDelete = bookshellKeys;
+  const keysToDelete = staleBookshellKeys;
   await Promise.all(keysToDelete.map(async (key) => {
     const deleted = await caches.delete(key);
     console.warn("[cache-purge:runtime:deleted]", { key, deleted, reason });
     return deleted;
   }));
 
-  await Promise.all(oldRegistrations.map(async (registration) => {
-    console.warn("[cache-purge:runtime:unregister-old-sw]", {
-      scope: registration.scope,
-      reason,
-    });
-    return registration.unregister();
-  }));
-
-  setStoredValue(window.localStorage, BOOKSHELL_CACHE_PURGE_MARKER_KEY, SERVICE_WORKER_VERSION);
   window.__bookshellVersion.cacheKeysAtRuntimeBoot = cacheKeys;
   window.__bookshellVersion.purgedRuntimeCacheKeys = keysToDelete;
   window.__bookshellVersion.oldServiceWorkersAtRuntimeBoot = oldRegistrations.length;
@@ -286,13 +267,6 @@ async function purgeBookshellRuntimeCachesIfNeeded(reason = "startup") {
     oldServiceWorkers: oldRegistrations.length,
     controlled: !!navigator.serviceWorker?.controller,
   });
-
-  const shouldReload = (keysToDelete.length > 0 || oldRegistrations.length > 0 || !!navigator.serviceWorker?.controller)
-    && getStoredValue(window.sessionStorage, BOOKSHELL_CACHE_PURGE_RELOAD_KEY) !== SERVICE_WORKER_VERSION;
-  if (shouldReload) {
-    setStoredValue(window.sessionStorage, BOOKSHELL_CACHE_PURGE_RELOAD_KEY, SERVICE_WORKER_VERSION);
-    window.location.replace(buildCachePurgeReloadUrl());
-  }
 
   return { purged: true, cacheKeys, staleBookshellKeys, oldServiceWorkers: oldRegistrations.length };
 }

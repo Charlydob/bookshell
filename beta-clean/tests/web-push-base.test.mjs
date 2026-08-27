@@ -63,12 +63,23 @@ await test("public test config never exports the VAPID private key", () => {
   assert.doesNotMatch(source, /vapidPrivateKey\s*:/);
 });
 
-await test("iOS manifest uses an explicit stable app identity and scope", () => {
+await test("push schema migration is idempotent and creates table plus active index", async () => {
+  const calls = [];
+  const db = { query: async (sql) => { calls.push(sql); return { rows: [] }; } };
+  await __test.ensurePushSubscriptionsSchema(db);
+  await __test.ensurePushSubscriptionsSchema(db);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /CREATE TABLE IF NOT EXISTS push_subscriptions/);
+  assert.match(calls[0], /CREATE INDEX IF NOT EXISTS push_subscriptions_active_user_idx/);
+});
+
+await test("iOS manifest uses the deployed root-relative app identity", () => {
   const manifest = JSON.parse(readFileSync(new URL("../manifest.webmanifest", import.meta.url), "utf8"));
-  assert.deepEqual(
-    { id: manifest.id, start_url: manifest.start_url, scope: manifest.scope, display: manifest.display },
-    { id: "/beta-clean/", start_url: "/beta-clean/index.html", scope: "/beta-clean/", display: "standalone" },
-  );
+  assert.equal(manifest.start_url, ".");
+  assert.equal(manifest.display, "standalone");
+  assert.equal(manifest.id, undefined);
+  assert.equal(manifest.scope, undefined);
+  assert.doesNotMatch(JSON.stringify(manifest), /\/beta-clean\//);
 });
 
 await test("iOS push support is detected from the service worker registration", () => {
@@ -85,4 +96,20 @@ await test("temporary diagnostics expose each iOS Web Push prerequisite", () => 
     "Service worker registration activa", "PushManager global disponible",
     "registration.pushManager disponible", "Notification disponible", "Notification.permission",
   ]) assert.match(source, new RegExp(label.replace(".", "\\.")));
+});
+
+await test("PWA boot cleanup cannot unregister workers or force a reload", () => {
+  const mainSource = readFileSync(new URL("../scripts/app/main.js", import.meta.url), "utf8");
+  const inlineBootSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(mainSource, /cache-purge:runtime:unregister-old-sw/);
+  assert.doesNotMatch(mainSource, /BOOKSHELL_CACHE_PURGE_RELOAD_KEY/);
+  assert.doesNotMatch(mainSource, /location\.replace\(buildCachePurgeReloadUrl/);
+  assert.doesNotMatch(inlineBootSource, /purgeBookshellCachesAtBoot\("startup-version-check"\)/);
+});
+
+await test("service worker keeps active caches during activation", () => {
+  const source = readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
+  assert.match(source, /!ACTIVE_CACHE_NAMES\.includes\(key\)/);
+  assert.match(source, /await precacheLocalAssets\(\);\s+const purgedKeys = await purgeBookshellCaches\("activate-stale-cache-cleanup"\)/);
+  assert.doesNotMatch(source, /activate-force-purge/);
 });

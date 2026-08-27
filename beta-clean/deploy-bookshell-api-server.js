@@ -163,6 +163,38 @@ function normalizePushSubscription(value) {
   return { endpoint, keys: { p256dh, auth } };
 }
 
+const pushSchemaReadyByDb = new WeakMap();
+
+function ensurePushSubscriptionsSchema(db = pool) {
+  if (!db || typeof db.query !== "function") {
+    throw new Error("database_unavailable");
+  }
+  let ready = pushSchemaReadyByDb.get(db);
+  if (!ready) {
+    ready = db.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id uuid NOT NULL,
+        endpoint text NOT NULL UNIQUE,
+        p256dh text NOT NULL,
+        auth text NOT NULL,
+        user_agent text,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        last_success_at timestamptz,
+        last_failure_at timestamptz,
+        failure_count integer NOT NULL DEFAULT 0,
+        disabled_at timestamptz
+      );
+
+      CREATE INDEX IF NOT EXISTS push_subscriptions_active_user_idx
+        ON push_subscriptions (user_id) WHERE disabled_at IS NULL;
+    `);
+    pushSchemaReadyByDb.set(db, ready);
+  }
+  return ready;
+}
+
 async function upsertPushSubscription(db, subscription, userAgent = null) {
   const result = await db.query(`
     INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent)
@@ -2693,6 +2725,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/push/status") {
     try {
+      await ensurePushSubscriptionsSchema(pool);
       const result = await pool.query(`SELECT id, endpoint, created_at, updated_at, last_success_at,
         last_failure_at, failure_count FROM push_subscriptions
         WHERE user_id = $1 AND disabled_at IS NULL ORDER BY updated_at DESC`, [SINGLE_USER_ID]);
@@ -2714,6 +2747,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/push/subscribe") {
     try {
       if (!isPushConfigured) return sendJson(req, res, 503, { ok: false, error: "push_not_configured" });
+      await ensurePushSubscriptionsSchema(pool);
       const subscription = normalizePushSubscription(await readJson(req));
       if (!subscription) return sendJson(req, res, 400, { ok: false, error: "invalid_subscription" });
       const row = await upsertPushSubscription(pool, subscription, String(req.headers["user-agent"] || "").slice(0, 1000) || null);
@@ -2726,6 +2760,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/push/unsubscribe") {
     try {
+      await ensurePushSubscriptionsSchema(pool);
       const endpoint = String((await readJson(req))?.endpoint || "").trim();
       if (!endpoint) return sendJson(req, res, 400, { ok: false, error: "endpoint_required" });
       const result = await pool.query(`UPDATE push_subscriptions SET disabled_at = now(), updated_at = now()
@@ -2740,6 +2775,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/push/test") {
     try {
       if (!isPushConfigured) return sendJson(req, res, 503, { ok: false, accepted: false, error: "push_not_configured" });
+      await ensurePushSubscriptionsSchema(pool);
       const endpoint = String((await readJson(req))?.endpoint || "").trim();
       if (!endpoint) return sendJson(req, res, 400, { ok: false, accepted: false, error: "endpoint_required" });
       const result = await sendPushToEndpoint(pool, webPush, endpoint, { title: "Bookshell", body: "Web Push funciona correctamente.", url: "/", type: "test" });
@@ -3824,6 +3860,12 @@ if (require.main === module) {
     throw new Error("pg_dependency_missing");
   }
 
+  void ensurePushSubscriptionsSchema(pool).then(() => {
+    console.log("[push:schema] push_subscriptions ready");
+  }).catch((error) => {
+    console.warn("[push:schema] push_subscriptions setup failed", String(error?.message || error));
+  });
+
   server.listen(PORT, "0.0.0.0", () => {
     console.log(
       `Bookshell API listening on port ${PORT} - AUTH DISABLED`
@@ -3839,6 +3881,7 @@ module.exports = {
     searchAutomationReminderRows,
     serializeReminder,
     normalizePushSubscription,
+    ensurePushSubscriptionsSchema,
     sendPushToEndpoint,
     upsertPushSubscription,
     pushConfig: { configured: isPushConfigured, publicKey: VAPID_PUBLIC_KEY },

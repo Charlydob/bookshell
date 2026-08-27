@@ -90,8 +90,8 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
-const APP_PUBLISHED_COMMIT = "web-push-base-v1";
-const SERVICE_WORKER_VERSION = "2026-08-27-web-push-base-v1";
+const APP_PUBLISHED_COMMIT = "ios-push-diagnostics-v2";
+const SERVICE_WORKER_VERSION = "2026-08-27-ios-push-diagnostics-v2";
 const FINANCE_MODULE_VERSION = "2026-08-23-api-data-provider-no-rtdb";
 const BOOKSHELL_CACHE_PREFIX = "bookshell-";
 const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
@@ -904,6 +904,21 @@ async function renderSettingsModal() {
 
   let pushState = { supported: false, permission: "unsupported", registered: false, configured: false };
   try { pushState = await getPushState(); } catch (error) { console.warn("[push:status]", error); }
+  const pushDiagnostics = pushState.diagnostics || {
+    currentUrl: window.location.href,
+    displayModeStandalone: Boolean(window.matchMedia?.("(display-mode: standalone)")?.matches),
+    navigatorStandalone: navigator.standalone,
+    serviceWorkerAvailable: "serviceWorker" in navigator,
+    serviceWorkerRegistrationActive: false,
+    pushManagerGlobalAvailable: "PushManager" in window,
+    registrationPushManagerAvailable: false,
+    notificationAvailable: "Notification" in window,
+    notificationPermission: "Notification" in window ? Notification.permission : "unsupported",
+  };
+  const yesNo = (value) => value ? "Sí" : "No";
+  const standaloneValue = pushDiagnostics.navigatorStandalone === undefined
+    ? "undefined"
+    : String(pushDiagnostics.navigatorStandalone);
 
   const themeButtons = getAvailableThemes().map((theme) => `
     <button
@@ -933,6 +948,18 @@ async function renderSettingsModal() {
         <div class="app-settings-kpi"><small>Permiso</small><strong>${pushState.permission}</strong></div>
         <div class="app-settings-kpi"><small>Registrado</small><strong>${pushState.registered ? "Sí" : "No"}</strong></div>
       </div>
+      <dl class="app-settings-pushDiagnostics">
+        <div><dt>URL actual</dt><dd>${escapeHtml(pushDiagnostics.currentUrl)}</dd></div>
+        <div><dt>display-mode standalone</dt><dd>${yesNo(pushDiagnostics.displayModeStandalone)}</dd></div>
+        <div><dt>navigator.standalone</dt><dd>${standaloneValue}</dd></div>
+        <div><dt>serviceWorker disponible</dt><dd>${yesNo(pushDiagnostics.serviceWorkerAvailable)}</dd></div>
+        <div><dt>Service worker registration activa</dt><dd>${yesNo(pushDiagnostics.serviceWorkerRegistrationActive)}</dd></div>
+        <div><dt>PushManager global disponible</dt><dd>${yesNo(pushDiagnostics.pushManagerGlobalAvailable)}</dd></div>
+        <div><dt>registration.pushManager disponible</dt><dd>${yesNo(pushDiagnostics.registrationPushManagerAvailable)}</dd></div>
+        <div><dt>Notification disponible</dt><dd>${yesNo(pushDiagnostics.notificationAvailable)}</dd></div>
+        <div><dt>Notification.permission</dt><dd>${escapeHtml(pushDiagnostics.notificationPermission)}</dd></div>
+        <div><dt>APIs requeridas ausentes</dt><dd>${escapeHtml(pushState.missingApis?.join(", ") || "Ninguna")}</dd></div>
+      </dl>
       <div class="app-settings-section__actions">
         <button type="button" class="app-settings-actionBtn" data-push-enable ${!pushState.supported || pushState.registered ? "disabled" : ""}>Activar notificaciones</button>
         <button type="button" class="app-settings-actionBtn" data-push-disable ${!pushState.registered ? "disabled" : ""}>Desactivar</button>

@@ -18,9 +18,44 @@ function decodeVapidKey(value) {
   return Uint8Array.from(bytes, (character) => character.charCodeAt(0));
 }
 
-export function getPushSupport() {
-  return { supported: "serviceWorker" in navigator && "PushManager" in window && "Notification" in window,
-    permission: "Notification" in window ? Notification.permission : "unsupported" };
+export async function getPushSupport() {
+  const serviceWorkerAvailable = "serviceWorker" in navigator;
+  const notificationAvailable = "Notification" in window;
+  let registration = null;
+
+  if (serviceWorkerAvailable) {
+    try {
+      registration = await navigator.serviceWorker.getRegistration("./");
+    } catch (error) {
+      console.warn("[push:support:registration]", error);
+    }
+  }
+
+  const registrationPushManagerAvailable = Boolean(registration?.pushManager);
+  const diagnostics = {
+    currentUrl: window.location.href,
+    displayModeStandalone: Boolean(window.matchMedia?.("(display-mode: standalone)")?.matches),
+    navigatorStandalone: navigator.standalone,
+    serviceWorkerAvailable,
+    serviceWorkerRegistrationActive: Boolean(registration?.active),
+    pushManagerGlobalAvailable: "PushManager" in window,
+    registrationPushManagerAvailable,
+    notificationAvailable,
+    notificationPermission: notificationAvailable ? Notification.permission : "unsupported",
+  };
+  const missingApis = [
+    !serviceWorkerAvailable && "navigator.serviceWorker",
+    !registration && "ServiceWorkerRegistration",
+    !registrationPushManagerAvailable && "ServiceWorkerRegistration.pushManager",
+    !notificationAvailable && "Notification",
+  ].filter(Boolean);
+
+  return {
+    supported: serviceWorkerAvailable && registrationPushManagerAvailable && notificationAvailable,
+    permission: diagnostics.notificationPermission,
+    diagnostics,
+    missingApis,
+  };
 }
 
 export async function getPushRegistration() {
@@ -30,15 +65,22 @@ export async function getPushRegistration() {
 }
 
 export async function getPushState() {
-  const support = getPushSupport();
+  const support = await getPushSupport();
   if (!support.supported) return { ...support, registered: false, configured: false };
-  const [registration, status] = await Promise.all([getPushRegistration(), api("/push/status")]);
+  const registration = await getPushRegistration();
   const subscription = await registration.pushManager.getSubscription();
-  return { ...support, registered: Boolean(subscription), configured: status.configured, subscription, status };
+  try {
+    const status = await api("/push/status");
+    return { ...support, registered: Boolean(subscription), configured: status.configured, subscription, status };
+  } catch (statusError) {
+    console.warn("[push:status:api]", statusError);
+    return { ...support, registered: Boolean(subscription), configured: false, subscription, statusError };
+  }
 }
 
 export async function enablePush() {
-  if (!getPushSupport().supported) throw new Error("push_unsupported");
+  const support = await getPushSupport();
+  if (!support.supported) throw new Error(`push_unsupported:${support.missingApis.join(",")}`);
   const permission = await Notification.requestPermission();
   if (permission !== "granted") throw new Error(`notification_permission_${permission}`);
   const status = await api("/push/status");

@@ -1,11 +1,18 @@
 const http = require("http");
 const crypto = require("crypto");
 let Pool = null;
+let webPush = null;
 
 try {
   ({ Pool } = require("pg"));
 } catch (_) {
   Pool = null;
+}
+
+try {
+  webPush = require("web-push");
+} catch (_) {
+  webPush = null;
 }
 
 function createMissingPgPool() {
@@ -31,6 +38,12 @@ const SINGLE_USER_ID = "b403663c-3675-48fb-a82e-b921d78404b0";
 const SINGLE_USER_EMAIL = "charlydob99@gmail.com";
 const SINGLE_USER_NAME = "Charly";
 const LEGACY_FIREBASE_UID = "QkNDa4fsQdcaRJOGK54xZUetWEU2";
+
+const VAPID_PUBLIC_KEY = String(process.env.VAPID_PUBLIC_KEY || "").trim();
+const VAPID_PRIVATE_KEY = String(process.env.VAPID_PRIVATE_KEY || "").trim();
+const VAPID_SUBJECT = String(process.env.VAPID_SUBJECT || "https://bookshell.charlydob.com").trim();
+const isPushConfigured = Boolean(webPush && VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && /^(https:\/\/|mailto:)/.test(VAPID_SUBJECT));
+if (isPushConfigured) webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 const PROD_ORIGINS = new Set([
   "https://bookshell.charlydob.com",
@@ -136,6 +149,53 @@ function getSingleUser() {
     uid: LEGACY_FIREBASE_UID,
     userDataRootKey: LEGACY_FIREBASE_UID,
   };
+}
+
+// --------------------------------------------------
+// WEB PUSH (single-user, multiple installations)
+// --------------------------------------------------
+
+function normalizePushSubscription(value) {
+  const endpoint = String(value?.endpoint || "").trim();
+  const p256dh = String(value?.keys?.p256dh || "").trim();
+  const auth = String(value?.keys?.auth || "").trim();
+  if (!endpoint.startsWith("https://") || !p256dh || !auth) return null;
+  return { endpoint, keys: { p256dh, auth } };
+}
+
+async function upsertPushSubscription(db, subscription, userAgent = null) {
+  const result = await db.query(`
+    INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (endpoint) DO UPDATE SET
+      user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh,
+      auth = EXCLUDED.auth, user_agent = EXCLUDED.user_agent,
+      updated_at = now(), disabled_at = NULL, failure_count = 0
+    RETURNING id, endpoint, created_at, updated_at, disabled_at
+  `, [SINGLE_USER_ID, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, userAgent]);
+  return result.rows[0];
+}
+
+async function sendPushToEndpoint(db, provider, endpoint, payload) {
+  const found = await db.query(`
+    SELECT id, endpoint, p256dh, auth FROM push_subscriptions
+    WHERE user_id = $1 AND endpoint = $2 AND disabled_at IS NULL LIMIT 1
+  `, [SINGLE_USER_ID, endpoint]);
+  if (!found.rows.length) return { accepted: false, statusCode: 404, reason: "subscription_not_found" };
+  const row = found.rows[0];
+  try {
+    const response = await provider.sendNotification({
+      endpoint: row.endpoint,
+      keys: { p256dh: row.p256dh, auth: row.auth },
+    }, JSON.stringify(payload), { TTL: 60 });
+    await db.query(`UPDATE push_subscriptions SET last_success_at = now(), failure_count = 0, updated_at = now() WHERE id = $1`, [row.id]);
+    return { accepted: true, statusCode: response?.statusCode || 201, reason: null };
+  } catch (error) {
+    const statusCode = Number(error?.statusCode) || 502;
+    await db.query(`UPDATE push_subscriptions SET last_failure_at = now(), failure_count = failure_count + 1,
+      updated_at = now(), disabled_at = CASE WHEN $2 = ANY(ARRAY[404, 410]) THEN now() ELSE disabled_at END WHERE id = $1`, [row.id, statusCode]);
+    return { accepted: false, statusCode, reason: String(error?.body || error?.message || "push_provider_error").slice(0, 500) };
+  }
 }
 
 // --------------------------------------------------
@@ -2628,6 +2688,69 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ------------------------------------------------
+  // WEB PUSH DIAGNOSTICS
+  // ------------------------------------------------
+
+  if (req.method === "GET" && url.pathname === "/push/status") {
+    try {
+      const result = await pool.query(`SELECT id, endpoint, created_at, updated_at, last_success_at,
+        last_failure_at, failure_count FROM push_subscriptions
+        WHERE user_id = $1 AND disabled_at IS NULL ORDER BY updated_at DESC`, [SINGLE_USER_ID]);
+      return sendJson(req, res, 200, {
+        ok: true,
+        configured: isPushConfigured,
+        vapidPublicKey: isPushConfigured ? VAPID_PUBLIC_KEY : null,
+        subscriptions: result.rows.map(({ endpoint, ...row }) => ({
+          ...row,
+          endpointHash: crypto.createHash("sha256").update(endpoint).digest("hex").slice(0, 16),
+        })),
+      });
+    } catch (error) {
+      console.error("[push:status]", error);
+      return sendJson(req, res, 500, { ok: false, error: "push_status_failed" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/push/subscribe") {
+    try {
+      if (!isPushConfigured) return sendJson(req, res, 503, { ok: false, error: "push_not_configured" });
+      const subscription = normalizePushSubscription(await readJson(req));
+      if (!subscription) return sendJson(req, res, 400, { ok: false, error: "invalid_subscription" });
+      const row = await upsertPushSubscription(pool, subscription, String(req.headers["user-agent"] || "").slice(0, 1000) || null);
+      return sendJson(req, res, 200, { ok: true, subscription: { id: row.id, createdAt: row.created_at, updatedAt: row.updated_at } });
+    } catch (error) {
+      console.error("[push:subscribe]", error);
+      return sendJson(req, res, 500, { ok: false, error: "push_subscribe_failed" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/push/unsubscribe") {
+    try {
+      const endpoint = String((await readJson(req))?.endpoint || "").trim();
+      if (!endpoint) return sendJson(req, res, 400, { ok: false, error: "endpoint_required" });
+      const result = await pool.query(`UPDATE push_subscriptions SET disabled_at = now(), updated_at = now()
+        WHERE user_id = $1 AND endpoint = $2 AND disabled_at IS NULL RETURNING id`, [SINGLE_USER_ID, endpoint]);
+      return sendJson(req, res, 200, { ok: true, disabled: result.rowCount > 0 });
+    } catch (error) {
+      console.error("[push:unsubscribe]", error);
+      return sendJson(req, res, 500, { ok: false, error: "push_unsubscribe_failed" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/push/test") {
+    try {
+      if (!isPushConfigured) return sendJson(req, res, 503, { ok: false, accepted: false, error: "push_not_configured" });
+      const endpoint = String((await readJson(req))?.endpoint || "").trim();
+      if (!endpoint) return sendJson(req, res, 400, { ok: false, accepted: false, error: "endpoint_required" });
+      const result = await sendPushToEndpoint(pool, webPush, endpoint, { title: "Bookshell", body: "Web Push funciona correctamente.", url: "/", type: "test" });
+      return sendJson(req, res, result.accepted ? 200 : result.statusCode, { ok: result.accepted, ...result });
+    } catch (error) {
+      console.error("[push:test]", error);
+      return sendJson(req, res, 500, { ok: false, accepted: false, error: "push_test_failed" });
+    }
+  }
+
+  // ------------------------------------------------
   // REMINDERS
   // ------------------------------------------------
 
@@ -3715,5 +3838,9 @@ module.exports = {
     normalizeAutomationReminderSearchParams,
     searchAutomationReminderRows,
     serializeReminder,
+    normalizePushSubscription,
+    sendPushToEndpoint,
+    upsertPushSubscription,
+    pushConfig: { configured: isPushConfigured, publicKey: VAPID_PUBLIC_KEY },
   },
 };

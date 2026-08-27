@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-08-26-reminders-occurrences-v3";
-const PUBLISHED_COMMIT = "local-reminders-v3";
+const APP_VERSION = "2026-08-27-web-push-base-v1";
+const PUBLISHED_COMMIT = "web-push-base-v1";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
@@ -75,6 +75,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./scripts/shared/data/paths.js",
   "./scripts/shared/data/read-debug.js",
   "./scripts/shared/data/reminders-api.js",
+  "./scripts/shared/push/web-push.js",
   "./scripts/shared/services/sync-manager.js",
   
   
@@ -297,6 +298,29 @@ self.addEventListener("message", (event) => {
       })),
     );
   }
+});
+
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try { payload = event.data?.json?.() || {}; } catch (_) { payload = { body: event.data?.text?.() || "" }; }
+  event.waitUntil(self.registration.showNotification(payload.title || "Bookshell", {
+    body: payload.body || "Tienes una nueva notificación.",
+    icon: "./icons/icon-192.png",
+    tag: payload.type || undefined,
+    data: { url: payload.url || "/" },
+    silent: false,
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const targetUrl = new URL(event.notification.data?.url || "/", self.location.origin).href;
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const existing = windows.find((client) => new URL(client.url).origin === self.location.origin);
+    if (existing) { await existing.focus(); return existing.navigate(targetUrl); }
+    return self.clients.openWindow(targetUrl);
+  })());
 });
 
 self.addEventListener("fetch", (event) => {

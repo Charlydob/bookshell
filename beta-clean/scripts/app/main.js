@@ -24,6 +24,7 @@ import {
 import { applyTheme, getAvailableThemes, getCurrentTheme, initThemeService } from "../shared/services/theme/index.js";
 import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
 import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, getFirebaseMetricsSnapshot, logFirebaseRead, registerViewListener } from "../shared/data/read-debug.js";
+import { disablePush, enablePush, getPushState, sendTestPush } from "../shared/push/web-push.js";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -89,8 +90,8 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-05-15-v1";
-const APP_PUBLISHED_COMMIT = "f01cf4c";
-const SERVICE_WORKER_VERSION = "2026-08-23-api-data-provider-no-rtdb";
+const APP_PUBLISHED_COMMIT = "web-push-base-v1";
+const SERVICE_WORKER_VERSION = "2026-08-27-web-push-base-v1";
 const FINANCE_MODULE_VERSION = "2026-08-23-api-data-provider-no-rtdb";
 const BOOKSHELL_CACHE_PREFIX = "bookshell-";
 const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
@@ -901,6 +902,9 @@ async function renderSettingsModal() {
     storageEstimate = await navigator.storage?.estimate?.();
   } catch (_) {}
 
+  let pushState = { supported: false, permission: "unsupported", registered: false, configured: false };
+  try { pushState = await getPushState(); } catch (error) { console.warn("[push:status]", error); }
+
   const themeButtons = getAvailableThemes().map((theme) => `
     <button
       type="button"
@@ -921,6 +925,20 @@ async function renderSettingsModal() {
       <div class="app-settings-section__actions">
         <button type="button" class="app-settings-actionBtn" data-settings-open-notifications>Abrir panel de notificaciones</button>
       </div>
+    </section>
+    <section class="app-settings-section" aria-label="Diagnóstico temporal Web Push">
+      <div class="app-settings-section__eyebrow">Web Push · diagnóstico temporal</div>
+      <div class="app-settings-kpis">
+        <div class="app-settings-kpi"><small>Soportado</small><strong>${pushState.supported ? "Sí" : "No"}</strong></div>
+        <div class="app-settings-kpi"><small>Permiso</small><strong>${pushState.permission}</strong></div>
+        <div class="app-settings-kpi"><small>Registrado</small><strong>${pushState.registered ? "Sí" : "No"}</strong></div>
+      </div>
+      <div class="app-settings-section__actions">
+        <button type="button" class="app-settings-actionBtn" data-push-enable ${!pushState.supported || pushState.registered ? "disabled" : ""}>Activar notificaciones</button>
+        <button type="button" class="app-settings-actionBtn" data-push-disable ${!pushState.registered ? "disabled" : ""}>Desactivar</button>
+        <button type="button" class="app-settings-actionBtn" data-push-test ${!pushState.registered ? "disabled" : ""}>Enviar prueba</button>
+      </div>
+      <p data-push-feedback>${pushState.configured ? "Backend configurado." : "Backend pendiente de VAPID."}</p>
     </section>
     <section class="app-settings-section">
       <div class="app-settings-section__eyebrow">Cache local</div>
@@ -980,6 +998,20 @@ function ensureSettingsModal() {
     }
   });
   backdrop.addEventListener("click", (event) => {
+    const pushAction = event.target?.closest?.("[data-push-enable], [data-push-disable], [data-push-test]");
+    if (pushAction) {
+      pushAction.disabled = true;
+      const feedback = backdrop.querySelector("[data-push-feedback]");
+      if (feedback) feedback.textContent = "Procesando…";
+      const operation = pushAction.matches("[data-push-enable]") ? enablePush()
+        : pushAction.matches("[data-push-disable]") ? disablePush() : sendTestPush();
+      operation.then(() => renderSettingsModal()).catch((error) => {
+        console.error("[push:action]", error);
+        if (feedback) feedback.textContent = `Error: ${error.message}`;
+        pushAction.disabled = false;
+      });
+      return;
+    }
     const themeButton = event.target?.closest?.("[data-settings-theme]");
     if (themeButton) {
       applyTheme(themeButton.dataset.settingsTheme || "");

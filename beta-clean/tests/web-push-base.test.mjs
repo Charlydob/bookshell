@@ -62,3 +62,27 @@ await test("public test config never exports the VAPID private key", () => {
   const source = readFileSync(new URL("../deploy-bookshell-api-server.js", import.meta.url), "utf8");
   assert.doesNotMatch(source, /vapidPrivateKey\s*:/);
 });
+
+await test("iOS manifest uses an explicit stable app identity and scope", () => {
+  const manifest = JSON.parse(readFileSync(new URL("../manifest.webmanifest", import.meta.url), "utf8"));
+  assert.deepEqual(
+    { id: manifest.id, start_url: manifest.start_url, scope: manifest.scope, display: manifest.display },
+    { id: "/beta-clean/", start_url: "/beta-clean/index.html", scope: "/beta-clean/", display: "standalone" },
+  );
+});
+
+await test("iOS push support is detected from the service worker registration", () => {
+  const source = readFileSync(new URL("../scripts/shared/push/web-push.js", import.meta.url), "utf8");
+  assert.match(source, /registrationPushManagerAvailable = Boolean\(registration\?\.pushManager\)/);
+  assert.match(source, /supported: serviceWorkerAvailable && registrationPushManagerAvailable && notificationAvailable/);
+  assert.doesNotMatch(source, /supported:\s*[^\n]*"PushManager" in window/);
+});
+
+await test("temporary diagnostics expose each iOS Web Push prerequisite", () => {
+  const source = readFileSync(new URL("../scripts/app/main.js", import.meta.url), "utf8");
+  for (const label of [
+    "URL actual", "display-mode standalone", "navigator.standalone", "serviceWorker disponible",
+    "Service worker registration activa", "PushManager global disponible",
+    "registration.pushManager disponible", "Notification disponible", "Notification.permission",
+  ]) assert.match(source, new RegExp(label.replace(".", "\\.")));
+});

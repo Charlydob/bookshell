@@ -1,7 +1,9 @@
 {
   "name": "Bookshell",
   "short_name": "Bookshell",
-  "start_url": ".",
+  "id": "/beta-clean/",
+  "start_url": "/beta-clean/index.html",
+  "scope": "/beta-clean/",
   "display": "standalone",
   "background_color": "#05060a",
   "theme_color": "#05060a",

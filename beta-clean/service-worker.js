@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-08-27-web-push-base-v1";
-const PUBLISHED_COMMIT = "web-push-base-v1";
+const APP_VERSION = "2026-08-27-ios-push-diagnostics-v2";
+const PUBLISHED_COMMIT = "ios-push-diagnostics-v2";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;

@@ -516,12 +516,21 @@ async function mutateUserData(mutator) {
 const API_PUBLIC_BASE_URL = String(
   process.env.BOOKSHELL_API_PUBLIC_URL || "https://api-bookshell.charlydob.com"
 ).trim().replace(/\/+$/g, "");
+const APP_PUBLIC_BASE_URL = String(
+  process.env.BOOKSHELL_PUBLIC_URL || "https://bookshell.charlydob.com"
+).trim().replace(/\/+$/g, "");
 const SHORTCUT_TOKEN_PREFIX = "bsh_";
 const SHORTCUT_TOKEN_BYTES = 32;
 const SHORTCUT_TOKEN_NAME = "iPhone Shortcuts";
 const SHORTCUT_FINANCE_ROOT_PATH = "finance/finance";
 const SHORTCUT_FINANCE_LEGACY_ROOT_PATH = "finance";
+const SHORTCUT_WORLD_ROOT_PATH = "world";
+const SHORTCUT_WORLD_SAVED_PATH = `${SHORTCUT_WORLD_ROOT_PATH}/saved`;
+const SHORTCUT_WORLD_GEOGRAPHY_PATH = `${SHORTCUT_WORLD_ROOT_PATH}/geography`;
+const SHORTCUT_WORLD_PLACES_PATH = `${SHORTCUT_WORLD_ROOT_PATH}/places`;
+const SHORTCUT_WORLD_CATEGORY_EMOJIS_PATH = `${SHORTCUT_WORLD_ROOT_PATH}/categoryEmojis`;
 const SHORTCUT_ALLOWED_TYPES = new Set(["expense", "income", "transfer"]);
+const SHORTCUT_WORLD_ALLOWED_TYPES = new Set(["saved", "place", "local"]);
 const SHORTCUT_SUPPORTED_CURRENCIES = Object.freeze([
   "EUR", "PEN", "BTC", "USD", "GBP", "CHF", "JPY", "CNY", "MXN",
   "COP", "ARS", "BRL", "CLP", "CAD", "AUD", "NOK", "SEK", "DKK",
@@ -718,6 +727,8 @@ function buildShortcutEndpointMap() {
     financeAccounts: `${API_PUBLIC_BASE_URL}/shortcuts/finance/accounts`,
     financeCategories: `${API_PUBLIC_BASE_URL}/shortcuts/finance/categories`,
     financeMovements: `${API_PUBLIC_BASE_URL}/shortcuts/finance/movements`,
+    worldOptions: `${API_PUBLIC_BASE_URL}/shortcuts/world/options`,
+    worldPlaces: `${API_PUBLIC_BASE_URL}/shortcuts/world/places`,
     remindersToday: `${API_PUBLIC_BASE_URL}/shortcuts/reminders/today`,
   };
 }
@@ -766,6 +777,13 @@ function normalizeShortcutDay(value = "", now = new Date()) {
 
 function normalizeShortcutText(value = "") {
   return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function normalizeShortcutComparableText(value = "") {
+  return normalizeShortcutText(value)
+    .toLocaleLowerCase("es")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function normalizeShortcutCategoryName(value = "") {
@@ -883,12 +901,14 @@ function listShortcutCategoriesFromRoot(root = {}, type = "") {
   Object.entries(root?.catalog?.categories || {}).forEach(([id, value]) => {
     const normalized = normalizeShortcutCategory(id, value);
     if (!normalized) return;
-    categories.set(normalized.name, normalized);
+    const key = normalizeShortcutComparableText(normalized.name);
+    if (key && !categories.has(key)) categories.set(key, normalized);
   });
   Object.values(root?.transactions || {}).forEach((tx) => {
     const name = normalizeShortcutCategoryName(tx?.category);
-    if (name && !categories.has(name)) {
-      categories.set(name, { id: tx?.categoryId || shortcutSafeKey(name) || name, name, type: normalizeShortcutType(tx?.type) });
+    const key = normalizeShortcutComparableText(name);
+    if (key && !categories.has(key)) {
+      categories.set(key, { id: tx?.categoryId || shortcutSafeKey(name) || name, name, type: normalizeShortcutType(tx?.type) });
     }
   });
   const safeType = normalizeShortcutType(type);
@@ -910,11 +930,12 @@ function resolveShortcutAccount(root = {}, accountId = "") {
 function resolveShortcutCategory(root = {}, categoryIdOrName = "", type = "") {
   if (normalizeShortcutType(type) === "transfer") return { id: "transfer", name: "transfer" };
   const safe = normalizeShortcutText(categoryIdOrName);
+  const comparable = normalizeShortcutComparableText(safe);
   if (!safe) return null;
   const categories = listShortcutCategoriesFromRoot(root, type);
   return categories.find((category) => (
     String(category.id || "") === safe ||
-    category.name === safe ||
+    normalizeShortcutComparableText(category.name) === comparable ||
     shortcutSafeKey(category.name) === shortcutSafeKey(safe)
   )) || null;
 }
@@ -938,7 +959,7 @@ function parseShortcutMovementInput(body = {}) {
   };
 }
 
-function buildShortcutCategoryCatalogPayload(name = "", previous = {}, nowMs = Date.now()) {
+function buildShortcutCategoryCatalogPayload(name = "", previous = {}, nowMs = Date.now(), type = "") {
   const safeName = normalizeShortcutCategoryName(name);
   if (!safeName) return null;
   return {
@@ -952,6 +973,37 @@ function buildShortcutCategoryCatalogPayload(name = "", previous = {}, nowMs = D
     updatedAt: nowMs,
     createdAt: Number(previous?.createdAt || 0) || nowMs,
   };
+}
+
+function findShortcutCategoryCatalogKey(root = {}, category = {}) {
+  const categoryId = String(category?.id || "").trim();
+  const categoryName = normalizeShortcutCategoryName(category?.name);
+  const comparableName = normalizeShortcutComparableText(categoryName);
+  return Object.entries(root?.catalog?.categories || {}).find(([key, value]) => {
+    const normalized = normalizeShortcutCategory(key, value);
+    if (!normalized) return false;
+    return (
+      (categoryId && String(normalized.id || "") === categoryId) ||
+      (comparableName && normalizeShortcutComparableText(normalized.name) === comparableName)
+    );
+  })?.[0] || "";
+}
+
+function resolveOrCreateShortcutCategory(root = {}, categoryIdOrName = "", type = "", nowMs = Date.now()) {
+  const safeType = normalizeShortcutType(type);
+  if (safeType === "transfer") return { id: "transfer", name: "transfer", created: false };
+  const name = normalizeShortcutCategoryName(categoryIdOrName);
+  if (!name) return null;
+  const existing = resolveShortcutCategory(root, name, safeType);
+  if (existing) return { ...existing, created: false };
+
+  root.catalog = root.catalog || {};
+  root.catalog.categories = root.catalog.categories || {};
+  const key = shortcutSafeKey(name) || name;
+  const payload = buildShortcutCategoryCatalogPayload(name, root.catalog.categories[key], nowMs, safeType);
+  if (!payload) return null;
+  root.catalog.categories[key] = payload;
+  return { ...payload, created: true };
 }
 
 function normalizeShortcutSnapshots(snapshots = {}) {
@@ -1066,7 +1118,7 @@ function buildShortcutFinanceSummary(root = {}, targetCurrency = "EUR") {
   };
 }
 
-function buildShortcutMovementPayload(input = {}, root = {}, nowMs = Date.now(), txId = crypto.randomUUID()) {
+function buildShortcutMovementPayload(input = {}, root = {}, nowMs = Date.now(), txId = crypto.randomUUID(), resolvedCategory = null) {
   const type = normalizeShortcutType(input.type);
   const currency = normalizeShortcutCurrency(input.currency);
   if (!type) throw Object.assign(new Error("INVALID_TYPE"), { statusCode: 400 });
@@ -1090,7 +1142,7 @@ function buildShortcutMovementPayload(input = {}, root = {}, nowMs = Date.now(),
     if (!account) throw Object.assign(new Error("ACCOUNT_NOT_FOUND"), { statusCode: 404 });
   }
 
-  const category = resolveShortcutCategory(root, input.categoryId, type);
+  const category = resolvedCategory || resolveShortcutCategory(root, input.categoryId, type);
   if (type !== "transfer" && !category) {
     throw Object.assign(new Error("CATEGORY_NOT_FOUND"), { statusCode: 404 });
   }
@@ -1320,13 +1372,17 @@ async function createShortcutFinanceMovement(body = {}, {
         root.catalog.categories = root.catalog.categories || {};
 
         const txId = crypto.randomUUID();
-        const payload = buildShortcutMovementPayload(input, root, Date.now(), txId);
+        const nowMs = Date.now();
+        const category = resolveOrCreateShortcutCategory(root, input.categoryId, input.type, nowMs);
+        const payload = buildShortcutMovementPayload(input, root, nowMs, txId, category);
         root.transactions[txId] = payload;
         if (payload.type !== "transfer") {
-          root.catalog.categories[payload.category] = buildShortcutCategoryCatalogPayload(
+          const categoryKey = findShortcutCategoryCatalogKey(root, category) || payload.category;
+          root.catalog.categories[categoryKey] = buildShortcutCategoryCatalogPayload(
             payload.category,
-            root.catalog.categories[payload.category],
-            payload.updatedAt
+            root.catalog.categories[categoryKey],
+            payload.updatedAt,
+            payload.type
           );
         }
 
@@ -1408,6 +1464,347 @@ async function getShortcutFinanceOptions(type = "", db = pool) {
     })),
     currencies: SHORTCUT_SUPPORTED_CURRENCIES,
     movementTypes: ["expense", "income", "transfer"],
+  };
+}
+
+function getShortcutWorldRoot(data = {}) {
+  return getAtPath(data, SHORTCUT_WORLD_ROOT_PATH.split("/").filter(Boolean)) || {};
+}
+
+function ensureShortcutWorldRoot(data = {}) {
+  return ensureParent(data, SHORTCUT_WORLD_ROOT_PATH.split("/").filter(Boolean));
+}
+
+function normalizeShortcutWorldType(value = "") {
+  const safe = String(value || "saved").trim().toLowerCase();
+  if (!safe || safe === "quick" || safe === "guardado") return "saved";
+  if (safe === "lugar" || safe === "geography" || safe === "geo") return "place";
+  if (safe === "local" || safe === "place") return safe === "place" ? "place" : "local";
+  return SHORTCUT_WORLD_ALLOWED_TYPES.has(safe) ? safe : "";
+}
+
+function limitShortcutWorldString(value = "", max = 240, errorCode = "INVALID_STRING") {
+  const safe = normalizeShortcutText(value);
+  if (safe.length > max) throw Object.assign(new Error(errorCode), { statusCode: 400 });
+  return safe;
+}
+
+function parseShortcutWorldCapturedAt(value = "", nowMs = Date.now()) {
+  const raw = String(value || "").trim();
+  if (!raw) return new Date(nowMs);
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw Object.assign(new Error("INVALID_CAPTURED_AT"), { statusCode: 400 });
+  }
+  return parsed;
+}
+
+function parseShortcutWorldRating(value = null) {
+  if (value === null || value === undefined || String(value).trim() === "") return null;
+  const rating = Number(value);
+  if (!Number.isFinite(rating) || rating < 0 || rating > 10) {
+    throw Object.assign(new Error("INVALID_RATING"), { statusCode: 400 });
+  }
+  return rating;
+}
+
+function parseShortcutWorldPlaceInput(body = {}, nowMs = Date.now()) {
+  const type = normalizeShortcutWorldType(body?.type);
+  const latitude = Number(body?.latitude ?? body?.lat);
+  const longitude = Number(body?.longitude ?? body?.lon ?? body?.lng);
+  if (!type) throw Object.assign(new Error("INVALID_WORLD_TYPE"), { statusCode: 400 });
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+    throw Object.assign(new Error("INVALID_LATITUDE"), { statusCode: 400 });
+  }
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw Object.assign(new Error("INVALID_LONGITUDE"), { statusCode: 400 });
+  }
+  const capturedDate = parseShortcutWorldCapturedAt(body?.capturedAt || body?.captured_at, nowMs);
+  return {
+    type,
+    latitude,
+    longitude,
+    name: limitShortcutWorldString(body?.name || body?.title || "", 180, "INVALID_NAME"),
+    category: limitShortcutWorldString(body?.category || "", 120, "INVALID_CATEGORY"),
+    note: limitShortcutWorldString(body?.note || body?.description || "", 1200, "INVALID_NOTE"),
+    rating: parseShortcutWorldRating(body?.rating),
+    country: limitShortcutWorldString(body?.country || "", 160, "INVALID_COUNTRY"),
+    countryCode: limitShortcutWorldString(body?.countryCode || body?.country_code || "", 8, "INVALID_COUNTRY_CODE").toUpperCase(),
+    region: limitShortcutWorldString(body?.region || body?.state || body?.province || "", 180, "INVALID_REGION"),
+    city: limitShortcutWorldString(body?.city || "", 180, "INVALID_CITY"),
+    locality: limitShortcutWorldString(body?.locality || body?.town || body?.village || "", 180, "INVALID_LOCALITY"),
+    address: limitShortcutWorldString(body?.address || body?.formattedAddress || "", 500, "INVALID_ADDRESS"),
+    postalCode: limitShortcutWorldString(body?.postalCode || body?.postal_code || "", 40, "INVALID_POSTAL_CODE"),
+    capturedAt: capturedDate.toISOString(),
+    capturedAtMs: capturedDate.getTime(),
+  };
+}
+
+function shortcutWorldCategoryKey(value = "") {
+  return normalizeShortcutComparableText(value);
+}
+
+function inferShortcutWorldCategoryEmoji(category = "") {
+  const key = shortcutWorldCategoryKey(category);
+  if (!key) return "\ud83d\udccd";
+  const matches = [
+    ["montana", "\ud83c\udfd4\ufe0f"],
+    ["mountain", "\ud83c\udfd4\ufe0f"],
+    ["restaurante", "\ud83c\udf7d\ufe0f"],
+    ["restaurant", "\ud83c\udf7d\ufe0f"],
+    ["cafeteria", "\u2615"],
+    ["cafe", "\u2615"],
+    ["mirador", "\ud83d\udccd"],
+    ["turistico", "\ud83d\udccd"],
+    ["tienda", "\ud83d\uded2"],
+    ["shop", "\ud83d\uded2"],
+    ["bar", "\ud83c\udf78"],
+    ["hotel", "\ud83c\udfe8"],
+  ];
+  return matches.find(([needle]) => key.includes(needle))?.[1] || "\ud83d\udccd";
+}
+
+function normalizeShortcutWorldCategoryEntry(entry = {}) {
+  const category = normalizeShortcutText(entry?.category || entry?.name || "");
+  const key = shortcutWorldCategoryKey(entry?.key || category);
+  if (!key || !category) return null;
+  return {
+    ...(entry && typeof entry === "object" ? entry : {}),
+    key,
+    category,
+    emoji: normalizeShortcutText(entry?.emoji || inferShortcutWorldCategoryEmoji(category)),
+  };
+}
+
+function listShortcutWorldCategoriesFromRoot(root = {}) {
+  const categories = new Map();
+  Object.values(root?.categoryEmojis || {}).forEach((entry) => {
+    const normalized = normalizeShortcutWorldCategoryEntry(entry);
+    if (normalized && !categories.has(normalized.key)) categories.set(normalized.key, normalized);
+  });
+  Object.values(root?.places || {}).forEach((place) => {
+    const category = normalizeShortcutText(place?.category || place?.type || "");
+    const key = shortcutWorldCategoryKey(category);
+    if (key && !categories.has(key)) {
+      categories.set(key, {
+        key,
+        category,
+        emoji: normalizeShortcutText(place?.emoji || inferShortcutWorldCategoryEmoji(category)),
+      });
+    }
+  });
+  return [...categories.values()].sort((left, right) => left.category.localeCompare(right.category, "es"));
+}
+
+function listShortcutWorldPlaceTypesFromRoot(root = {}) {
+  const placeTypes = new Map();
+  Object.values(root?.geography || {}).forEach((place) => {
+    const name = normalizeShortcutText(place?.category || place?.type || "");
+    const key = normalizeShortcutComparableText(name);
+    if (key && !placeTypes.has(key)) placeTypes.set(key, name);
+  });
+  return [...placeTypes.values()].sort((left, right) => left.localeCompare(right, "es"));
+}
+
+function resolveOrCreateShortcutWorldCategory(root = {}, category = "", nowMs = Date.now()) {
+  const safeCategory = normalizeShortcutText(category);
+  if (!safeCategory) return null;
+  root.categoryEmojis = root.categoryEmojis || {};
+  const key = shortcutWorldCategoryKey(safeCategory);
+  const existing = listShortcutWorldCategoriesFromRoot(root).find((entry) => entry.key === key);
+  if (existing) return { ...existing, created: false };
+  const payload = {
+    key,
+    category: safeCategory,
+    emoji: inferShortcutWorldCategoryEmoji(safeCategory),
+    createdAt: nowMs,
+    updatedAt: nowMs,
+  };
+  root.categoryEmojis[key] = payload;
+  return { ...payload, created: true };
+}
+
+function buildShortcutWorldMapsUrl(lat, lon) {
+  if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) return "";
+  return `https://www.google.com/maps/dir/?api=1&destination=${Number(lat)},${Number(lon)}`;
+}
+
+function buildShortcutWorldLabel(input = {}) {
+  return [
+    input.address,
+    input.locality || input.city,
+    input.region,
+    input.country,
+  ].filter(Boolean).join(", ");
+}
+
+function buildShortcutWorldItem(input = {}, root = {}, nowMs = Date.now(), itemId = crypto.randomUUID()) {
+  const type = normalizeShortcutWorldType(input.type);
+  const label = buildShortcutWorldLabel(input);
+  const locationName = input.name || input.locality || input.city || input.region || input.country || "Ubicacion guardada";
+  const common = {
+    id: itemId,
+    name: locationName,
+    label,
+    displayName: label || locationName,
+    country: input.country,
+    countryCode: input.countryCode,
+    city: input.city || input.locality,
+    locality: input.locality,
+    region: input.region,
+    postalCode: input.postalCode,
+    address: input.address,
+    note: input.note,
+    lat: Number(input.latitude),
+    lon: Number(input.longitude),
+    lng: Number(input.longitude),
+    googleMapsDirectionsUrl: buildShortcutWorldMapsUrl(input.latitude, input.longitude),
+    googleMapsUrl: buildShortcutWorldMapsUrl(input.latitude, input.longitude),
+    capturedAt: input.capturedAt,
+    capturedAtMs: input.capturedAtMs,
+    source: "shortcut-api",
+    shortcut: true,
+    rating: input.rating,
+    createdAt: nowMs,
+    updatedAt: nowMs,
+  };
+
+  if (type === "local") {
+    const category = resolveOrCreateShortcutWorldCategory(root, input.category, nowMs);
+    const categoryName = category?.category || input.category || "";
+    return {
+      ...common,
+      kind: "places",
+      type: categoryName,
+      category: categoryName,
+      emoji: category?.emoji || inferShortcutWorldCategoryEmoji(categoryName),
+      productName: "",
+      price: null,
+      currency: "EUR",
+    };
+  }
+
+  if (type === "place") {
+    return {
+      ...common,
+      kind: "geography",
+      category: input.category,
+      emoji: "\ud83d\udccd",
+    };
+  }
+
+  return {
+    ...common,
+    kind: "saved",
+    type: "saved",
+    status: "unclassified",
+    category: "",
+    emoji: "\ud83d\udccd",
+  };
+}
+
+function shortcutWorldCollectionForType(type = "") {
+  if (type === "place") return { key: "geography", path: SHORTCUT_WORLD_GEOGRAPHY_PATH };
+  if (type === "local") return { key: "places", path: SHORTCUT_WORLD_PLACES_PATH };
+  return { key: "saved", path: SHORTCUT_WORLD_SAVED_PATH };
+}
+
+async function createShortcutWorldPlace(body = {}, {
+  idempotencyKey = "",
+  db = pool,
+} = {}) {
+  await ensureShortcutSchema(db);
+  const nowMs = Date.now();
+  const input = parseShortcutWorldPlaceInput(body, nowMs);
+  const capturedAtProvided = Boolean(String(body?.capturedAt || body?.captured_at || "").trim());
+  const requestHash = sha256(stableJson({
+    ...input,
+    capturedAt: capturedAtProvided ? input.capturedAt : "",
+    capturedAtMs: capturedAtProvided ? input.capturedAtMs : 0,
+  }));
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await withShortcutIdempotency(
+      client,
+      "world:places",
+      idempotencyKey,
+      requestHash,
+      async () => {
+        const dataResult = await client.query(
+          `
+            SELECT id, data
+            FROM firebase_import_raw
+            WHERE user_id = $1
+            ORDER BY imported_at DESC
+            LIMIT 1
+            FOR UPDATE
+          `,
+          [SINGLE_USER_ID]
+        );
+        if (!dataResult.rows.length) {
+          throw Object.assign(new Error("DATA_NOT_FOUND"), { statusCode: 404 });
+        }
+        const row = dataResult.rows[0];
+        const data = row.data || {};
+        const root = ensureShortcutWorldRoot(data);
+        root.saved = root.saved || {};
+        root.geography = root.geography || {};
+        root.places = root.places || {};
+        root.categoryEmojis = root.categoryEmojis || {};
+
+        const itemId = crypto.randomUUID();
+        const item = buildShortcutWorldItem(input, root, nowMs, itemId);
+        const collection = shortcutWorldCollectionForType(input.type);
+        root[collection.key][itemId] = item;
+
+        await client.query(
+          `
+            UPDATE firebase_import_raw
+            SET data = $1::jsonb
+            WHERE id = $2
+          `,
+          [JSON.stringify(data), row.id]
+        );
+
+        return {
+          statusCode: 201,
+          body: {
+            ok: true,
+            item,
+            itemId,
+            type: input.type,
+            worldPath: `${collection.path}/${itemId}`,
+            openUrl: `${APP_PUBLIC_BASE_URL}/#view-world`,
+          },
+        };
+      }
+    );
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getShortcutWorldOptions(db = pool) {
+  const row = await readCurrentUserData(db);
+  if (!row) return null;
+  const root = getShortcutWorldRoot(row.data || {});
+  return {
+    worldPath: SHORTCUT_WORLD_ROOT_PATH,
+    types: ["saved", "place", "local"],
+    placeTypes: listShortcutWorldPlaceTypesFromRoot(root),
+    localCategories: listShortcutWorldCategoriesFromRoot(root).map((entry) => ({
+      key: entry.key,
+      name: entry.category,
+      emoji: entry.emoji,
+    })),
   };
 }
 
@@ -4387,7 +4784,7 @@ const server = http.createServer(async (req, res) => {
   // SHORTCUTS API (Bearer token)
   // ------------------------------------------------
 
-  if (url.pathname.startsWith("/shortcuts/finance/") || url.pathname === "/shortcuts/reminders/today") {
+  if (url.pathname.startsWith("/shortcuts/finance/") || url.pathname.startsWith("/shortcuts/world/") || url.pathname === "/shortcuts/reminders/today") {
     let user = null;
     try {
       user = await authenticateShortcutRequest(req, pool);
@@ -4451,6 +4848,33 @@ const server = http.createServer(async (req, res) => {
       return sendJson(req, res, error?.statusCode || 500, {
         ok: false,
         error: error?.message || "FINANCE_MOVEMENT_FAILED",
+      });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/shortcuts/world/options") {
+    try {
+      const options = await getShortcutWorldOptions(pool);
+      if (!options) return sendJson(req, res, 404, { ok: false, error: "DATA_NOT_FOUND" });
+      return sendJson(req, res, 200, { ok: true, ...options });
+    } catch (error) {
+      console.error("[shortcuts:world:options]", error);
+      return sendJson(req, res, 500, { ok: false, error: "WORLD_OPTIONS_FAILED" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/shortcuts/world/places") {
+    try {
+      const body = await readJson(req);
+      const result = await createShortcutWorldPlace(body || {}, {
+        idempotencyKey: req.headers["idempotency-key"] || body?.idempotencyKey || "",
+      });
+      return sendJson(req, res, result.statusCode || 201, result.body);
+    } catch (error) {
+      console.error("[shortcuts:world:places]", error?.message || error);
+      return sendJson(req, res, error?.statusCode || 500, {
+        ok: false,
+        error: error?.message || "WORLD_PLACE_FAILED",
       });
     }
   }
@@ -5708,11 +6132,19 @@ module.exports = {
     buildShortcutFinanceMovementPushPayload,
     buildShortcutAccountEntries,
     buildShortcutFinanceSummary,
+    getShortcutWorldOptions,
+    createShortcutWorldPlace,
+    parseShortcutWorldPlaceInput,
+    buildShortcutWorldItem,
+    listShortcutWorldCategoriesFromRoot,
+    listShortcutWorldPlaceTypesFromRoot,
+    resolveOrCreateShortcutWorldCategory,
     listShortcutTransactions,
     listShortcutAccountsFromRoot,
     listShortcutCategoriesFromRoot,
     resolveShortcutAccount,
     resolveShortcutCategory,
+    resolveOrCreateShortcutCategory,
     claimDailySummaryDelivery,
     runDailySummaryPushCycle,
     runDueReminderAlertPushCycle,

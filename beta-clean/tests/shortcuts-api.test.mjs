@@ -37,6 +37,48 @@ function makeData() {
         transactions: {},
       },
     },
+    world: {
+      geography: {
+        geo_1: {
+          id: "geo_1",
+          kind: "geography",
+          name: "Interlaken",
+          category: "city",
+          emoji: "\ud83d\udccd",
+          lat: 46.686,
+          lon: 7.861,
+          lng: 7.861,
+          country: "Switzerland",
+          region: "Bern",
+          city: "Interlaken",
+          rating: 8.5,
+          createdAt: 1787890000000,
+          updatedAt: 1787890000000,
+        },
+      },
+      places: {
+        local_1: {
+          id: "local_1",
+          kind: "places",
+          name: "Cafe Central",
+          category: "Cafeteria",
+          emoji: "\u2615",
+          lat: 46.686,
+          lon: 7.861,
+          lng: 7.861,
+          country: "Switzerland",
+          region: "Bern",
+          city: "Interlaken",
+          rating: 9.25,
+          createdAt: 1787890000000,
+          updatedAt: 1787890000000,
+        },
+      },
+      saved: {},
+      categoryEmojis: {
+        cafeteria: { key: "cafeteria", category: "Cafeteria", emoji: "\u2615" },
+      },
+    },
   };
 }
 
@@ -155,6 +197,10 @@ function makeDb(data = makeData(), options = {}) {
 
 function financeRoot(data) {
   return data.finance.finance;
+}
+
+function worldRoot(data) {
+  return data.world;
 }
 
 function authReq(token = "") {
@@ -284,6 +330,87 @@ await test("transferencia mueve saldo sin contar gasto ni ingreso", async () => 
   assert.equal(root.accounts.acc_eur.entries["2026-08-28"].value, 45);
   assert.equal(root.accounts.acc_cash.entries["2026-08-28"].value, 205);
   assert.equal(__test.listShortcutCategoriesFromRoot(root, "transfer").some((category) => category.name === "transfer"), true);
+});
+
+await test("categoria existente por nombre se reutiliza sin duplicar", async () => {
+  const { root } = await createMovementAndRoot({
+    amount: 4,
+    currency: "EUR",
+    accountId: "acc_eur",
+    type: "expense",
+    category: "Comida",
+    date: "2026-08-28",
+  });
+  assert.equal(__test.listShortcutCategoriesFromRoot(root).filter((category) => category.name === "Comida").length, 1);
+  assert.equal(__test.listShortcutTransactions(root)[0].category, "Comida");
+});
+
+await test("categoria nueva se crea en el catalogo canonico y se usa al instante", async () => {
+  const { result, root } = await createMovementAndRoot({
+    amount: 42,
+    currency: "EUR",
+    accountId: "acc_eur",
+    type: "expense",
+    category: "Dentista",
+    date: "2026-08-28",
+  });
+  assert.equal(result.statusCode, 201);
+  assert.equal(root.catalog.categories.dentista.name, "Dentista");
+  assert.equal(__test.listShortcutTransactions(root)[0].category, "Dentista");
+});
+
+await test("categoria con distinta capitalizacion y espacios resuelve a la existente", async () => {
+  const { root } = await createMovementAndRoot({
+    amount: 5,
+    currency: "EUR",
+    accountId: "acc_eur",
+    type: "expense",
+    category: "  comida  ",
+    date: "2026-08-28",
+  });
+  assert.equal(Object.values(root.catalog.categories).filter((category) => category.name.toLowerCase() === "comida").length, 1);
+  assert.equal(__test.listShortcutTransactions(root)[0].category, "Comida");
+});
+
+await test("categoria equivalente con acentos no duplica", async () => {
+  const fixture = makeDb();
+  financeRoot(fixture.data).catalog.categories.Cafe = { id: "cat_cafe", name: "Café" };
+  await __test.createShortcutFinanceMovement({
+    amount: 3,
+    currency: "EUR",
+    accountId: "acc_eur",
+    type: "expense",
+    category: "cafe",
+    date: "2026-08-28",
+  }, { db: fixture.db });
+  const categories = __test.listShortcutCategoriesFromRoot(financeRoot(fixture.data));
+  assert.equal(categories.filter((category) => category.name === "Café").length, 1);
+  assert.equal(__test.listShortcutTransactions(financeRoot(fixture.data))[0].category, "Café");
+});
+
+await test("idempotencia de categoria nueva no duplica categoria ni movimiento", async () => {
+  const { db, data } = makeDb();
+  const body = { amount: 7, currency: "EUR", accountId: "acc_eur", type: "expense", category: "Dentista", date: "2026-08-28" };
+  await __test.createShortcutFinanceMovement(body, { db, idempotencyKey: "new-category" });
+  const replay = await __test.createShortcutFinanceMovement(body, { db, idempotencyKey: "new-category" });
+  const root = financeRoot(data);
+  assert.equal(replay.replay, true);
+  assert.equal(Object.keys(root.transactions).length, 1);
+  assert.equal(Object.values(root.catalog.categories).filter((category) => category.name === "Dentista").length, 1);
+});
+
+await test("transferencia no crea categoria enviada por Atajos", async () => {
+  const { root } = await createMovementAndRoot({
+    amount: 5,
+    currency: "EUR",
+    fromAccountId: "acc_eur",
+    toAccountId: "acc_cash",
+    type: "transfer",
+    category: "Dentista",
+    date: "2026-08-28",
+  });
+  assert.equal(Boolean(root.catalog.categories.dentista), false);
+  assert.equal(__test.listShortcutTransactions(root)[0].category, "transfer");
 });
 
 await test("gasto por Atajos envia un push despues del commit", async () => {
@@ -429,10 +556,185 @@ await test("fallo del proveedor Web Push no impide guardar el movimiento", async
   assert.equal(Object.keys(financeRoot(data).transactions).length, 1);
 });
 
+await test("POST /shortcuts/world/places guarda rapido en world/saved", async () => {
+  const { db, data } = makeDb();
+  const result = await __test.createShortcutWorldPlace({
+    latitude: 46.686,
+    longitude: 7.861,
+    type: "saved",
+    country: "Switzerland",
+    region: "Bern",
+    city: "Interlaken",
+    capturedAt: "2026-08-28T10:00:00.000Z",
+  }, { db, idempotencyKey: "world-saved-1" });
+  assert.equal(result.statusCode, 201);
+  assert.match(result.body.worldPath, /^world\/saved\//);
+  assert.equal(Object.keys(worldRoot(data).saved).length, 1);
+  assert.equal(Object.values(worldRoot(data).saved)[0].lat, 46.686);
+});
+
+await test("POST /shortcuts/world/places tipo place escribe en world/geography", async () => {
+  const { db, data } = makeDb();
+  const result = await __test.createShortcutWorldPlace({
+    latitude: 46.68612345,
+    longitude: 7.86198765,
+    type: "place",
+    rating: 8.75,
+    country: "Switzerland",
+    region: "Bern",
+    city: "Interlaken",
+  }, { db });
+  assert.match(result.body.worldPath, /^world\/geography\//);
+  const item = Object.values(worldRoot(data).geography).find((place) => place.id === result.body.itemId);
+  assert.equal(item.kind, "geography");
+  assert.equal(item.lon, 7.86198765);
+  assert.equal(item.rating, 8.75);
+});
+
+await test("POST /shortcuts/world/places tipo local escribe en world/places", async () => {
+  const { db, data } = makeDb();
+  const result = await __test.createShortcutWorldPlace({
+    latitude: 46.686,
+    longitude: 7.861,
+    type: "local",
+    name: "Mirador Harder Kulm",
+    category: "Mirador",
+    rating: 9.5,
+    country: "Switzerland",
+    region: "Bern",
+    city: "Interlaken",
+  }, { db });
+  assert.match(result.body.worldPath, /^world\/places\//);
+  const item = Object.values(worldRoot(data).places).find((place) => place.name === "Mirador Harder Kulm");
+  assert.equal(item.category, "Mirador");
+  assert.equal(item.rating, 9.5);
+});
+
+await test("local con categoria existente de Mundo reutiliza categoryEmojis", async () => {
+  const { db, data } = makeDb();
+  await __test.createShortcutWorldPlace({
+    latitude: 46.687,
+    longitude: 7.862,
+    type: "local",
+    name: "Cafe Nuevo",
+    category: " cafeteria ",
+  }, { db });
+  const root = worldRoot(data);
+  assert.equal(Object.values(root.categoryEmojis).filter((entry) => entry.category === "Cafeteria").length, 1);
+  assert.equal(Object.values(root.places).find((place) => place.name === "Cafe Nuevo").category, "Cafeteria");
+});
+
+await test("local con categoria nueva de Mundo crea categoryEmojis canonico", async () => {
+  const { db, data } = makeDb();
+  await __test.createShortcutWorldPlace({
+    latitude: 46.688,
+    longitude: 7.863,
+    type: "local",
+    name: "Tienda Alpina",
+    category: "Tienda",
+  }, { db });
+  assert.equal(worldRoot(data).categoryEmojis.tienda.category, "Tienda");
+});
+
+await test("categoria de Mundo equivalente con mayusculas y acentos no duplica", async () => {
+  const { db, data } = makeDb();
+  worldRoot(data).categoryEmojis.cafe = { key: "cafe", category: "Café", emoji: "\u2615" };
+  await __test.createShortcutWorldPlace({
+    latitude: 46.689,
+    longitude: 7.864,
+    type: "local",
+    name: "Cafe Lago",
+    category: "  CAFE  ",
+  }, { db });
+  const categories = __test.listShortcutWorldCategoriesFromRoot(worldRoot(data));
+  assert.equal(categories.filter((entry) => entry.key === "cafe").length, 1);
+  assert.equal(Object.values(worldRoot(data).places).find((place) => place.name === "Cafe Lago").category, "Café");
+});
+
+await test("POST /shortcuts/world/places rechaza coordenadas invalidas", async () => {
+  const { db } = makeDb();
+  await assert.rejects(
+    () => __test.createShortcutWorldPlace({ latitude: 120, longitude: 7.861, type: "saved" }, { db }),
+    /INVALID_LATITUDE/,
+  );
+  await assert.rejects(
+    () => __test.createShortcutWorldPlace({ latitude: 46.686, longitude: -220, type: "saved" }, { db }),
+    /INVALID_LONGITUDE/,
+  );
+});
+
+await test("POST /shortcuts/world/places valida rating opcional 0 a 10 con decimales", async () => {
+  const { db, data } = makeDb();
+  await __test.createShortcutWorldPlace({
+    latitude: 46.686,
+    longitude: 7.861,
+    type: "saved",
+    rating: 7.25,
+  }, { db });
+  assert.equal(Object.values(worldRoot(data).saved)[0].rating, 7.25);
+  await assert.rejects(
+    () => __test.createShortcutWorldPlace({ latitude: 46.686, longitude: 7.861, type: "local", rating: 10.5 }, { db }),
+    /INVALID_RATING/,
+  );
+});
+
+await test("POST /shortcuts/world/places soporta idempotencia", async () => {
+  const { db, data } = makeDb();
+  const body = { latitude: 46.686, longitude: 7.861, type: "saved" };
+  await __test.createShortcutWorldPlace(body, { db, idempotencyKey: "same-world-key" });
+  const replay = await __test.createShortcutWorldPlace(body, { db, idempotencyKey: "same-world-key" });
+  assert.equal(replay.body.idempotent, true);
+  assert.equal(Object.keys(worldRoot(data).saved).length, 1);
+});
+
+await test("GET /shortcuts/world/options expone tipos y categorias de Mundo", async () => {
+  const { db } = makeDb();
+  const options = await __test.getShortcutWorldOptions(db);
+  assert.deepEqual(options.types, ["saved", "place", "local"]);
+  assert.equal(options.placeTypes.includes("city"), true);
+  assert.equal(options.localCategories.some((category) => category.name === "Cafeteria" && category.emoji === "\u2615"), true);
+});
+
+await test("POST /shortcuts/world/places conserva geography, places, ratings, categorias y emojis existentes", async () => {
+  const { db, data } = makeDb();
+  const beforeGeo = JSON.stringify(worldRoot(data).geography.geo_1);
+  const beforeLocal = JSON.stringify(worldRoot(data).places.local_1);
+  const beforeEmoji = JSON.stringify(worldRoot(data).categoryEmojis.cafeteria);
+  await __test.createShortcutWorldPlace({
+    latitude: 46.7,
+    longitude: 7.9,
+    type: "local",
+    name: "Restaurante Nuevo",
+    category: "Restaurante",
+    rating: 6.5,
+  }, { db });
+  assert.equal(JSON.stringify(worldRoot(data).geography.geo_1), beforeGeo);
+  assert.equal(JSON.stringify(worldRoot(data).places.local_1), beforeLocal);
+  assert.equal(JSON.stringify(worldRoot(data).categoryEmojis.cafeteria), beforeEmoji);
+  assert.equal(worldRoot(data).geography.geo_1.rating, 8.5);
+  assert.equal(worldRoot(data).places.local_1.rating, 9.25);
+  assert.equal(worldRoot(data).places.local_1.category, "Cafeteria");
+  assert.equal(worldRoot(data).places.local_1.emoji, "\u2615");
+});
+
+await test("Guardados queda visible en la estructura canonica y la UI convierte sin duplicar", () => {
+  const worldSource = readFileSync(new URL("../scripts/modules/world/index.js", import.meta.url), "utf8");
+  const pathsSource = readFileSync(new URL("../scripts/shared/data/paths.js", import.meta.url), "utf8");
+  const viewSource = readFileSync(new URL("../views/world.html", import.meta.url), "utf8");
+  assert.match(pathsSource, /worldSaved/);
+  assert.match(viewSource, /world-saved-list/);
+  assert.match(worldSource, /state\.saved=Object\.values\(data\)/);
+  assert.match(worldSource, /function convertSaved/);
+  assert.match(worldSource, /state\.saved\.splice\(idx, 1\)/);
+  assert.match(worldSource, /state\.places\.push\(converted\)/);
+  assert.match(worldSource, /state\.geography\.push\(converted\)/);
+});
+
 await test("rechazar token invalido usa Authorization Bearer", () => {
   assert.match(serverSource, /Authorization/);
   assert.match(serverSource, /Bearer\\s\+/);
   assert.match(serverSource, /INVALID_SHORTCUT_TOKEN/);
+  assert.match(serverSource, /url\.pathname\.startsWith\("\/shortcuts\/world\/"\)/);
 });
 
 await test("rechaza cuenta inexistente", async () => {
@@ -443,10 +745,10 @@ await test("rechaza cuenta inexistente", async () => {
   );
 });
 
-await test("rechaza categoria invalida", async () => {
+await test("rechaza categoria vacia en gasto", async () => {
   const { db } = makeDb();
   await assert.rejects(
-    () => __test.createShortcutFinanceMovement({ amount: 1, currency: "EUR", accountId: "acc_eur", type: "expense", categoryId: "missing", date: "2026-08-28" }, { db }),
+    () => __test.createShortcutFinanceMovement({ amount: 1, currency: "EUR", accountId: "acc_eur", type: "expense", categoryId: "", date: "2026-08-28" }, { db }),
     /CATEGORY_NOT_FOUND/,
   );
 });

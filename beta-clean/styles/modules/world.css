@@ -63,6 +63,15 @@
 #view-world .world-geo-item{display:flex;flex-direction:column;gap:3px;border-radius:10px;padding:10px}
 #view-world .world-local-row{padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.08)}
 #view-world .world-rich-item{display:flex;justify-content:space-between;gap:8px;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);margin-top:8px}
+#view-world .world-saved-section{display:flex;flex-direction:column;gap:6px;margin:10px 0 4px}
+#view-world .world-saved-list{display:flex;flex-direction:column;gap:6px;min-width:0}
+#view-world .world-saved-empty{padding:9px 10px;border-radius:12px;background:rgba(255,255,255,.05);font-size:13px;opacity:.86}
+#view-world .world-saved-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);min-width:0}
+#view-world .world-saved-main{display:flex;flex-direction:column;gap:4px;min-width:0}
+#view-world .world-saved-title,#view-world .world-saved-meta,#view-world .world-saved-rating,#view-world .world-saved-note{overflow-wrap:anywhere}
+#view-world .world-saved-meta,#view-world .world-saved-rating,#view-world .world-saved-note{font-size:12px;opacity:.82;line-height:1.3}
+#view-world .world-saved-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:flex-start;justify-content:flex-end}
+#view-world .world-saved-actions button{border:0;border-radius:10px;padding:6px 8px;background:rgba(255,255,255,.12);color:#eef0ff}
 #view-world .world-local-card{display:flex;flex-direction:column;gap:6px;min-width:0;line-height:1.3}
 #view-world .world-local-line{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}
 #view-world .world-local-line-main span,#view-world .world-local-line-product span{min-width:0}

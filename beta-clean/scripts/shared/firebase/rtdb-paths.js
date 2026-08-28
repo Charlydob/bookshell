@@ -306,6 +306,10 @@ export function worldPlaces(userKey = "") {
   return joinPath(world(userKey), "places");
 }
 
+export function worldSaved(userKey = "") {
+  return joinPath(world(userKey), "saved");
+}
+
 export function worldStays(userKey = "") {
   return joinPath(world(userKey), "stays");
 }
@@ -437,6 +441,7 @@ export const firebasePaths = Object.freeze({
   worldRoot,
   worldGeography,
   worldPlaces,
+  worldSaved,
   worldStays,
   worldCategoryEmojis,
   worldWatch,

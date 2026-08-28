@@ -130,6 +130,15 @@ let activeNotesStatsSection = "ratings";
 let reminderDraftAlerts = [];
 let reminderDraftCategories = [];
 let reminderDraftChecklistItems = {};
+const REMINDER_ALERT_PRESETS = Object.freeze([
+  { minutes: 0, label: "A la hora" },
+  { minutes: 5, label: "5 min antes" },
+  { minutes: 10, label: "10 min antes" },
+  { minutes: 30, label: "30 min antes" },
+  { minutes: 60, label: "1 hora antes" },
+  { minutes: 120, label: "2 horas antes" },
+  { minutes: 1440, label: "1 dia antes" },
+]);
 const reminderCheckTimer = createSingleTimerController({
   setIntervalFn: (callback, delay) => window.setInterval(callback, delay),
   clearIntervalFn: (timerId) => window.clearInterval(timerId),
@@ -7340,7 +7349,78 @@ function closeReminderModal() {
   closeModal("notes-reminder-modal-backdrop");
 }
 
-function renderReminderAlertDrafts() {
+function reminderAlertToMinutes(alert = {}) {
+  if (Number.isFinite(Number(alert?.minutesBefore))) {
+    return Math.max(0, Math.round(Number(alert.minutesBefore)));
+  }
+  const amount = Math.max(0, Math.round(Number(alert?.amount || 0)));
+  const unit = String(alert?.unit || "").trim();
+  if (unit === "days") return amount * 1440;
+  if (unit === "hours") return amount * 60;
+  if (unit === "minutes") return amount;
+  return -1;
+}
+
+function minutesToReminderDraftAlert(minutes = 0) {
+  const safeMinutes = Math.max(0, Math.round(Number(minutes || 0)));
+  if (safeMinutes === 0) return { amount: 0, unit: "minutes" };
+  if (safeMinutes % 1440 === 0) return { amount: safeMinutes / 1440, unit: "days" };
+  if (safeMinutes % 60 === 0) return { amount: safeMinutes / 60, unit: "hours" };
+  return { amount: safeMinutes, unit: "minutes" };
+}
+
+function normalizeReminderDraftAlerts(alerts = []) {
+  const seen = new Set();
+  return (Array.isArray(alerts) ? alerts : [])
+    .map(reminderAlertToMinutes)
+    .filter((minutes) => minutes >= 0)
+    .sort((a, b) => a - b)
+    .filter((minutes) => {
+      if (seen.has(minutes)) return false;
+      seen.add(minutes);
+      return true;
+    })
+    .map(minutesToReminderDraftAlert);
+}
+
+function ensureReminderExactDraftAlert(alerts = []) {
+  return normalizeReminderDraftAlerts([
+    ...(Array.isArray(alerts) ? alerts : []),
+    { amount: 0, unit: "minutes" },
+  ]);
+}
+
+function formatReminderAlertLabelFromMinutes(minutes = 0) {
+  const safeMinutes = Math.max(0, Math.round(Number(minutes || 0)));
+  const preset = REMINDER_ALERT_PRESETS.find((item) => item.minutes === safeMinutes);
+  if (preset) return preset.label;
+  if (safeMinutes % 1440 === 0) {
+    const days = safeMinutes / 1440;
+    return `${days} ${days === 1 ? "dia" : "dias"} antes`;
+  }
+  if (safeMinutes % 60 === 0) {
+    const hours = safeMinutes / 60;
+    return `${hours} ${hours === 1 ? "hora" : "horas"} antes`;
+  }
+  return `${safeMinutes} min antes`;
+}
+
+function setReminderDraftAlertMinutes(minutes = 0, selected = true) {
+  const safeMinutes = Math.max(0, Math.round(Number(minutes || 0)));
+  const current = new Set(
+    reminderDraftAlerts
+      .map(reminderAlertToMinutes)
+      .filter((value) => value >= 0)
+  );
+  if (selected) current.add(safeMinutes);
+  else current.delete(safeMinutes);
+  if (!current.size) current.add(0);
+  reminderDraftAlerts = Array.from(current)
+    .sort((a, b) => a - b)
+    .map(minutesToReminderDraftAlert);
+}
+
+function renderReminderAlertDraftsLegacy() {
   const list = $id("notes-reminder-alert-list");
   if (!list) return;
   if (!reminderDraftAlerts.length) {
@@ -7350,6 +7430,35 @@ function renderReminderAlertDrafts() {
   list.innerHTML = reminderDraftAlerts.map((alert, index) => `
     <button class="notes-reminder-alert-chip" type="button" data-act="remove-reminder-alert" data-alert-index="${index}">
       ${escapeHtml(`${alert.amount} ${alert.unit}`)} ✕
+    </button>
+  `).join("");
+}
+
+function renderReminderAlertDrafts() {
+  const list = $id("notes-reminder-alert-list");
+  const presets = $id("notes-reminder-alert-presets");
+  reminderDraftAlerts = ensureReminderExactDraftAlert(reminderDraftAlerts);
+  const selectedMinutes = new Set(reminderDraftAlerts.map(reminderAlertToMinutes));
+
+  if (presets) {
+    presets.innerHTML = REMINDER_ALERT_PRESETS.map((preset) => `
+      <button
+        class="notes-reminder-alert-option${selectedMinutes.has(preset.minutes) ? " is-selected" : ""}"
+        type="button"
+        data-act="toggle-reminder-alert-preset"
+        data-alert-minutes="${preset.minutes}"
+        aria-pressed="${selectedMinutes.has(preset.minutes) ? "true" : "false"}"
+      >${escapeHtml(preset.label)}</button>
+    `).join("");
+  }
+
+  if (!list) return;
+  const customAlerts = reminderDraftAlerts
+    .map(reminderAlertToMinutes)
+    .filter((minutes) => !REMINDER_ALERT_PRESETS.some((preset) => preset.minutes === minutes));
+  list.innerHTML = customAlerts.map((minutes) => `
+    <button class="notes-reminder-alert-chip" type="button" data-act="remove-reminder-alert-minutes" data-alert-minutes="${minutes}">
+      ${escapeHtml(formatReminderAlertLabelFromMinutes(minutes))} x
     </button>
   `).join("");
 }
@@ -7406,7 +7515,7 @@ function openReminderModal(reminder = null, options = {}) {
   const presetDate = parseDateKey(options?.presetDate || "")
     ? String(options.presetDate || "")
     : (parseDateKey(state.reminderCalendarSelectedDate || "") ? state.reminderCalendarSelectedDate : getTodayDateKey());
-  reminderDraftAlerts = Array.isArray(reminder?.remindBefore) ? [...reminder.remindBefore] : [];
+  reminderDraftAlerts = ensureReminderExactDraftAlert(Array.isArray(reminder?.remindBefore) ? [...reminder.remindBefore] : []);
   reminderDraftCategories = Array.isArray(reminder?.categories) ? [String(reminder.categories[0] || "").trim()].filter(Boolean) : [];
   reminderDraftChecklistItems = { ...(reminder?.checklistItems || {}) };
   $id("notes-reminder-id").value = reminder?.id || "";
@@ -7428,6 +7537,7 @@ function openReminderModal(reminder = null, options = {}) {
   $id("notes-reminder-delete")?.classList.toggle("hidden", !reminder);
   $id("notes-reminder-modal-title").textContent = reminder ? "Editar recordatorio" : "Nuevo recordatorio";
   if ($id("notes-reminder-category-new")) $id("notes-reminder-category-new").value = "";
+  $id("notes-reminder-alert-custom")?.classList.add("hidden");
   renderReminderCategoryDrafts();
   renderReminderColorPalette(reminder?.color);
   renderReminderAlertDrafts();
@@ -9268,20 +9378,38 @@ function bindUiEvents() {
     }
   });
 
+  $id("notes-reminder-alert-custom-toggle")?.addEventListener("click", () => {
+    $id("notes-reminder-alert-custom")?.classList.toggle("hidden");
+    $id("notes-reminder-alert-amount")?.focus?.();
+  });
+  $id("notes-reminder-alert-presets")?.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-act='toggle-reminder-alert-preset'][data-alert-minutes]");
+    if (!target) return;
+    const minutes = Math.max(0, Math.round(Number(target.dataset.alertMinutes || 0)));
+    setReminderDraftAlertMinutes(minutes, !target.classList.contains("is-selected"));
+    renderReminderAlertDrafts();
+  });
   $id("notes-reminder-alert-add")?.addEventListener("click", () => {
     const amount = Math.max(1, Math.round(Number($id("notes-reminder-alert-amount")?.value || 0)));
     const unit = String($id("notes-reminder-alert-unit")?.value || "");
     if (!amount || !["minutes", "hours", "days"].includes(unit)) return;
-    reminderDraftAlerts.push({ amount, unit });
+    setReminderDraftAlertMinutes(reminderAlertToMinutes({ amount, unit }), true);
     $id("notes-reminder-alert-amount").value = "";
     renderReminderAlertDrafts();
   });
   $id("notes-reminder-alert-list")?.addEventListener("click", (event) => {
+    const byMinutes = event.target.closest("[data-act='remove-reminder-alert-minutes'][data-alert-minutes]");
+    if (byMinutes) {
+      setReminderDraftAlertMinutes(Number(byMinutes.dataset.alertMinutes || 0), false);
+      renderReminderAlertDrafts();
+      return;
+    }
     const target = event.target.closest("[data-act='remove-reminder-alert']");
     if (!target) return;
     const index = Number(target.dataset.alertIndex || -1);
     if (index < 0) return;
     reminderDraftAlerts.splice(index, 1);
+    reminderDraftAlerts = ensureReminderExactDraftAlert(reminderDraftAlerts);
     renderReminderAlertDrafts();
   });
   $id("notes-reminder-categories")?.addEventListener("change", (event) => {
@@ -9425,7 +9553,7 @@ function bindUiEvents() {
       color,
       status: checklistAllDone ? "completado" : (current?.status === "completado" ? "completado" : "pendiente"),
       categories: reminderDraftCategories,
-      remindBefore: reminderDraftAlerts,
+      remindBefore: ensureReminderExactDraftAlert(reminderDraftAlerts),
       checklistItems,
       repeat,
       recurrence: {

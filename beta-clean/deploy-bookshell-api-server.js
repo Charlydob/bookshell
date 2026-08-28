@@ -208,7 +208,7 @@ async function upsertPushSubscription(db, subscription, userAgent = null) {
   return result.rows[0];
 }
 
-async function sendPushToEndpoint(db, provider, endpoint, payload) {
+async function sendPushToEndpoint(db, provider, endpoint, payload, options = {}) {
   const found = await db.query(`
     SELECT id, endpoint, p256dh, auth FROM push_subscriptions
     WHERE user_id = $1 AND endpoint = $2 AND disabled_at IS NULL LIMIT 1
@@ -219,7 +219,7 @@ async function sendPushToEndpoint(db, provider, endpoint, payload) {
     const response = await provider.sendNotification({
       endpoint: row.endpoint,
       keys: { p256dh: row.p256dh, auth: row.auth },
-    }, JSON.stringify(payload), { TTL: 60 });
+    }, JSON.stringify(payload), { TTL: clampInt(options?.ttl, 60, 1, 86400) });
     await db.query(`UPDATE push_subscriptions SET last_success_at = now(), failure_count = 0, updated_at = now() WHERE id = $1`, [row.id]);
     return { accepted: true, statusCode: response?.statusCode || 201, reason: null };
   } catch (error) {
@@ -228,6 +228,65 @@ async function sendPushToEndpoint(db, provider, endpoint, payload) {
       updated_at = now(), disabled_at = CASE WHEN $2 = ANY(ARRAY[404, 410]) THEN now() ELSE disabled_at END WHERE id = $1`, [row.id, statusCode]);
     return { accepted: false, statusCode, reason: String(error?.body || error?.message || "push_provider_error").slice(0, 500) };
   }
+}
+
+async function sendPushToActiveSubscriptions(db, provider, payload, options = {}) {
+  if (!isPushConfigured || !provider) {
+    return {
+      accepted: false,
+      acceptedCount: 0,
+      attemptedCount: 0,
+      results: [],
+      reason: "push_not_configured",
+    };
+  }
+
+  await ensurePushSubscriptionsSchema(db);
+
+  const subscriptions = await db.query(
+    `
+      SELECT endpoint
+      FROM push_subscriptions
+      WHERE user_id = $1
+        AND disabled_at IS NULL
+      ORDER BY updated_at DESC
+    `,
+    [SINGLE_USER_ID]
+  );
+
+  if (!subscriptions.rows.length) {
+    return {
+      accepted: false,
+      acceptedCount: 0,
+      attemptedCount: 0,
+      results: [],
+      reason: "no_active_subscriptions",
+    };
+  }
+
+  const results = [];
+  for (const row of subscriptions.rows) {
+    results.push(
+      await sendPushToEndpoint(
+        db,
+        provider,
+        row.endpoint,
+        payload,
+        options
+      )
+    );
+  }
+
+  const acceptedCount = results.filter((result) => result.accepted).length;
+  return {
+    accepted: acceptedCount > 0,
+    acceptedCount,
+    attemptedCount: subscriptions.rows.length,
+    results,
+    reason: acceptedCount > 0
+      ? null
+      : (results[0]?.reason || "push_delivery_failed"),
+  };
 }
 
 // --------------------------------------------------
@@ -444,6 +503,13 @@ const BOOKSHELL_AUTOMATION_SECRET = String(
 ).trim();
 
 const DEFAULT_REMINDER_TIMEZONE = "Europe/Zurich";
+const REMINDER_SCHEDULER_ENABLED = String(
+  process.env.BOOKSHELL_REMINDER_SCHEDULER ?? "1"
+).trim() !== "0";
+const REMINDER_SCHEDULER_INTERVAL_MS = Math.max(
+  10_000,
+  Math.round(Number(process.env.BOOKSHELL_REMINDER_SCHEDULER_INTERVAL_MS || 60_000))
+);
 const REMINDER_RECURRENCE_TYPES = new Set([
   "none",
   "daily",
@@ -738,11 +804,26 @@ function resolveAlertNotifyAt(alert, reminder) {
 }
 
 function normalizeReminderAlert(alert = {}) {
+  const legacyAmount = Math.max(0, Math.round(Number(alert?.amount || 0)));
+  const legacyUnit = String(alert?.unit || "").trim().toLowerCase();
+  const legacyMinutes =
+    legacyUnit === "days"
+      ? legacyAmount * 1440
+      : (
+          legacyUnit === "hours"
+            ? legacyAmount * 60
+            : (
+                legacyUnit === "minutes"
+                  ? legacyAmount
+                  : null
+              )
+        );
   const inferredMode =
     alert?.mode ||
     (
       alert?.minutesBefore !== undefined ||
-      alert?.minutes_before !== undefined
+      alert?.minutes_before !== undefined ||
+      legacyMinutes !== null
         ? "relative"
         : "absolute"
     );
@@ -756,7 +837,7 @@ function normalizeReminderAlert(alert = {}) {
   const minutesBefore =
     mode === "relative"
       ? clampInt(
-          alert?.minutesBefore ?? alert?.minutes_before,
+          alert?.minutesBefore ?? alert?.minutes_before ?? legacyMinutes,
           -1,
           0,
           525600
@@ -773,6 +854,34 @@ function normalizeReminderAlert(alert = {}) {
     notifyAt: String(alert?.notifyAt || alert?.notify_at || "").trim(),
     channel: "telegram",
   };
+}
+
+function normalizeReminderAlertSet(alerts = []) {
+  const normalizedAlerts = (Array.isArray(alerts) ? alerts : [])
+    .map(normalizeReminderAlert);
+  const withExactAlert = normalizedAlerts.some((alert) =>
+    alert.mode === "relative" && Number(alert.minutesBefore) === 0
+  )
+    ? normalizedAlerts
+    : [
+        ...normalizedAlerts,
+        {
+          mode: "relative",
+          minutesBefore: 0,
+          notifyAt: "",
+          channel: "telegram",
+        },
+      ];
+  const seen = new Set();
+
+  return withExactAlert.filter((alert) => {
+    const key = alert.mode === "relative"
+      ? `relative:${Number(alert.minutesBefore)}`
+      : `absolute:${alert.notifyAt}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function normalizeReminderInput(body = {}, existing = null) {
@@ -937,6 +1046,79 @@ function isAutomationAuthorized(req) {
   );
 }
 
+const reminderNotificationSchemaReadyByDb = new WeakMap();
+
+function ensureReminderNotificationSchema(db = pool) {
+  if (!db || typeof db.query !== "function") {
+    throw new Error("database_unavailable");
+  }
+  let ready = reminderNotificationSchemaReadyByDb.get(db);
+  if (!ready) {
+    ready = db.query(`
+      CREATE TABLE IF NOT EXISTS reminder_notification_deliveries (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id uuid NOT NULL,
+        delivery_type text NOT NULL,
+        delivery_key text NOT NULL,
+        timezone text NOT NULL DEFAULT 'Europe/Zurich',
+        target_date date,
+        target_at timestamptz,
+        reminder_ids uuid[] NOT NULL DEFAULT '{}'::uuid[],
+        payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+        status text NOT NULL DEFAULT 'sending',
+        attempt_count integer NOT NULL DEFAULT 0,
+        locked_at timestamptz,
+        locked_by text,
+        sent_at timestamptz,
+        failed_at timestamptz,
+        error_message text,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT reminder_notification_deliveries_status_check
+          CHECK (status IN ('sending', 'sent', 'failed', 'skipped')),
+        CONSTRAINT reminder_notification_deliveries_type_key_unique
+          UNIQUE (user_id, delivery_type, delivery_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS reminder_notification_deliveries_lookup_idx
+        ON reminder_notification_deliveries (user_id, delivery_type, target_date, status);
+
+      INSERT INTO reminder_alerts (
+        reminder_id,
+        mode,
+        minutes_before,
+        notify_at,
+        channel,
+        status,
+        created_at,
+        updated_at
+      )
+      SELECT
+        r.id,
+        'relative',
+        0,
+        ((r.target_date::date + COALESCE(r.target_time::time, TIME '09:00')) AT TIME ZONE COALESCE(NULLIF(r.timezone, ''), 'Europe/Zurich')),
+        'telegram',
+        'pending',
+        now(),
+        now()
+      FROM reminders r
+      WHERE r.status = 'pending'
+        AND r.target_date IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM reminder_alerts a
+          WHERE a.reminder_id = r.id
+            AND a.mode = 'relative'
+            AND COALESCE(a.minutes_before, -1) = 0
+            AND a.status <> 'cancelled'
+        );
+    `);
+    reminderNotificationSchemaReadyByDb.set(db, ready);
+  }
+  return ready;
+}
+
 async function getReminderAlerts(client, reminderId) {
   const result = await client.query(
     `
@@ -1036,11 +1218,14 @@ async function getReminderById(reminderId, client = pool) {
 }
 
 async function insertReminderAlerts(client, reminderRow, alerts = []) {
-  const normalizedAlerts = (Array.isArray(alerts) ? alerts : [])
-    .map(normalizeReminderAlert);
+  const normalizedAlerts = normalizeReminderAlertSet(alerts);
+  const seenNotifyAt = new Set();
 
   for (const alert of normalizedAlerts) {
     const notifyAt = resolveAlertNotifyAt(alert, reminderRow);
+    const notifyKey = notifyAt.toISOString();
+    if (seenNotifyAt.has(notifyKey)) continue;
+    seenNotifyAt.add(notifyKey);
 
     await client.query(
       `
@@ -2603,6 +2788,399 @@ async function completeReminderRecord(reminderId, payload = {}) {
   }
 }
 
+function formatMinutesBeforeLabel(minutesBefore = 0) {
+  const minutes = Math.max(0, Math.round(Number(minutesBefore || 0)));
+  if (minutes === 0) return "";
+  if (minutes % 1440 === 0) {
+    const days = minutes / 1440;
+    return `${days} ${days === 1 ? "dia" : "dias"}`;
+  }
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} ${hours === 1 ? "hora" : "horas"}`;
+  }
+  return `${minutes} min`;
+}
+
+function buildReminderUrl(reminderId = "") {
+  const safeId = String(reminderId || "").trim();
+  const query = safeId
+    ? `?reminderId=${encodeURIComponent(safeId)}`
+    : "";
+  return `/${query}#view-notes`;
+}
+
+function buildReminderAlertPushPayload(alert = {}) {
+  const title = String(alert?.title || "Recordatorio").trim() || "Recordatorio";
+  const minutesBefore = Math.max(0, Math.round(Number(alert?.minutesBefore || 0)));
+  const label = formatMinutesBeforeLabel(minutesBefore);
+  return {
+    title: minutesBefore > 0
+      ? `\u23f0 En ${label}: ${title}`
+      : `\u23f0 ${title}`,
+    body: String(alert?.targetTime || "").trim() || "Ahora",
+    url: buildReminderUrl(alert?.reminderId),
+    type: "reminder",
+    tag: `reminder:${alert?.reminderId || ""}:${alert?.alertId || ""}:${alert?.scheduleVersion || 1}`,
+    reminderId: alert?.reminderId || "",
+    alertId: alert?.alertId || "",
+    scheduleVersion: Number(alert?.scheduleVersion || 1),
+  };
+}
+
+function buildDailySummaryPayload(summary = {}) {
+  const reminders = Array.isArray(summary?.reminders) ? summary.reminders : [];
+  const visible = reminders.slice(0, 10);
+  const overflow = reminders.length - visible.length;
+  const rows = visible.map((reminder) => {
+    const time = String(reminder?.targetTime || "--:--").trim() || "--:--";
+    const title = String(reminder?.title || "Recordatorio").trim() || "Recordatorio";
+    return `\u2022 ${time} - ${title}`;
+  });
+  if (overflow > 0) rows.push(`\u2022 Y ${overflow} mas`);
+
+  return {
+    title: "\ud83d\udcc5 Hoy tienes pendiente",
+    body: rows.join("\n"),
+    url: "/#view-notes",
+    type: "reminder-daily-summary",
+    tag: `reminder-daily-summary:${summary?.timezone || DEFAULT_REMINDER_TIMEZONE}:${summary?.targetDate || ""}`,
+    targetDate: summary?.targetDate || "",
+    timezone: summary?.timezone || DEFAULT_REMINDER_TIMEZONE,
+  };
+}
+
+async function runDueReminderAlertPushCycle({ limit = 50 } = {}) {
+  if (!isPushConfigured) {
+    return {
+      ok: false,
+      reason: "push_not_configured",
+      claimed: 0,
+      sent: 0,
+      failed: 0,
+    };
+  }
+
+  const claimed = await claimDueReminderAlerts(limit);
+  let sent = 0;
+  let failed = 0;
+  const results = [];
+
+  for (const alert of claimed.alerts) {
+    const payload = buildReminderAlertPushPayload(alert);
+    const delivery = await sendPushToActiveSubscriptions(
+      pool,
+      webPush,
+      payload,
+      { ttl: 3600 }
+    );
+
+    if (delivery.accepted) {
+      sent += 1;
+      results.push(
+        await markReminderAlertSent(
+          alert.alertId,
+          alert.scheduleVersion
+        )
+      );
+    } else {
+      failed += 1;
+      results.push(
+        await markReminderAlertFailed(
+          alert.alertId,
+          delivery.reason || "push_delivery_failed",
+          alert.scheduleVersion
+        )
+      );
+    }
+  }
+
+  return {
+    ok: true,
+    workerId: claimed.workerId,
+    claimed: claimed.alerts.length,
+    sent,
+    failed,
+    results,
+  };
+}
+
+async function listDailySummaryReminders(targetDate, timeZone = DEFAULT_REMINDER_TIMEZONE) {
+  const result = await pool.query(
+    `
+      SELECT
+        id,
+        title,
+        description,
+        target_date,
+        target_time,
+        timezone,
+        recurrence_type,
+        schedule_version
+      FROM reminders
+      WHERE firebase_uid = $1
+        AND status = 'pending'
+        AND target_date = $2::date
+        AND COALESCE(NULLIF(timezone, ''), $3) = $3
+      ORDER BY target_time ASC NULLS LAST, created_at ASC
+    `,
+    [LEGACY_FIREBASE_UID, targetDate, normalizeTimezone(timeZone)]
+  );
+
+  return result.rows.map((row) => ({
+    reminderId: row.id,
+    title: row.title,
+    description: row.description || "",
+    targetDate: normalizeDateOnly(row.target_date),
+    targetTime: normalizeTimeOnly(row.target_time),
+    timezone: normalizeTimezone(row.timezone),
+    recurrenceType: normalizeRecurrenceType(row.recurrence_type),
+    scheduleVersion: Number(row.schedule_version || 1),
+  }));
+}
+
+async function claimDailySummaryDelivery({ now = new Date(), timeZone = DEFAULT_REMINDER_TIMEZONE } = {}) {
+  const safeTimezone = normalizeTimezone(timeZone);
+  const localParts = zonedParts(now, safeTimezone);
+  const targetDate = dateStringFromUtcParts(
+    localParts.year,
+    localParts.month,
+    localParts.day
+  );
+
+  if (localParts.hour !== 8) {
+    return {
+      claimed: false,
+      reason: "outside_summary_window",
+      targetDate,
+      timezone: safeTimezone,
+    };
+  }
+
+  await ensureReminderNotificationSchema(pool);
+
+  const reminders = await listDailySummaryReminders(targetDate, safeTimezone);
+  const deliveryKey = `daily:${safeTimezone}:${targetDate}`;
+  const workerId = `summary-${crypto.randomUUID()}`;
+  const payload = buildDailySummaryPayload({
+    targetDate,
+    timezone: safeTimezone,
+    reminders,
+  });
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const inserted = await client.query(
+      `
+        INSERT INTO reminder_notification_deliveries (
+          user_id,
+          delivery_type,
+          delivery_key,
+          timezone,
+          target_date,
+          target_at,
+          reminder_ids,
+          payload,
+          status,
+          attempt_count,
+          locked_at,
+          locked_by,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1,
+          'daily_summary',
+          $2,
+          $3,
+          $4::date,
+          $5,
+          $6::uuid[],
+          $7::jsonb,
+          $8,
+          1,
+          NOW(),
+          $9,
+          NOW(),
+          NOW()
+        )
+        ON CONFLICT (user_id, delivery_type, delivery_key) DO NOTHING
+        RETURNING id, status
+      `,
+      [
+        SINGLE_USER_ID,
+        deliveryKey,
+        safeTimezone,
+        targetDate,
+        localDateTimeToUtc(targetDate, "08:00", safeTimezone),
+        reminders.map((reminder) => reminder.reminderId),
+        JSON.stringify(payload),
+        reminders.length ? "sending" : "skipped",
+        workerId,
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    if (!inserted.rows.length) {
+      return {
+        claimed: false,
+        reason: "already_claimed",
+        targetDate,
+        timezone: safeTimezone,
+      };
+    }
+
+    return {
+      claimed: reminders.length > 0,
+      skipped: reminders.length === 0,
+      deliveryId: inserted.rows[0].id,
+      workerId,
+      targetDate,
+      timezone: safeTimezone,
+      reminders,
+      payload,
+    };
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function updateDailySummaryDelivery(deliveryId, patch = {}) {
+  const status = ["sent", "failed", "skipped"].includes(String(patch?.status || ""))
+    ? String(patch.status)
+    : "failed";
+  const result = await pool.query(
+    `
+      UPDATE reminder_notification_deliveries
+      SET
+        status = $2,
+        sent_at = CASE WHEN $2 = 'sent' THEN NOW() ELSE sent_at END,
+        failed_at = CASE WHEN $2 = 'failed' THEN NOW() ELSE failed_at END,
+        error_message = CASE WHEN $2 = 'failed' THEN $3 ELSE NULL END,
+        locked_at = NULL,
+        locked_by = NULL,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, status
+    `,
+    [
+      deliveryId,
+      status,
+      String(patch?.errorMessage || "").slice(0, 2000),
+    ]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function runDailySummaryPushCycle({ now = new Date(), timeZone = DEFAULT_REMINDER_TIMEZONE } = {}) {
+  if (!isPushConfigured) {
+    return {
+      ok: false,
+      reason: "push_not_configured",
+      claimed: false,
+      sent: false,
+    };
+  }
+
+  const claimed = await claimDailySummaryDelivery({ now, timeZone });
+  if (!claimed.claimed) {
+    return {
+      ok: true,
+      ...claimed,
+      sent: false,
+    };
+  }
+
+  const delivery = await sendPushToActiveSubscriptions(
+    pool,
+    webPush,
+    claimed.payload,
+    { ttl: 7200 }
+  );
+
+  await updateDailySummaryDelivery(
+    claimed.deliveryId,
+    delivery.accepted
+      ? { status: "sent" }
+      : {
+          status: "failed",
+          errorMessage: delivery.reason || "push_delivery_failed",
+        }
+  );
+
+  return {
+    ok: true,
+    ...claimed,
+    sent: delivery.accepted,
+    acceptedCount: delivery.acceptedCount,
+    attemptedCount: delivery.attemptedCount,
+  };
+}
+
+let reminderSchedulerTimer = null;
+let reminderSchedulerTickInFlight = false;
+
+async function runReminderSchedulerTick(options = {}) {
+  if (reminderSchedulerTickInFlight) {
+    return { ok: true, skipped: true, reason: "tick_in_flight" };
+  }
+
+  reminderSchedulerTickInFlight = true;
+  try {
+    await ensurePushSubscriptionsSchema(pool);
+    await ensureReminderNotificationSchema(pool);
+    const [alerts, dailySummary] = await Promise.all([
+      runDueReminderAlertPushCycle({ limit: options?.limit || 50 }),
+      runDailySummaryPushCycle({
+        now: options?.now || new Date(),
+        timeZone: options?.timeZone || DEFAULT_REMINDER_TIMEZONE,
+      }),
+    ]);
+
+    return {
+      ok: true,
+      alerts,
+      dailySummary,
+    };
+  } finally {
+    reminderSchedulerTickInFlight = false;
+  }
+}
+
+function startReminderScheduler() {
+  if (reminderSchedulerTimer || !REMINDER_SCHEDULER_ENABLED) {
+    return reminderSchedulerTimer;
+  }
+
+  const tick = () => {
+    runReminderSchedulerTick().catch((error) => {
+      console.error("[reminders:scheduler]", error);
+    });
+  };
+
+  reminderSchedulerTimer = setInterval(tick, REMINDER_SCHEDULER_INTERVAL_MS);
+  reminderSchedulerTimer.unref?.();
+  tick();
+  return reminderSchedulerTimer;
+}
+
+function stopReminderScheduler() {
+  if (!reminderSchedulerTimer) return false;
+  clearInterval(reminderSchedulerTimer);
+  reminderSchedulerTimer = null;
+  return true;
+}
+
 function reminderErrorStatus(error) {
   const knownBadRequest = new Set([
     "invalid_target_date",
@@ -3860,16 +4438,20 @@ if (require.main === module) {
     throw new Error("pg_dependency_missing");
   }
 
-  void ensurePushSubscriptionsSchema(pool).then(() => {
-    console.log("[push:schema] push_subscriptions ready");
+  void Promise.all([
+    ensurePushSubscriptionsSchema(pool),
+    ensureReminderNotificationSchema(pool),
+  ]).then(() => {
+    console.log("[push:schema] push subscriptions and reminder notifications ready");
   }).catch((error) => {
-    console.warn("[push:schema] push_subscriptions setup failed", String(error?.message || error));
+    console.warn("[push:schema] setup failed", String(error?.message || error));
   });
 
   server.listen(PORT, "0.0.0.0", () => {
     console.log(
       `Bookshell API listening on port ${PORT} - AUTH DISABLED`
     );
+    startReminderScheduler();
   });
 }
 
@@ -3882,8 +4464,22 @@ module.exports = {
     serializeReminder,
     normalizePushSubscription,
     ensurePushSubscriptionsSchema,
+    ensureReminderNotificationSchema,
     sendPushToEndpoint,
+    sendPushToActiveSubscriptions,
     upsertPushSubscription,
+    normalizeReminderAlertSet,
+    localDateTimeToUtc,
+    getNextRecurrenceDate,
+    formatMinutesBeforeLabel,
+    buildReminderAlertPushPayload,
+    buildDailySummaryPayload,
+    claimDailySummaryDelivery,
+    runDailySummaryPushCycle,
+    runDueReminderAlertPushCycle,
+    runReminderSchedulerTick,
+    startReminderScheduler,
+    stopReminderScheduler,
     pushConfig: { configured: isPushConfigured, publicKey: VAPID_PUBLIC_KEY },
   },
 };

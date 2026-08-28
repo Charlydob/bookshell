@@ -271,8 +271,10 @@
           </div>
         </div>
         <div class="notes-reminder-alert-builder notes-reminder-row-alerts">
-          <div class="field-label">Avisos</div>
-          <div class="notes-reminder-alert-inputs">
+          <div class="field-label">Avisarme antes</div>
+          <div class="notes-reminder-alert-presets" id="notes-reminder-alert-presets"></div>
+          <button class="btn ghost btn-compact notes-reminder-alert-custom-toggle" id="notes-reminder-alert-custom-toggle" type="button">+ Personalizado</button>
+          <div class="notes-reminder-alert-inputs hidden" id="notes-reminder-alert-custom">
             <input id="notes-reminder-alert-amount" type="number" min="1" max="365" step="1" inputmode="numeric" placeholder="Cantidad" />
             <select id="notes-reminder-alert-unit" class="field-select">
               <option value="minutes">Minutos antes</option>

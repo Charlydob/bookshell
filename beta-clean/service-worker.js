@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-08-27-pwa-root-scope-v3";
-const PUBLISHED_COMMIT = "pwa-root-scope-v3";
+const APP_VERSION = "2026-08-28-reminder-web-push-v1";
+const PUBLISHED_COMMIT = "reminder-web-push-v1";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
@@ -305,8 +305,13 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(payload.title || "Bookshell", {
     body: payload.body || "Tienes una nueva notificación.",
     icon: "./icons/icon-192.png",
-    tag: payload.type || undefined,
-    data: { url: payload.url || "/" },
+    tag: payload.tag || payload.type || undefined,
+    data: {
+      url: payload.url || "/",
+      reminderId: payload.reminderId || "",
+      alertId: payload.alertId || "",
+      type: payload.type || "",
+    },
     silent: false,
   }));
 });

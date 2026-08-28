@@ -246,7 +246,7 @@ function normalizeReminderColor(value = "") {
 
 function minutesToLegacyAlert(minutes = 0) {
   const safeMinutes = Math.max(0, Math.round(Number(minutes || 0)));
-  if (!safeMinutes) return null;
+  if (!safeMinutes) return { amount: 0, unit: "minutes" };
   if (safeMinutes % (24 * 60) === 0) return { amount: safeMinutes / (24 * 60), unit: "days" };
   if (safeMinutes % 60 === 0) return { amount: safeMinutes / 60, unit: "hours" };
   return { amount: safeMinutes, unit: "minutes" };
@@ -274,7 +274,7 @@ function normalizeReminderAlerts(value = [], fallbackCanonicalAlerts = []) {
       const amount = Math.max(0, Math.round(Number(row?.amount || 0)));
       const unitRaw = String(row?.unit || "").trim().toLowerCase();
       const unit = ["minutes", "hours", "days"].includes(unitRaw) ? unitRaw : "";
-      if (!amount || !unit) return null;
+      if ((!amount && unit !== "minutes") || !unit) return null;
       return { amount, unit };
     })
     .filter(Boolean);
@@ -308,10 +308,14 @@ function normalizeCanonicalReminderAlerts(value = [], { reminder = {}, legacyAle
       const minutesBefore = Number.isFinite(Number(alert?.minutesBefore))
         ? Math.max(0, Math.round(Number(alert.minutesBefore)))
         : legacyAlertToMinutes(alert);
-      const modeRaw = String(alert?.mode || (minutesBefore ? "relative" : "absolute")).trim().toLowerCase();
+      const hasRelativeValue =
+        alert?.minutesBefore !== undefined ||
+        alert?.minutes_before !== undefined ||
+        alert?.amount !== undefined;
+      const modeRaw = String(alert?.mode || (hasRelativeValue ? "relative" : "absolute")).trim().toLowerCase();
       const mode = allowedModes.includes(modeRaw) ? modeRaw : "relative";
       const notifyAt = String(alert?.notifyAt || "").trim();
-      if (mode === "relative" && !minutesBefore) return null;
+      if (mode === "relative" && !Number.isFinite(minutesBefore)) return null;
       if (mode === "absolute" && !notifyAt) return null;
       const statusRaw = String(alert?.status || "pending").trim().toLowerCase();
       return {

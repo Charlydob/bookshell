@@ -88,10 +88,14 @@ function normalizeReminderAlerts(alerts = []) {
   return source
     .map((alert, index) => {
       const legacyMinutes = legacyAlertToMinutes(alert);
-      const mode = normalizeEnum(alert?.mode, ALERT_MODES, Number.isFinite(Number(alert?.minutesBefore)) || legacyMinutes ? "relative" : "absolute");
-      const minutesBefore = Number.isFinite(Number(alert?.minutesBefore))
+      const hasMinutesBefore = Number.isFinite(Number(alert?.minutesBefore));
+      const hasLegacyRelative =
+        alert?.amount !== undefined &&
+        ["minutes", "hours", "days"].includes(String(alert?.unit || "").trim());
+      const mode = normalizeEnum(alert?.mode, ALERT_MODES, hasMinutesBefore || hasLegacyRelative ? "relative" : "absolute");
+      const minutesBefore = hasMinutesBefore
         ? Math.max(0, Math.round(Number(alert.minutesBefore)))
-        : (legacyMinutes || null);
+        : (hasLegacyRelative ? legacyMinutes : null);
       const notifyAt = String(alert?.notifyAt || "").trim();
       if (mode === "relative" && minutesBefore === null) return null;
       if (mode === "absolute" && !notifyAt) return null;

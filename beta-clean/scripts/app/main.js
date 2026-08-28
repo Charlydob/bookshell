@@ -89,9 +89,9 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 });
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
-const NOTES_MODULE_VERSION = "2026-05-15-v1";
-const APP_PUBLISHED_COMMIT = "pwa-root-scope-v3";
-const SERVICE_WORKER_VERSION = "2026-08-27-pwa-root-scope-v3";
+const NOTES_MODULE_VERSION = "2026-08-28-reminder-alerts-v1";
+const APP_PUBLISHED_COMMIT = "reminder-web-push-v1";
+const SERVICE_WORKER_VERSION = "2026-08-28-reminder-web-push-v1";
 const FINANCE_MODULE_VERSION = "2026-08-23-api-data-provider-no-rtdb";
 const BOOKSHELL_CACHE_PREFIX = "bookshell-";
 const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([

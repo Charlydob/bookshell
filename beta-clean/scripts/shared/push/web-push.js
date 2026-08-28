@@ -139,3 +139,39 @@ export async function generateShortcutToken() {
 export async function revokeShortcutToken() {
   return api("/shortcuts/token", { method: "DELETE" });
 }
+
+function filenameFromContentDisposition(value = "") {
+  const utfMatch = String(value || "").match(/filename\*=UTF-8''([^;]+)/i);
+  if (utfMatch?.[1]) return decodeURIComponent(utfMatch[1].trim().replace(/^"|"$/g, ""));
+  const asciiMatch = String(value || "").match(/filename="?([^";]+)"?/i);
+  return asciiMatch?.[1]?.trim() || "";
+}
+
+export async function downloadBookshellExport() {
+  const response = await fetch(`${API_BASE_URL}/export`, {
+    method: "GET",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { response, body });
+  }
+
+  const blob = await response.blob();
+  const filename = filenameFromContentDisposition(response.headers.get("Content-Disposition") || "")
+    || `bookshell-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  return { filename, size: blob.size };
+}

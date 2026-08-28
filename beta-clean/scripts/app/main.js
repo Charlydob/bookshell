@@ -24,7 +24,7 @@ import {
 import { applyTheme, getAvailableThemes, getCurrentTheme, initThemeService } from "../shared/services/theme/index.js";
 import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
 import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, getFirebaseMetricsSnapshot, logFirebaseRead, registerViewListener } from "../shared/data/read-debug.js";
-import { disablePush, enablePush, generateShortcutToken, getPushState, getShortcutStatus, revokeShortcutToken, sendTestPush, sendTodayPendingPush } from "../shared/push/web-push.js?v=2026-08-28-reminder-delete-push-update-v1";
+import { disablePush, downloadBookshellExport, enablePush, generateShortcutToken, getPushState, getShortcutStatus, revokeShortcutToken, sendTestPush, sendTodayPendingPush } from "../shared/push/web-push.js?v=2026-08-29-data-export-latlon-v1";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -91,8 +91,8 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
 const NOTES_MODULE_VERSION = "2026-08-28-reminder-delete-push-update-v1";
-const APP_PUBLISHED_COMMIT = "reminder-delete-push-update-v1";
-const SERVICE_WORKER_VERSION = "2026-08-28-reminder-delete-push-update-v1";
+const APP_PUBLISHED_COMMIT = "data-export-latlon-v1";
+const SERVICE_WORKER_VERSION = "2026-08-29-data-export-latlon-v1";
 const FINANCE_MODULE_VERSION = "2026-08-23-api-data-provider-no-rtdb";
 const BOOKSHELL_CACHE_PREFIX = "bookshell-";
 const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
@@ -940,6 +940,13 @@ async function renderSettingsModal() {
       <p data-reminders-today-feedback>Usa los recordatorios reales de hoy y envia una Web Push al dispositivo.</p>
     </section>
     <section class="app-settings-section">
+      <div class="app-settings-section__eyebrow">Datos y copias de seguridad</div>
+      <div class="app-settings-section__actions">
+        <button type="button" class="app-settings-actionBtn" data-export-bookshell>Exportar todos mis datos (.json)</button>
+      </div>
+      <p data-export-feedback></p>
+    </section>
+    <section class="app-settings-section">
       <div class="app-settings-section__eyebrow">Atajos de iPhone</div>
       <div class="app-settings-kpis">
         <div class="app-settings-kpi"><small>API de Atajos</small><strong>${shortcutState.enabled ? "Activada" : "Desactivada"}</strong></div>
@@ -1080,6 +1087,21 @@ function ensureSettingsModal() {
         if (feedback) feedback.textContent = `Error: ${error.message}`;
       }).finally(() => {
         todayPushAction.disabled = false;
+      });
+      return;
+    }
+    const exportAction = event.target?.closest?.("[data-export-bookshell]");
+    if (exportAction) {
+      exportAction.disabled = true;
+      const feedback = backdrop.querySelector("[data-export-feedback]");
+      if (feedback) feedback.textContent = "Preparando exportacion...";
+      downloadBookshellExport().then((result) => {
+        if (feedback) feedback.textContent = `Exportacion descargada: ${result.filename}`;
+      }).catch((error) => {
+        console.error("[export]", error);
+        if (feedback) feedback.textContent = `Error: ${error.message}`;
+      }).finally(() => {
+        exportAction.disabled = false;
       });
       return;
     }

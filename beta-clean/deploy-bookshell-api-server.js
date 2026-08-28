@@ -119,6 +119,7 @@ function corsHeaders(req) {
       : {}),
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Bookshell-Automation-Secret, Idempotency-Key",
     "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    "Access-Control-Expose-Headers": "Content-Disposition",
     "Access-Control-Allow-Credentials": "true",
     "Vary": "Origin",
   };
@@ -458,6 +459,126 @@ async function getUserData() {
   );
 
   return result.rows[0] || null;
+}
+
+async function getUserDataForExport(db = pool) {
+  const result = await db.query(
+    `
+    SELECT id, data, imported_at
+    FROM firebase_import_raw
+    WHERE user_id = $1
+    ORDER BY imported_at DESC
+    LIMIT 1
+    `,
+    [SINGLE_USER_ID]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function listReminderRecordsForExport(db = pool) {
+  const result = await db.query(
+    `
+      SELECT *
+      FROM reminders
+      WHERE firebase_uid = $1
+      ORDER BY
+        target_date ASC,
+        target_time ASC NULLS FIRST,
+        created_at ASC,
+        id ASC
+    `,
+    [LEGACY_FIREBASE_UID]
+  );
+
+  const reminders = [];
+
+  for (const row of result.rows) {
+    reminders.push(
+      serializeReminder(
+        row,
+        await getReminderAlerts(db, row.id)
+      )
+    );
+  }
+
+  return reminders;
+}
+
+function authenticateWebSessionRequest() {
+  return getSingleUser();
+}
+
+function formatExportFilename(exportedAt = new Date().toISOString()) {
+  const day = String(exportedAt || "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+  return `bookshell-backup-${day}.json`;
+}
+
+async function buildBookshellExport({
+  db = pool,
+  user = getSingleUser(),
+  now = new Date(),
+} = {}) {
+  const exportedAt = now instanceof Date && !Number.isNaN(now.getTime())
+    ? now.toISOString()
+    : new Date().toISOString();
+  const dataRow = await getUserDataForExport(db);
+  const reminders = await listReminderRecordsForExport(db);
+
+  return {
+    schemaVersion: 1,
+    exportedAt,
+    app: "Bookshell",
+    user: {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      legacyFirebaseUid: user.legacyFirebaseUid,
+    },
+    data: dataRow?.data || {},
+    reminders,
+    otherPersistentData: {
+      sources: {
+        dataTree: {
+          table: "firebase_import_raw",
+          importedAt: dataRow?.imported_at ? new Date(dataRow.imported_at).toISOString() : "",
+        },
+        reminders: {
+          tables: ["reminders", "reminder_alerts"],
+          count: reminders.length,
+        },
+      },
+      excludedSources: {
+        shortcutApiTokens: "operational bearer token hashes",
+        shortcutIdempotencyKeys: "technical deduplication cache",
+        pushSubscriptions: "device subscription secrets and ephemeral delivery state",
+        reminderNotificationDeliveries: "technical Web Push delivery log",
+        dataUsageLog: "telemetry",
+        environment: "process secrets such as DATABASE_URL and VAPID_PRIVATE_KEY",
+      },
+    },
+  };
+}
+
+async function sendBookshellExport(req, res, {
+  db = pool,
+  authenticate = authenticateWebSessionRequest,
+  now = new Date(),
+} = {}) {
+  const user = await authenticate(req, db);
+  if (!user) {
+    return sendJson(req, res, 401, {
+      ok: false,
+      error: "AUTH_REQUIRED",
+    });
+  }
+
+  const payload = await buildBookshellExport({ db, user, now });
+  return sendJson(req, res, 200, payload, {
+    "Content-Type": "application/json",
+    "Content-Disposition": `attachment; filename="${formatExportFilename(payload.exportedAt)}"`,
+    "Cache-Control": "no-store",
+  });
 }
 
 async function mutateUserData(mutator) {
@@ -1508,17 +1629,38 @@ function parseShortcutWorldRating(value = null) {
   return rating;
 }
 
+function parseShortcutCoordinate(value, { min, max, errorCode }) {
+  let coordinate = NaN;
+
+  if (typeof value === "number") {
+    coordinate = value;
+  } else if (typeof value === "string") {
+    const safe = value.trim();
+    if (/^[+-]?\d+(?:[.,]\d+)?$/.test(safe)) {
+      coordinate = Number(safe.replace(",", "."));
+    }
+  }
+
+  if (!Number.isFinite(coordinate) || coordinate < min || coordinate > max) {
+    throw Object.assign(new Error(errorCode), { statusCode: 400 });
+  }
+
+  return coordinate;
+}
+
 function parseShortcutWorldPlaceInput(body = {}, nowMs = Date.now()) {
   const type = normalizeShortcutWorldType(body?.type);
-  const latitude = Number(body?.latitude ?? body?.lat);
-  const longitude = Number(body?.longitude ?? body?.lon ?? body?.lng);
   if (!type) throw Object.assign(new Error("INVALID_WORLD_TYPE"), { statusCode: 400 });
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
-    throw Object.assign(new Error("INVALID_LATITUDE"), { statusCode: 400 });
-  }
-  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-    throw Object.assign(new Error("INVALID_LONGITUDE"), { statusCode: 400 });
-  }
+  const latitude = parseShortcutCoordinate(body?.latitude ?? body?.lat, {
+    min: -90,
+    max: 90,
+    errorCode: "INVALID_LATITUDE",
+  });
+  const longitude = parseShortcutCoordinate(body?.longitude ?? body?.lon ?? body?.lng, {
+    min: -180,
+    max: 180,
+    errorCode: "INVALID_LONGITUDE",
+  });
   const capturedDate = parseShortcutWorldCapturedAt(body?.capturedAt || body?.captured_at, nowMs);
   return {
     type,
@@ -4780,6 +4922,18 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === "GET" && url.pathname === "/export") {
+    try {
+      return await sendBookshellExport(req, res);
+    } catch (error) {
+      console.error("[export]", error);
+      return sendJson(req, res, error?.statusCode || 500, {
+        ok: false,
+        error: error?.message || "EXPORT_FAILED",
+      });
+    }
+  }
+
   // ------------------------------------------------
   // SHORTCUTS API (Bearer token)
   // ------------------------------------------------
@@ -6119,6 +6273,10 @@ module.exports = {
     resolveReminderTestPushPayload,
     sendReminderTestPush,
     sendTodayPendingPush,
+    buildBookshellExport,
+    sendBookshellExport,
+    formatExportFilename,
+    authenticateWebSessionRequest,
     ensureShortcutSchema,
     getShortcutStatus,
     rotateShortcutToken,
@@ -6134,6 +6292,7 @@ module.exports = {
     buildShortcutFinanceSummary,
     getShortcutWorldOptions,
     createShortcutWorldPlace,
+    parseShortcutCoordinate,
     parseShortcutWorldPlaceInput,
     buildShortcutWorldItem,
     listShortcutWorldCategoriesFromRoot,

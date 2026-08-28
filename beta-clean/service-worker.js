@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-08-28-reminder-delete-push-update-v1";
-const PUBLISHED_COMMIT = "reminder-delete-push-update-v1";
+const APP_VERSION = "2026-08-29-data-export-latlon-v1";
+const PUBLISHED_COMMIT = "data-export-latlon-v1";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;

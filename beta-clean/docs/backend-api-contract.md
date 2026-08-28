@@ -15,6 +15,7 @@ Current data endpoints used by the provider:
 - `PATCH /data` and `PATCH /data/{path}`
 - `DELETE /data/{path}`
 - `POST /data/push/{path}`
+- `GET /export`
 
 Temporary listeners use safe polling against `GET /data/{path}` every 15 seconds while visible and every 30 seconds while hidden. Replace this with SSE/WebSocket when the backend supports it.
 
@@ -51,6 +52,65 @@ Required backend behavior:
 Until that endpoint exists, the frontend falls back to read-then-write and logs that the operation is non-atomic.
 
 These endpoints are the contract for the external Bookshell backend at `https://api-bookshell.charlydob.com`; do not trust frontend-sent `userId` as authorization. The backend should derive the user from a session or verified token.
+
+### Full Data Export
+
+`GET /export`
+
+Returns a downloadable JSON backup for the authenticated Bookshell user. The
+backend derives ownership from the existing web session and does not accept a
+client-supplied `userId`.
+
+Response headers:
+
+```http
+Content-Type: application/json
+Content-Disposition: attachment; filename="bookshell-backup-2026-08-29.json"
+Cache-Control: no-store
+```
+
+Response body:
+
+```json
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-08-29T00:00:00.000Z",
+  "app": "Bookshell",
+  "user": {
+    "id": "postgres-user-uuid",
+    "email": "charlydob99@gmail.com",
+    "displayName": "Charly",
+    "legacyFirebaseUid": "firebase-auth-uid-that-owns-data"
+  },
+  "data": {},
+  "reminders": [],
+  "otherPersistentData": {
+    "sources": {
+      "dataTree": {
+        "table": "firebase_import_raw",
+        "importedAt": ""
+      },
+      "reminders": {
+        "tables": ["reminders", "reminder_alerts"],
+        "count": 0
+      }
+    },
+    "excludedSources": {}
+  }
+}
+```
+
+`data` contains the canonical user JSON tree used by Bookshell modules:
+Books, Notes, Finance, Mundo including `world/geography`, `world/places`,
+`world/saved`, stays/watch/category emojis, Habits, Recipes, Gym, persistent
+metadata and preferences such as nav layout/module preferences when present.
+`reminders` contains the PostgreSQL reminder records, recurrence fields and
+their alert rows because reminders are canonical outside the JSON tree.
+
+Excluded from this portable backup: Shortcut token hashes/idempotency cache,
+Web Push subscriptions, notification delivery logs, data usage telemetry,
+sessions, environment variables, `DATABASE_URL`, VAPID private key and other
+operational secrets.
 
 ## Auth Session Contract
 
@@ -318,6 +378,11 @@ Body:
 }
 ```
 
+`latitude` and `longitude` may be sent as JSON numbers or as strings. Strings
+may use either dot or comma as the decimal separator, for example
+`"46.686123"` or `"46,686123"`. The backend normalizes coordinates to numbers
+before validation.
+
 Allowed `type` values:
 
 - `saved`: quick save into `world/saved`, visible in Mundo under `Guardados`
@@ -350,6 +415,8 @@ Validation:
 
 - `latitude` must be between `-90` and `90`
 - `longitude` must be between `-180` and `180`
+- coordinate strings must be complete numeric values, not arbitrary text or
+  partially parseable strings
 - `type` must be `saved`, `place`, or `local`
 - `rating`, when present, must be between `0` and `10`
 - text fields are trimmed, whitespace-normalized, and capped

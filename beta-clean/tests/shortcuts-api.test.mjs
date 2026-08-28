@@ -573,6 +573,59 @@ await test("POST /shortcuts/world/places guarda rapido en world/saved", async ()
   assert.equal(Object.values(worldRoot(data).saved)[0].lat, 46.686);
 });
 
+await test("POST /shortcuts/world/places acepta coordenadas numericas validas", async () => {
+  const { db, data } = makeDb();
+  await __test.createShortcutWorldPlace({
+    latitude: 46.686123,
+    longitude: 7.861456,
+    type: "saved",
+  }, { db });
+  const item = Object.values(worldRoot(data).saved)[0];
+  assert.equal(item.lat, 46.686123);
+  assert.equal(item.lon, 7.861456);
+});
+
+await test("POST /shortcuts/world/places acepta coordenadas string con punto", async () => {
+  const { db, data } = makeDb();
+  await __test.createShortcutWorldPlace({
+    latitude: "46.686123",
+    longitude: "7.861456",
+    type: "saved",
+  }, { db });
+  const item = Object.values(worldRoot(data).saved)[0];
+  assert.equal(item.lat, 46.686123);
+  assert.equal(item.lon, 7.861456);
+});
+
+await test("POST /shortcuts/world/places acepta coma decimal localizada de Apple Shortcuts", async () => {
+  const { db, data } = makeDb();
+  await __test.createShortcutWorldPlace({
+    latitude: "46,686123",
+    longitude: "7,861456",
+    type: "saved",
+  }, { db });
+  const item = Object.values(worldRoot(data).saved)[0];
+  assert.equal(item.lat, 46.686123);
+  assert.equal(item.lon, 7.861456);
+});
+
+await test("POST /shortcuts/world/places acepta limites exactos de latitud y longitud", async () => {
+  const { db, data } = makeDb();
+  await __test.createShortcutWorldPlace({
+    latitude: "-90",
+    longitude: "-180",
+    type: "saved",
+  }, { db, idempotencyKey: "world-limit-negative" });
+  await __test.createShortcutWorldPlace({
+    latitude: 90,
+    longitude: 180,
+    type: "saved",
+  }, { db, idempotencyKey: "world-limit-positive" });
+  const saved = Object.values(worldRoot(data).saved);
+  assert.equal(saved.some((item) => item.lat === -90 && item.lon === -180), true);
+  assert.equal(saved.some((item) => item.lat === 90 && item.lon === 180), true);
+});
+
 await test("POST /shortcuts/world/places tipo place escribe en world/geography", async () => {
   const { db, data } = makeDb();
   const result = await __test.createShortcutWorldPlace({
@@ -661,6 +714,34 @@ await test("POST /shortcuts/world/places rechaza coordenadas invalidas", async (
     () => __test.createShortcutWorldPlace({ latitude: 46.686, longitude: -220, type: "saved" }, { db }),
     /INVALID_LONGITUDE/,
   );
+});
+
+await test("POST /shortcuts/world/places rechaza valor no convertible y coordenadas parciales", async () => {
+  const { db } = makeDb();
+  await assert.rejects(
+    () => __test.createShortcutWorldPlace({ latitude: { value: 46.686 }, longitude: 7.861, type: "saved" }, { db }),
+    /INVALID_LATITUDE/,
+  );
+  await assert.rejects(
+    () => __test.createShortcutWorldPlace({ latitude: "46.686 norte", longitude: 7.861, type: "saved" }, { db }),
+    /INVALID_LATITUDE/,
+  );
+  await assert.rejects(
+    () => __test.createShortcutWorldPlace({ latitude: 46.686, longitude: null, type: "saved" }, { db }),
+    /INVALID_LONGITUDE/,
+  );
+  await assert.rejects(
+    () => __test.createShortcutWorldPlace({ latitude: 46.686, longitude: ["7.861"], type: "saved" }, { db }),
+    /INVALID_LONGITUDE/,
+  );
+});
+
+await test("contrato de Mundo documenta numeros, strings con punto y coma decimal", () => {
+  const docs = readFileSync(new URL("../docs/backend-api-contract.md", import.meta.url), "utf8");
+  assert.match(docs, /JSON numbers or as strings/);
+  assert.match(docs, /"46\.686123"/);
+  assert.match(docs, /"46,686123"/);
+  assert.match(docs, /complete numeric values/);
 });
 
 await test("POST /shortcuts/world/places valida rating opcional 0 a 10 con decimales", async () => {

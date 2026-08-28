@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   createReminder,
   deleteReminder,
@@ -9,6 +10,8 @@ import {
 import { mapReminderFromDb } from "../scripts/modules/notes/persist/notes-mapper.js";
 
 const calls = [];
+const notesViewSource = readFileSync(new URL("../views/notes.html", import.meta.url), "utf8");
+const notesRuntimeSource = readFileSync(new URL("../scripts/modules/notes/runtime.js", import.meta.url), "utf8");
 
 globalThis.fetch = async (url, options = {}) => {
   calls.push({ url: String(url), options });
@@ -224,6 +227,26 @@ await test("borrar una ocurrencia no borra el grupo completo", async () => {
   assert.equal(lastCall().url, "https://api-bookshell.charlydob.com/reminders/rem_guardia_laura_2");
   assert.equal(lastCall().options.method, "DELETE");
   assert.equal(lastCall().options.body, null);
+});
+
+await test("UI de recordatorio expone pruebas Web Push reales por backend", () => {
+  assert.match(notesViewSource, /notes-reminder-test-push/);
+  assert.match(notesViewSource, /data-test-kind="advance"/);
+  assert.match(notesViewSource, /data-test-kind="reminder"/);
+  assert.match(notesViewSource, /data-test-kind="daily-summary"/);
+  assert.match(notesRuntimeSource, /sendReminderTestPush\(reminderId, kind\)/);
+  assert.doesNotMatch(notesRuntimeSource, /new Notification\(/);
+});
+
+await test("delete fallido no cierra el modal y fuerza resincronizacion", () => {
+  assert.match(notesRuntimeSource, /const deleted = await deleteReminderOptimistic\(reminderId\)/);
+  assert.match(notesRuntimeSource, /if \(deleted\) closeReminderModal\(\)/);
+  assert.match(notesRuntimeSource, /refreshRemindersRemote\(\)/);
+  assert.match(notesRuntimeSource, /console\.error\("\[notes\] no se pudo borrar el recordatorio"/);
+});
+
+await test("cancelados remotos se filtran antes de entrar en el estado visual", () => {
+  assert.match(notesRuntimeSource, /\.filter\(\(row\) => normalizeReminderStatus\(row\?\.status\) !== "cancelado"\)/);
 });
 
 await test("reminders antiguos sin metadata siguen mapeando source vacio", () => {

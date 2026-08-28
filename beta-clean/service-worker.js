@@ -1,5 +1,5 @@
-const APP_VERSION = "2026-08-28-reminder-web-push-v1";
-const PUBLISHED_COMMIT = "reminder-web-push-v1";
+const APP_VERSION = "2026-08-28-reminder-delete-push-update-v1";
+const PUBLISHED_COMMIT = "reminder-delete-push-update-v1";
 const CACHE_PREFIX = "bookshell-";
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
@@ -252,7 +252,6 @@ async function notifyClients(message = {}) {
 
 self.addEventListener("install", (event) => {
   console.info("[offline:boot]", { phase: "sw-install", version: APP_VERSION, commit: PUBLISHED_COMMIT });
-  self.skipWaiting();
   event.waitUntil(Promise.resolve());
 });
 
@@ -296,6 +295,11 @@ self.addEventListener("message", (event) => {
         purgedKeys,
       })),
     );
+    return;
+  }
+  if (type === "BOOKSHELL_SKIP_WAITING") {
+    console.info("[offline:boot]", { phase: "sw-skip-waiting-requested", version: APP_VERSION, commit: PUBLISHED_COMMIT });
+    self.skipWaiting();
   }
 });
 

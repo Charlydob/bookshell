@@ -2696,6 +2696,26 @@ grid-template-columns: 1fr 1fr 1fr 1fr;
 
 .notes-reminder-checklist-draft-item{display:grid;grid-template-columns:auto 1fr auto;gap:6px;align-items:center}
 
+.notes-reminder-test-push {
+  padding: 10px;
+  border: 1px solid rgba(99,214,255,0.24);
+  border-radius: 8px;
+  background: rgba(99,214,255,0.06);
+}
+
+.notes-reminder-test-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+}
+
+.notes-reminder-test-feedback {
+  min-height: 18px;
+  margin: 0;
+  color: var(--txt-soft);
+  font-size: 12px;
+}
+
 .notes-reminder-category-row,
 .notes-reminder-category-create {
   display: grid;

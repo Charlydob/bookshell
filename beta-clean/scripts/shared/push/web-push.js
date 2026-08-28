@@ -106,3 +106,17 @@ export async function sendTestPush() {
   if (!subscription) throw new Error("device_not_registered");
   return api("/push/test", { method: "POST", body: JSON.stringify({ endpoint: subscription.endpoint }) });
 }
+
+export async function sendReminderTestPush(reminderId = "", kind = "reminder") {
+  const safeReminderId = String(reminderId || "").trim();
+  if (!safeReminderId) throw new Error("reminder_required");
+  const subscription = await (await getPushRegistration()).pushManager.getSubscription();
+  if (!subscription) throw new Error("device_not_registered");
+  return api(`/reminders/${encodeURIComponent(safeReminderId)}/test-push`, {
+    method: "POST",
+    body: JSON.stringify({
+      endpoint: subscription.endpoint,
+      kind,
+    }),
+  });
+}

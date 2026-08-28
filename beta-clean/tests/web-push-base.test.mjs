@@ -113,3 +113,29 @@ await test("service worker keeps active caches during activation", () => {
   assert.match(source, /await precacheLocalAssets\(\);\s+const purgedKeys = await purgeBookshellCaches\("activate-stale-cache-cleanup"\)/);
   assert.doesNotMatch(source, /activate-force-purge/);
 });
+
+await test("PWA update prompt activates a waiting worker and reloads once", () => {
+  const mainSource = readFileSync(new URL("../scripts/app/main.js", import.meta.url), "utf8");
+  const swSource = readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
+  assert.match(mainSource, /Nuev[a-z ]+version disponible/);
+  assert.match(mainSource, /BOOKSHELL_SKIP_WAITING/);
+  assert.match(mainSource, /controllerchange/);
+  assert.match(mainSource, /SW_UPDATE_RELOAD_KEY/);
+  assert.match(swSource, /BOOKSHELL_SKIP_WAITING/);
+  assert.match(swSource, /self\.skipWaiting\(\)/);
+});
+
+await test("version visible queda expuesta en ajustes y HTML inicial", () => {
+  const mainSource = readFileSync(new URL("../scripts/app/main.js", import.meta.url), "utf8");
+  const inlineBootSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  assert.match(mainSource, /Acerca de/);
+  assert.match(mainSource, /getBookshellVersionSummary/);
+  assert.match(inlineBootSource, /2026-08-28-reminder-delete-push-update-v1/);
+});
+
+await test("actualizacion de service worker conserva push y notificationclick", () => {
+  const source = readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
+  assert.match(source, /addEventListener\("push"/);
+  assert.match(source, /registration\.showNotification/);
+  assert.match(source, /addEventListener\("notificationclick"/);
+});

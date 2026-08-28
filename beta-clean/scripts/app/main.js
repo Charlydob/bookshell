@@ -24,7 +24,7 @@ import {
 import { applyTheme, getAvailableThemes, getCurrentTheme, initThemeService } from "../shared/services/theme/index.js";
 import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
 import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, getFirebaseMetricsSnapshot, logFirebaseRead, registerViewListener } from "../shared/data/read-debug.js";
-import { disablePush, enablePush, getPushState, sendTestPush } from "../shared/push/web-push.js";
+import { disablePush, enablePush, getPushState, sendTestPush } from "../shared/push/web-push.js?v=2026-08-28-reminder-delete-push-update-v1";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -89,9 +89,9 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
 });
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
 const HABITS_MODULE_VERSION = "2026-04-05-v7";
-const NOTES_MODULE_VERSION = "2026-08-28-reminder-alerts-v1";
-const APP_PUBLISHED_COMMIT = "reminder-web-push-v1";
-const SERVICE_WORKER_VERSION = "2026-08-28-reminder-web-push-v1";
+const NOTES_MODULE_VERSION = "2026-08-28-reminder-delete-push-update-v1";
+const APP_PUBLISHED_COMMIT = "reminder-delete-push-update-v1";
+const SERVICE_WORKER_VERSION = "2026-08-28-reminder-delete-push-update-v1";
 const FINANCE_MODULE_VERSION = "2026-08-23-api-data-provider-no-rtdb";
 const BOOKSHELL_CACHE_PREFIX = "bookshell-";
 const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
@@ -99,6 +99,7 @@ const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
   `bookshell-runtime-${SERVICE_WORKER_VERSION}`,
 ]);
 const BOOKSHELL_CACHE_PURGE_MARKER_KEY = "bookshell:cache-purge-version";
+const SW_UPDATE_RELOAD_KEY = "bookshell:sw-update-reload-in-flight";
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
@@ -106,6 +107,7 @@ const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "recipes", label: "Comida", viewId: "view-recipes" },
   { key: "finance", label: "Gasto", viewId: "view-finance" },
 ]);
+let pendingServiceWorkerUpdate = null;
 
 registerPublicCatalogMigrationDebugApi();
 const __originalConsole = { ...console };
@@ -288,6 +290,9 @@ if ("serviceWorker" in navigator) {
       commit: APP_PUBLISHED_COMMIT,
       controlled: !!navigator.serviceWorker.controller,
     });
+    if (window.sessionStorage?.getItem?.(SW_UPDATE_RELOAD_KEY) !== SERVICE_WORKER_VERSION) return;
+    window.sessionStorage.removeItem(SW_UPDATE_RELOAD_KEY);
+    window.location.reload();
   });
 }
 
@@ -893,6 +898,7 @@ async function renderSettingsModal() {
   const standaloneValue = pushDiagnostics.navigatorStandalone === undefined
     ? "undefined"
     : String(pushDiagnostics.navigatorStandalone);
+  const versionSummary = getBookshellVersionSummary();
 
   const themeButtons = getAvailableThemes().map((theme) => `
     <button
@@ -904,6 +910,14 @@ async function renderSettingsModal() {
   `).join("");
 
   body.innerHTML = `
+    <section class="app-settings-section">
+      <div class="app-settings-section__eyebrow">Acerca de</div>
+      <div class="app-settings-kpis">
+        <div class="app-settings-kpi"><small>Bookshell</small><strong>${escapeHtml(versionSummary.appVersion)}</strong></div>
+        <div class="app-settings-kpi"><small>Service worker</small><strong>${escapeHtml(versionSummary.serviceWorkerVersion)}</strong></div>
+        <div class="app-settings-kpi"><small>Build</small><strong>${escapeHtml(versionSummary.commit)}</strong></div>
+      </div>
+    </section>
     <section class="app-settings-section">
       <div class="app-settings-section__eyebrow">Tema y apariencia</div>
       <h3>Tema activo: ${getCurrentTheme()}</h3>
@@ -1543,6 +1557,60 @@ function scheduleLikelyVendorWarmup(viewId) {
   }, { delayMs: 1200, timeout: 5000 });
 }
 
+function getBookshellVersionSummary() {
+  const versionState = window.__bookshellVersion || {};
+  return {
+    appVersion: String(versionState.appVersion || SERVICE_WORKER_VERSION),
+    serviceWorkerVersion: String(versionState.lastServiceWorkerMessage?.version || versionState.serviceWorkerVersion || SERVICE_WORKER_VERSION),
+    commit: String(versionState.commit || APP_PUBLISHED_COMMIT),
+  };
+}
+
+function hideServiceWorkerUpdatePrompt() {
+  document.getElementById("app-sw-update-prompt")?.classList.add("hidden");
+}
+
+function showServiceWorkerUpdatePrompt(registration) {
+  pendingServiceWorkerUpdate = registration || pendingServiceWorkerUpdate;
+  let prompt = document.getElementById("app-sw-update-prompt");
+  if (!prompt) {
+    prompt = document.createElement("div");
+    prompt.id = "app-sw-update-prompt";
+    prompt.className = "app-sw-update-prompt hidden";
+    prompt.innerHTML = `
+      <div class="app-sw-update-prompt__copy">
+        <strong>Nueva version disponible</strong>
+        <span>Actualiza para cargar los ultimos archivos.</span>
+      </div>
+      <button type="button" class="app-sw-update-prompt__btn" data-sw-apply-update>Actualizar</button>
+    `;
+    prompt.addEventListener("click", (event) => {
+      if (!event.target?.closest?.("[data-sw-apply-update]")) return;
+      void applyServiceWorkerUpdate();
+    });
+    document.body.append(prompt);
+  }
+  prompt.classList.remove("hidden");
+}
+
+async function applyServiceWorkerUpdate() {
+  const registration = pendingServiceWorkerUpdate || await navigator.serviceWorker?.getRegistration?.("./");
+  const waiting = registration?.waiting;
+  window.sessionStorage?.setItem?.(SW_UPDATE_RELOAD_KEY, SERVICE_WORKER_VERSION);
+  hideServiceWorkerUpdatePrompt();
+  if (waiting) {
+    waiting.postMessage({ type: "BOOKSHELL_SKIP_WAITING" });
+    window.setTimeout(() => {
+      if (window.sessionStorage?.getItem?.(SW_UPDATE_RELOAD_KEY) === SERVICE_WORKER_VERSION) {
+        window.location.reload();
+      }
+    }, 4000);
+    return;
+  }
+  await registration?.update?.();
+  window.location.reload();
+}
+
 async function registerAppServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   const isLocalhost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
@@ -1578,6 +1646,20 @@ async function registerAppServiceWorker() {
       commit: APP_PUBLISHED_COMMIT,
       updateViaCache: registration.updateViaCache,
     });
+    registration.addEventListener("updatefound", () => {
+      console.info("[offline:boot]", {
+        phase: "sw-update-found",
+        version: SERVICE_WORKER_VERSION,
+        commit: APP_PUBLISHED_COMMIT,
+      });
+      const installing = registration.installing;
+      installing?.addEventListener?.("statechange", () => {
+        if (installing.state === "installed" && navigator.serviceWorker.controller) {
+          showServiceWorkerUpdatePrompt(registration);
+          window.dispatchEvent(new CustomEvent("bookshell:sw-update-available"));
+        }
+      });
+    });
     await registration.update();
     console.info("[offline:boot]", {
       phase: "sw-update-requested",
@@ -1585,14 +1667,9 @@ async function registerAppServiceWorker() {
       version: SERVICE_WORKER_VERSION,
       commit: APP_PUBLISHED_COMMIT,
     });
-    registration.addEventListener("updatefound", () => {
-      console.info("[offline:boot]", {
-        phase: "sw-update-found",
-        version: SERVICE_WORKER_VERSION,
-        commit: APP_PUBLISHED_COMMIT,
-      });
-      window.dispatchEvent(new CustomEvent("bookshell:sw-update-available"));
-    });
+    if (registration.waiting && navigator.serviceWorker.controller) {
+      showServiceWorkerUpdatePrompt(registration);
+    }
     return registration;
   } catch (error) {
     console.warn("[shell] no se pudo registrar el service worker", error);

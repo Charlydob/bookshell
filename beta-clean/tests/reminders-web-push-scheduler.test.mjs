@@ -111,8 +111,53 @@ await test("edicion de hora invalida avisos antiguos mediante scheduleVersion", 
 });
 
 await test("eliminacion del recordatorio cancela alertas pendientes", () => {
-  assert.match(serverSource, /normalized\.status === "cancelled"/);
+  assert.match(serverSource, /async function cancelReminderRecord\(reminderId\)/);
+  assert.match(serverSource, /status = 'cancelled'/);
   assert.match(serverSource, /WHEN status = 'pending' THEN 'cancelled'/);
+  assert.match(serverSource, /schedule_version = schedule_version \+ 1/);
+});
+
+await test("listado publico de reminders excluye cancelados por defecto", () => {
+  assert.match(serverSource, /includeCancelled = false/);
+  assert.match(serverSource, /status <> 'cancelled'/);
+  assert.match(serverSource, /includeCancelled: url\.searchParams\.get\("includeCancelled"\) === "1"/);
+});
+
+await test("Bookshell y Telegram usan la misma cancelacion persistente", () => {
+  assert.match(serverSource, /const reminder = await cancelReminderRecord\(reminderMatch\[1\]\)/);
+  assert.match(serverSource, /const reminder = await cancelReminderRecord\(automationReminderMatch\[1\]\)/);
+});
+
+await test("payload de prueba de recordatorio usa Web Push sin marcar alertas reales", () => {
+  const payload = __test.resolveReminderTestPushPayload("reminder", {
+    id: "rem-test",
+    title: "Clase de aleman",
+    targetTime: "18:30",
+    scheduleVersion: 7,
+  });
+  assert.equal(payload.title, "\u23f0 Clase de aleman");
+  assert.equal(payload.body, "18:30");
+  assert.equal(payload.reminderId, "rem-test");
+  const fnSource = serverSource.slice(
+    serverSource.indexOf("async function sendReminderTestPush"),
+    serverSource.indexOf("async function runDueReminderAlertPushCycle")
+  );
+  assert.doesNotMatch(fnSource, /markReminderAlertSent/);
+  assert.doesNotMatch(fnSource, /claimDueReminderAlerts/);
+  assert.doesNotMatch(fnSource, /claimDailySummaryDelivery/);
+});
+
+await test("payload de prueba de resumen diario se genera desde recordatorios del dia", () => {
+  const payload = __test.resolveReminderTestPushPayload("daily-summary", {
+    id: "rem-test",
+    timezone: "Europe/Zurich",
+  }, [
+    { title: "Comprar comida", targetTime: "10:00" },
+    { title: "Clase de aleman", targetTime: "18:30" },
+  ]);
+  assert.equal(payload.title, "\ud83d\udcc5 Hoy tienes pendiente");
+  assert.match(payload.body, /10:00 - Comprar comida/);
+  assert.match(payload.body, /18:30 - Clase de aleman/);
 });
 
 await test("timezone Europe Zurich calcula UTC sin usar hora ingenua del servidor", () => {

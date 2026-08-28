@@ -31,6 +31,7 @@ import {
   deleteReminder as deleteReminderRemote,
   deleteFolder,
   deleteNote,
+  refreshReminders as refreshRemindersRemote,
   incrementNoteVisits,
   patchReminderChecklistItem,
   subscribeNotesRoot,
@@ -40,7 +41,8 @@ import {
   updateFolder,
   updateNote,
   updateReminder,
-} from "./persist/notes-datasource.js?v=2026-08-26-v3";
+} from "./persist/notes-datasource.js?v=2026-08-28-reminder-delete-push-update-v1";
+import { sendReminderTestPush } from "../../shared/push/web-push.js?v=2026-08-28-reminder-delete-push-update-v1";
 import {
   buildReminderOccurrenceKey,
   createGenerationGate,
@@ -5557,6 +5559,7 @@ function mergeLocalReminderDismissal(reminderId = "", key = "") {
 function applyRemoteReminders(reminders = []) {
   state.reminders = reminderNotificationGuard
     .filterDeleted(reminders)
+    .filter((row) => normalizeReminderStatus(row?.status) !== "cancelado")
     .map((row) => normalizeReminderForTreatment(row));
 }
 
@@ -5581,7 +5584,7 @@ async function deleteReminderOptimistic(reminderOrId = "") {
     reminderDebug("[REMINDER DELETE]", { reminderId, decision: "success" });
     return true;
   } catch (error) {
-    console.warn("[notes] no se pudo borrar el recordatorio", error);
+    console.error("[notes] no se pudo borrar el recordatorio", error);
     const shouldRestore = reminderNotificationGuard.markDeleteSettled(reminderId, { restore: true });
     reminderDebug("[REMINDER DELETE]", { reminderId, decision: "rollback" });
     if (shouldRestore && previousReminder?.id) {
@@ -5591,6 +5594,11 @@ async function deleteReminderOptimistic(reminderOrId = "") {
       emitReminderNotificationsUpdated();
       enqueueReminderToast({ message: "No se ha podido borrar el recordatorio." });
     }
+    const modalReminderId = String($id("notes-reminder-id")?.value || "").trim();
+    if (modalReminderId === reminderId && $id("notes-reminder-form-error")) {
+      $id("notes-reminder-form-error").textContent = "No se ha podido eliminar. Estado resincronizado con el servidor.";
+    }
+    refreshRemindersRemote();
     return false;
   }
 }
@@ -7511,6 +7519,24 @@ function renderReminderChecklistDrafts() {
   `).join("");
 }
 
+async function handleReminderTestPush(kind = "reminder") {
+  const reminderId = String($id("notes-reminder-id")?.value || "").trim();
+  const feedback = $id("notes-reminder-test-feedback");
+  if (!reminderId) return;
+  if (feedback) feedback.textContent = "Enviando prueba...";
+  try {
+    const result = await sendReminderTestPush(reminderId, kind);
+    if (!result?.accepted) {
+      throw new Error(result?.reason || result?.error || "push_test_not_accepted");
+    }
+    if (feedback) feedback.textContent = "Prueba enviada al dispositivo.";
+    console.info("[reminders:test-push]", { reminderId, kind, result });
+  } catch (error) {
+    console.error("[reminders:test-push]", error);
+    if (feedback) feedback.textContent = `Error al enviar prueba: ${error.message || error}`;
+  }
+}
+
 function openReminderModal(reminder = null, options = {}) {
   const presetDate = parseDateKey(options?.presetDate || "")
     ? String(options.presetDate || "")
@@ -7535,6 +7561,8 @@ function openReminderModal(reminder = null, options = {}) {
   }
   $id("notes-reminder-repeat-yearly").checked = reminder?.repeat === "yearly";
   $id("notes-reminder-delete")?.classList.toggle("hidden", !reminder);
+  $id("notes-reminder-test-push")?.classList.toggle("hidden", !reminder?.id);
+  if ($id("notes-reminder-test-feedback")) $id("notes-reminder-test-feedback").textContent = "";
   $id("notes-reminder-modal-title").textContent = reminder ? "Editar recordatorio" : "Nuevo recordatorio";
   if ($id("notes-reminder-category-new")) $id("notes-reminder-category-new").value = "";
   $id("notes-reminder-alert-custom")?.classList.add("hidden");
@@ -9493,12 +9521,19 @@ function bindUiEvents() {
       item.text = String(target.value || "").trim();
     }
   });
+  $id("notes-reminder-test-push")?.addEventListener("click", async (event) => {
+    const target = event.target.closest("[data-act='test-reminder-push'][data-test-kind]");
+    if (!target) return;
+    target.disabled = true;
+    await handleReminderTestPush(target.dataset.testKind || "reminder");
+    target.disabled = false;
+  });
   $id("notes-reminder-delete")?.addEventListener("click", async () => {
     const reminderId = String($id("notes-reminder-id").value || "").trim();
     if (!reminderId) return;
     if (!window.confirm("¿Eliminar este recordatorio?")) return;
-    await deleteReminderOptimistic(reminderId);
-    closeReminderModal();
+    const deleted = await deleteReminderOptimistic(reminderId);
+    if (deleted) closeReminderModal();
   });
   $id("notes-reminder-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();

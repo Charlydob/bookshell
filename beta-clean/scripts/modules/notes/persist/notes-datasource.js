@@ -66,6 +66,10 @@ function requestReminderRefresh() {
   } catch (_) {}
 }
 
+export function refreshReminders() {
+  requestReminderRefresh();
+}
+
 export function subscribeNotesRoot(uid, onData, onError) {
   const rootPath = resolveRootPath(uid);
   let latestValue = {};

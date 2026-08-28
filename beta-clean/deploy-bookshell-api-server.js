@@ -1696,13 +1696,17 @@ async function listReminderRecords({
   from = "",
   until = "",
   limit = 50,
+  includeCancelled = false,
 } = {}) {
   const where = ["firebase_uid = $1"];
   const values = [LEGACY_FIREBASE_UID];
+  const statusFilter = String(status || "").trim().toLowerCase();
 
-  if (status) {
+  if (statusFilter && statusFilter !== "all") {
     values.push(normalizeReminderStatus(status));
     where.push(`status = $${values.length}`);
+  } else if (!includeCancelled && statusFilter !== "all") {
+    where.push("status <> 'cancelled'");
   }
 
   if (sourceType) {
@@ -1749,6 +1753,73 @@ async function listReminderRecords({
   }
 
   return reminders;
+}
+
+async function cancelReminderRecord(reminderId) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const existingResult = await client.query(
+      `
+        SELECT *
+        FROM reminders
+        WHERE id = $1
+          AND firebase_uid = $2
+        FOR UPDATE
+      `,
+      [reminderId, LEGACY_FIREBASE_UID]
+    );
+
+    if (!existingResult.rows.length) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    await client.query(
+      `
+        UPDATE reminders
+        SET
+          status = 'cancelled',
+          completed_at = NULL,
+          schedule_version = schedule_version + 1,
+          updated_at = NOW()
+        WHERE id = $1
+          AND firebase_uid = $2
+      `,
+      [reminderId, LEGACY_FIREBASE_UID]
+    );
+
+    await client.query(
+      `
+        UPDATE reminder_alerts
+        SET
+          status = CASE
+            WHEN status = 'pending' THEN 'cancelled'
+            ELSE status
+          END,
+          locked_at = NULL,
+          locked_by = NULL,
+          updated_at = NOW()
+        WHERE reminder_id = $1
+      `,
+      [reminderId]
+    );
+
+    const reminder = await getReminderById(reminderId, client);
+
+    await client.query("COMMIT");
+    return reminder;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function todayDateStringInZone(timeZone = DEFAULT_REMINDER_TIMEZONE) {
@@ -2850,6 +2921,68 @@ function buildDailySummaryPayload(summary = {}) {
   };
 }
 
+function resolveReminderTestPushPayload(kind = "reminder", reminder = null, dailyReminders = []) {
+  const safeKind = ["advance", "reminder", "daily-summary"].includes(String(kind || "").trim())
+    ? String(kind || "").trim()
+    : "reminder";
+  const reminderId = String(reminder?.id || "").trim();
+
+  if (safeKind === "daily-summary") {
+    const timezone = normalizeTimezone(reminder?.timezone);
+    const targetDate = todayDateStringInZone(timezone);
+    return buildDailySummaryPayload({
+      targetDate,
+      timezone,
+      reminders: Array.isArray(dailyReminders) ? dailyReminders : [],
+    });
+  }
+
+  return buildReminderAlertPushPayload({
+    alertId: `test-${safeKind}-${crypto.randomUUID()}`,
+    reminderId,
+    title: reminder?.title || "Recordatorio",
+    targetTime: normalizeTimeOnly(reminder?.targetTime),
+    minutesBefore: safeKind === "advance" ? 120 : 0,
+    scheduleVersion: reminder?.scheduleVersion || 1,
+  });
+}
+
+async function sendReminderTestPush(reminderId, body = {}) {
+  if (!isPushConfigured) {
+    return { ok: false, accepted: false, statusCode: 503, error: "push_not_configured" };
+  }
+
+  await ensurePushSubscriptionsSchema(pool);
+
+  const endpoint = String(body?.endpoint || "").trim();
+  if (!endpoint) {
+    const error = new Error("endpoint_required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const reminder = await getReminderById(reminderId);
+  if (!reminder) return null;
+
+  const kind = String(body?.kind || "reminder").trim();
+  const dailyReminders = kind === "daily-summary"
+    ? await listDailySummaryReminders(
+        todayDateStringInZone(reminder.timezone),
+        reminder.timezone
+      )
+    : [];
+  const payload = resolveReminderTestPushPayload(kind, reminder, dailyReminders);
+  const delivery = await sendPushToEndpoint(pool, webPush, endpoint, payload, { ttl: 600 });
+
+  return {
+    ok: delivery.accepted,
+    accepted: delivery.accepted,
+    kind: ["advance", "reminder", "daily-summary"].includes(kind) ? kind : "reminder",
+    payload,
+    ...delivery,
+  };
+}
+
 async function runDueReminderAlertPushCycle({ limit = 50 } = {}) {
   if (!isPushConfigured) {
     return {
@@ -3452,6 +3585,7 @@ const server = http.createServer(async (req, res) => {
         from: url.searchParams.get("from") || "",
         until: url.searchParams.get("until") || "",
         limit: url.searchParams.get("limit") || 50,
+        includeCancelled: url.searchParams.get("includeCancelled") === "1",
       });
 
       return sendJson(req, res, 200, {
@@ -3537,6 +3671,45 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  const reminderTestPushMatch = url.pathname.match(
+    /^\/reminders\/([0-9a-f-]{36})\/test-push$/i
+  );
+
+  if (
+    req.method === "POST" &&
+    reminderTestPushMatch
+  ) {
+    try {
+      const result = await sendReminderTestPush(
+        reminderTestPushMatch[1],
+        await readJson(req) || {}
+      );
+
+      if (!result) {
+        return sendJson(req, res, 404, {
+          ok: false,
+          accepted: false,
+          error: "reminder_not_found",
+        });
+      }
+
+      return sendJson(
+        req,
+        res,
+        result.accepted ? 200 : result.statusCode,
+        result
+      );
+    } catch (error) {
+      console.error("[reminders:test-push]", error);
+
+      return sendJson(req, res, error?.statusCode || 500, {
+        ok: false,
+        accepted: false,
+        error: error?.message || "reminder_test_push_failed",
+      });
+    }
+  }
+
   const reminderMatch = url.pathname.match(
     /^\/reminders\/([0-9a-f-]{36})$/i
   );
@@ -3613,10 +3786,7 @@ const server = http.createServer(async (req, res) => {
     reminderMatch
   ) {
     try {
-      const reminder = await patchReminderRecord(
-        reminderMatch[1],
-        { status: "cancelled" }
-      );
+      const reminder = await cancelReminderRecord(reminderMatch[1]);
 
       if (!reminder) {
         return sendJson(req, res, 404, {
@@ -3879,10 +4049,7 @@ const server = http.createServer(async (req, res) => {
     automationReminderMatch
   ) {
     try {
-      const reminder = await patchReminderRecord(
-        automationReminderMatch[1],
-        { status: "cancelled" }
-      );
+      const reminder = await cancelReminderRecord(automationReminderMatch[1]);
 
       if (!reminder) {
         return sendJson(req, res, 404, {
@@ -4468,12 +4635,16 @@ module.exports = {
     sendPushToEndpoint,
     sendPushToActiveSubscriptions,
     upsertPushSubscription,
+    listReminderRecords,
+    cancelReminderRecord,
     normalizeReminderAlertSet,
     localDateTimeToUtc,
     getNextRecurrenceDate,
     formatMinutesBeforeLabel,
     buildReminderAlertPushPayload,
     buildDailySummaryPayload,
+    resolveReminderTestPushPayload,
+    sendReminderTestPush,
     claimDailySummaryDelivery,
     runDailySummaryPushCycle,
     runDueReminderAlertPushCycle,

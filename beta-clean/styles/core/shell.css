@@ -1804,6 +1804,64 @@ input[type="search"] {
 /* #endregion Botón general */
 
 
+.app-sw-update-prompt {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--nav-total-h, 74px) + 18px + env(safe-area-inset-bottom, 0px));
+  z-index: 1600;
+  width: min(420px, calc(100vw - 24px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 8px;
+  background: var(--app-surface-elevated);
+  color: var(--app-text);
+  box-shadow: 0 18px 44px color-mix(in srgb, black 34%, transparent);
+  transform: translateX(-50%);
+}
+
+.app-sw-update-prompt.hidden {
+  display: none;
+}
+
+.app-sw-update-prompt__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-sw-update-prompt__copy strong,
+.app-sw-update-prompt__copy span {
+  overflow-wrap: anywhere;
+}
+
+.app-sw-update-prompt__copy span {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.app-sw-update-prompt__btn {
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--app-info) 58%, var(--app-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-info) 18%, var(--app-surface-strong));
+  color: var(--app-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+@media (max-width: 420px) {
+  .app-sw-update-prompt {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* #region Settings + Metrics */
 
 .app-settings-backdrop,

@@ -40,15 +40,24 @@ function makeData() {
   };
 }
 
-function makeDb(data = makeData()) {
+function makeDb(data = makeData(), options = {}) {
   const idempotency = new Map();
   const tokens = [];
   const calls = [];
+  const pushSubscriptions = (options.pushSubscriptions || []).map((subscription, index) => ({
+    id: subscription.id || `push-${index + 1}`,
+    endpoint: subscription.endpoint,
+    p256dh: subscription.p256dh || subscription.keys?.p256dh || "public-key",
+    auth: subscription.auth || subscription.keys?.auth || "auth-secret",
+    disabled_at: subscription.disabled_at || null,
+    failure_count: Number(subscription.failure_count || 0),
+  }));
 
   const handleQuery = async (sql, params = []) => {
     calls.push({ sql, params });
     if (/BEGIN|COMMIT|ROLLBACK/.test(sql)) return { rows: [], rowCount: 0 };
     if (/CREATE TABLE IF NOT EXISTS shortcut_api_tokens/.test(sql)) return { rows: [], rowCount: 0 };
+    if (/CREATE TABLE IF NOT EXISTS push_subscriptions/.test(sql)) return { rows: [], rowCount: 0 };
 
     if (/FROM shortcut_idempotency_keys/.test(sql)) {
       const row = idempotency.get(`${params[1]}:${params[2]}`);
@@ -61,6 +70,32 @@ function makeDb(data = makeData()) {
         response_body: JSON.parse(params[5]),
       });
       return { rows: [], rowCount: 1 };
+    }
+
+    if (/SELECT\s+endpoint\s+FROM push_subscriptions/.test(sql)) {
+      const rows = pushSubscriptions
+        .filter((subscription) => !subscription.disabled_at)
+        .map((subscription) => ({ endpoint: subscription.endpoint }));
+      return { rows, rowCount: rows.length };
+    }
+    if (/SELECT id, endpoint, p256dh, auth FROM push_subscriptions/.test(sql)) {
+      const row = pushSubscriptions.find((subscription) => (
+        subscription.endpoint === params[1] && !subscription.disabled_at
+      ));
+      return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+    }
+    if (/UPDATE push_subscriptions SET last_success_at/.test(sql)) {
+      const row = pushSubscriptions.find((subscription) => subscription.id === params[0]);
+      if (row) row.failure_count = 0;
+      return { rows: [], rowCount: row ? 1 : 0 };
+    }
+    if (/UPDATE push_subscriptions SET last_failure_at/.test(sql)) {
+      const row = pushSubscriptions.find((subscription) => subscription.id === params[0]);
+      if (row) {
+        row.failure_count += 1;
+        if ([404, 410].includes(Number(params[1]))) row.disabled_at = "2026-08-28T10:00:00.000Z";
+      }
+      return { rows: [], rowCount: row ? 1 : 0 };
     }
 
     if (/UPDATE shortcut_api_tokens\s+SET revoked_at/.test(sql)) {
@@ -115,7 +150,7 @@ function makeDb(data = makeData()) {
 
   const client = { query: handleQuery, release() {} };
   const db = { query: handleQuery, connect: async () => client };
-  return { db, data, idempotency, tokens, calls };
+  return { db, data, idempotency, tokens, calls, pushSubscriptions };
 }
 
 function financeRoot(data) {
@@ -249,6 +284,149 @@ await test("transferencia mueve saldo sin contar gasto ni ingreso", async () => 
   assert.equal(root.accounts.acc_eur.entries["2026-08-28"].value, 45);
   assert.equal(root.accounts.acc_cash.entries["2026-08-28"].value, 205);
   assert.equal(__test.listShortcutCategoriesFromRoot(root, "transfer").some((category) => category.name === "transfer"), true);
+});
+
+await test("gasto por Atajos envia un push despues del commit", async () => {
+  const { db, calls } = makeDb();
+  const pushes = [];
+  const pushSender = async (_db, _provider, payload, options) => {
+    assert.equal(calls.some((call) => call.sql === "COMMIT"), true);
+    pushes.push({ payload, options });
+    return { accepted: true, acceptedCount: 1, attemptedCount: 1, results: [] };
+  };
+
+  await __test.createShortcutFinanceMovement({
+    amount: 12.5,
+    currency: "CHF",
+    accountId: "acc_eur",
+    type: "expense",
+    categoryId: "Comida",
+    description: "Migros",
+    date: "2026-08-28",
+  }, { db, pushSender });
+
+  assert.equal(pushes.length, 1);
+  assert.equal(pushes[0].payload.title, "💸 Nuevo gasto");
+  assert.equal(pushes[0].payload.body, "12.5 CHF · Comida · Migros");
+  assert.equal(pushes[0].options.ttl, 7200);
+});
+
+await test("ingreso por Atajos envia un push sin separadores sobrantes", async () => {
+  const { db } = makeDb();
+  const pushes = [];
+  const pushSender = async (_db, _provider, payload) => {
+    pushes.push(payload);
+    return { accepted: true, acceptedCount: 1, attemptedCount: 1, results: [] };
+  };
+
+  await __test.createShortcutFinanceMovement({
+    amount: 20,
+    currency: "EUR",
+    accountId: "acc_eur",
+    type: "income",
+    categoryId: "Nomina",
+    date: "2026-08-28",
+  }, { db, pushSender });
+
+  assert.equal(pushes.length, 1);
+  assert.equal(pushes[0].title, "💰 Nuevo ingreso");
+  assert.equal(pushes[0].body, "20 EUR · Nomina");
+});
+
+await test("transferencia por Atajos envia un push con cuentas origen y destino", async () => {
+  const { db } = makeDb();
+  const pushes = [];
+  const pushSender = async (_db, _provider, payload) => {
+    pushes.push(payload);
+    return { accepted: true, acceptedCount: 1, attemptedCount: 1, results: [] };
+  };
+
+  await __test.createShortcutFinanceMovement({
+    amount: 5,
+    currency: "EUR",
+    fromAccountId: "acc_eur",
+    toAccountId: "acc_cash",
+    type: "transfer",
+    description: "Ahorro",
+    date: "2026-08-28",
+  }, { db, pushSender });
+
+  assert.equal(pushes.length, 1);
+  assert.equal(pushes[0].title, "🔁 Nueva transferencia");
+  assert.equal(pushes[0].body, "5 EUR · Revolut → Cash · Ahorro");
+});
+
+await test("fallo de movimiento por Atajos no envia push", async () => {
+  const { db } = makeDb();
+  const pushes = [];
+  const pushSender = async (_db, _provider, payload) => {
+    pushes.push(payload);
+    return { accepted: true, acceptedCount: 1, attemptedCount: 1, results: [] };
+  };
+
+  await assert.rejects(
+    () => __test.createShortcutFinanceMovement({
+      amount: 1,
+      currency: "EUR",
+      accountId: "missing",
+      type: "expense",
+      categoryId: "Comida",
+      date: "2026-08-28",
+    }, { db, pushSender }),
+    /ACCOUNT_NOT_FOUND/,
+  );
+  assert.equal(pushes.length, 0);
+});
+
+await test("replay del mismo Idempotency-Key no envia pushes adicionales", async () => {
+  const { db, data } = makeDb();
+  const pushes = [];
+  const pushSender = async (_db, _provider, payload) => {
+    pushes.push(payload);
+    return { accepted: true, acceptedCount: 1, attemptedCount: 1, results: [] };
+  };
+  const body = {
+    amount: 7,
+    currency: "EUR",
+    accountId: "acc_eur",
+    type: "expense",
+    categoryId: "Comida",
+    date: "2026-08-28",
+  };
+
+  await __test.createShortcutFinanceMovement(body, { db, idempotencyKey: "same-push-key", pushSender });
+  const replay = await __test.createShortcutFinanceMovement(body, { db, idempotencyKey: "same-push-key", pushSender });
+
+  assert.equal(replay.replay, true);
+  assert.equal(pushes.length, 1);
+  assert.equal(Object.keys(financeRoot(data).transactions).length, 1);
+});
+
+await test("fallo del proveedor Web Push no impide guardar el movimiento", async () => {
+  const { db, data, pushSubscriptions } = makeDb(makeData(), {
+    pushSubscriptions: [{ endpoint: "https://push.example/sub-1", p256dh: "key", auth: "auth" }],
+  });
+  let providerCalls = 0;
+  const pushProvider = {
+    sendNotification: async () => {
+      providerCalls += 1;
+      throw Object.assign(new Error("provider down"), { statusCode: 502 });
+    },
+  };
+
+  const result = await __test.createShortcutFinanceMovement({
+    amount: 9,
+    currency: "EUR",
+    accountId: "acc_eur",
+    type: "expense",
+    categoryId: "Comida",
+    date: "2026-08-28",
+  }, { db, pushProvider });
+
+  assert.equal(result.statusCode, 201);
+  assert.equal(providerCalls, 1);
+  assert.equal(pushSubscriptions[0].failure_count, 1);
+  assert.equal(Object.keys(financeRoot(data).transactions).length, 1);
 });
 
 await test("rechazar token invalido usa Authorization Bearer", () => {

@@ -245,7 +245,8 @@ async function sendPushToEndpoint(db, provider, endpoint, payload, options = {})
 }
 
 async function sendPushToActiveSubscriptions(db, provider, payload, options = {}) {
-  if (!isPushConfigured || !provider) {
+  const providerReady = Boolean(provider && (provider !== webPush || isPushConfigured));
+  if (!providerReady) {
     return {
       accepted: false,
       acceptedCount: 0,
@@ -1149,6 +1150,79 @@ function buildShortcutMovementPayload(input = {}, root = {}, nowMs = Date.now(),
   };
 }
 
+function formatShortcutNotificationAmount(value = 0) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "";
+  if (Number.isInteger(amount)) return String(amount);
+  return amount.toFixed(8).replace(/(?:\.0+|(\.\d*?)0+)$/, "$1");
+}
+
+function joinShortcutNotificationBodyParts(parts = []) {
+  return parts
+    .map((part) => normalizeShortcutText(part))
+    .filter(Boolean)
+    .join(" \u00b7 ");
+}
+
+function buildShortcutFinanceMovementPushPayload(movement = {}, root = {}) {
+  const type = normalizeShortcutType(movement?.type);
+  const amount = formatShortcutNotificationAmount(movement?.originalAmount ?? movement?.amount);
+  const currency = normalizeShortcutCurrency(
+    movement?.originalCurrency || movement?.inputCurrency || movement?.currency || "EUR"
+  ) || "EUR";
+  const amountLabel = [amount, currency].filter(Boolean).join(" ");
+  const note = normalizeShortcutText(movement?.note || movement?.description || movement?.title);
+
+  if (type === "transfer") {
+    const fromAccount = resolveShortcutAccount(root, movement?.fromAccountId);
+    const toAccount = resolveShortcutAccount(root, movement?.toAccountId);
+    const accountLabel = [
+      normalizeShortcutText(fromAccount?.name || movement?.fromAccountName || movement?.fromAccountId),
+      normalizeShortcutText(toAccount?.name || movement?.toAccountName || movement?.toAccountId),
+    ].filter(Boolean).join(" \u2192 ");
+    return {
+      title: "\ud83d\udd01 Nueva transferencia",
+      body: joinShortcutNotificationBodyParts([amountLabel, accountLabel, note]),
+      url: "/#view-finance",
+      type: "shortcut-finance-movement",
+      tag: `shortcut-finance:${movement?.id || ""}`,
+      movementId: movement?.id || "",
+      movementType: type,
+    };
+  }
+
+  const title = type === "income"
+    ? "\ud83d\udcb0 Nuevo ingreso"
+    : "\ud83d\udcb8 Nuevo gasto";
+  const category = normalizeShortcutCategoryName(movement?.category);
+  return {
+    title,
+    body: joinShortcutNotificationBodyParts([amountLabel, category, note]),
+    url: "/#view-finance",
+    type: "shortcut-finance-movement",
+    tag: `shortcut-finance:${movement?.id || ""}`,
+    movementId: movement?.id || "",
+    movementType: type || "expense",
+  };
+}
+
+async function sendShortcutFinanceMovementPush(payload, {
+  db = pool,
+  provider = webPush,
+  pushSender = sendPushToActiveSubscriptions,
+} = {}) {
+  if (!payload || typeof pushSender !== "function") {
+    return {
+      accepted: false,
+      acceptedCount: 0,
+      attemptedCount: 0,
+      results: [],
+      reason: "push_payload_unavailable",
+    };
+  }
+  return pushSender(db, provider, payload, { ttl: 7200 });
+}
+
 async function withShortcutIdempotency(client, scope = "", key = "", requestHash = "", producer) {
   const safeKey = String(key || "").trim();
   if (!safeKey) return producer();
@@ -1202,14 +1276,21 @@ async function withShortcutIdempotency(client, scope = "", key = "", requestHash
   return result;
 }
 
-async function createShortcutFinanceMovement(body = {}, { idempotencyKey = "", db = pool } = {}) {
+async function createShortcutFinanceMovement(body = {}, {
+  idempotencyKey = "",
+  db = pool,
+  pushProvider = webPush,
+  pushSender = sendPushToActiveSubscriptions,
+  notifyPush = true,
+} = {}) {
   await ensureShortcutSchema(db);
   const input = parseShortcutMovementInput(body);
   const requestHash = sha256(stableJson(input));
   const client = await db.connect();
+  let result = null;
   try {
     await client.query("BEGIN");
-    const result = await withShortcutIdempotency(
+    result = await withShortcutIdempotency(
       client,
       "finance:movements",
       idempotencyKey,
@@ -1280,11 +1361,11 @@ async function createShortcutFinanceMovement(body = {}, { idempotencyKey = "", d
             financePath,
             balance: buildShortcutFinanceSummary(root, "EUR"),
           },
+          pushPayload: buildShortcutFinanceMovementPushPayload(payload, root),
         };
       }
     );
     await client.query("COMMIT");
-    return result;
   } catch (error) {
     try {
       await client.query("ROLLBACK");
@@ -1293,6 +1374,18 @@ async function createShortcutFinanceMovement(body = {}, { idempotencyKey = "", d
   } finally {
     client.release();
   }
+  if (notifyPush && result?.pushPayload && !result?.replay) {
+    try {
+      await sendShortcutFinanceMovementPush(result.pushPayload, {
+        db,
+        provider: pushProvider,
+        pushSender,
+      });
+    } catch (error) {
+      console.warn("[shortcuts:finance:movements:push]", error?.message || error);
+    }
+  }
+  return result;
 }
 
 async function getShortcutFinanceOptions(type = "", db = pool) {
@@ -5589,6 +5682,7 @@ module.exports = {
     ensureReminderNotificationSchema,
     sendPushToEndpoint,
     sendPushToActiveSubscriptions,
+    sendShortcutFinanceMovementPush,
     upsertPushSubscription,
     listReminderRecords,
     cancelReminderRecord,
@@ -5611,6 +5705,7 @@ module.exports = {
     createShortcutFinanceMovement,
     parseShortcutMovementInput,
     buildShortcutMovementPayload,
+    buildShortcutFinanceMovementPushPayload,
     buildShortcutAccountEntries,
     buildShortcutFinanceSummary,
     listShortcutTransactions,

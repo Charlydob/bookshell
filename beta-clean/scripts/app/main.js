@@ -24,7 +24,7 @@ import {
 import { applyTheme, getAvailableThemes, getCurrentTheme, initThemeService } from "../shared/services/theme/index.js";
 import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
 import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, getFirebaseMetricsSnapshot, logFirebaseRead, registerViewListener } from "../shared/data/read-debug.js";
-import { disablePush, enablePush, getPushState, sendTestPush } from "../shared/push/web-push.js?v=2026-08-28-reminder-delete-push-update-v1";
+import { disablePush, enablePush, generateShortcutToken, getPushState, getShortcutStatus, revokeShortcutToken, sendTestPush, sendTodayPendingPush } from "../shared/push/web-push.js?v=2026-08-28-reminder-delete-push-update-v1";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -35,6 +35,7 @@ const BOOT_RELEASE_TIMEOUT_MS = 5000;
 const HABITS_VIEW_ID = "view-habits";
 const SHELL_STATE_KEY = "__bookshellCleanShellState";
 const APP_BOOT_TS = performance.now();
+let settingsShortcutTokenValue = "";
 const ECHARTS_LIKELY_VIEW_IDS = new Set([
   "view-finance",
   "view-habits",
@@ -867,6 +868,7 @@ function orderSyncIndicatorActions(indicator) {
 function closeSettingsModal() {
   const backdrop = document.getElementById("app-settings-backdrop");
   if (!backdrop) return;
+  settingsShortcutTokenValue = "";
   backdrop.classList.add("hidden");
   backdrop.setAttribute("aria-hidden", "true");
   syncShellModalLock();
@@ -883,6 +885,8 @@ async function renderSettingsModal() {
 
   let pushState = { supported: false, permission: "unsupported", registered: false, configured: false };
   try { pushState = await getPushState(); } catch (error) { console.warn("[push:status]", error); }
+  let shortcutState = { enabled: false, token: null, endpoints: {} };
+  try { shortcutState = await getShortcutStatus(); } catch (error) { console.warn("[shortcuts:status]", error); }
   const pushDiagnostics = pushState.diagnostics || {
     currentUrl: window.location.href,
     displayModeStandalone: Boolean(window.matchMedia?.("(display-mode: standalone)")?.matches),
@@ -899,6 +903,10 @@ async function renderSettingsModal() {
     ? "undefined"
     : String(pushDiagnostics.navigatorStandalone);
   const versionSummary = getBookshellVersionSummary();
+  const shortcutEndpoints = shortcutState.endpoints || {};
+  const shortcutTokenLabel = shortcutState.enabled && shortcutState.token
+    ? `${shortcutState.token.prefix || "bsh_"}...${shortcutState.token.lastFour || ""}`
+    : "Sin token activo";
 
   const themeButtons = getAvailableThemes().map((theme) => `
     <button
@@ -927,7 +935,34 @@ async function renderSettingsModal() {
       <div class="app-settings-section__eyebrow">Notificaciones</div>
       <div class="app-settings-section__actions">
         <button type="button" class="app-settings-actionBtn" data-settings-open-notifications>Abrir panel de notificaciones</button>
+        <button type="button" class="app-settings-actionBtn" data-reminders-today-push ${!pushState.registered ? "disabled" : ""}>Enviar pendiente de hoy</button>
       </div>
+      <p data-reminders-today-feedback>Usa los recordatorios reales de hoy y envia una Web Push al dispositivo.</p>
+    </section>
+    <section class="app-settings-section">
+      <div class="app-settings-section__eyebrow">Atajos de iPhone</div>
+      <div class="app-settings-kpis">
+        <div class="app-settings-kpi"><small>API de Atajos</small><strong>${shortcutState.enabled ? "Activada" : "Desactivada"}</strong></div>
+        <div class="app-settings-kpi"><small>Token</small><strong>${escapeHtml(shortcutTokenLabel)}</strong></div>
+      </div>
+      <div class="app-settings-section__actions">
+        <button type="button" class="app-settings-actionBtn" data-shortcuts-generate-token>${shortcutState.enabled ? "Regenerar token" : "Generar token"}</button>
+        <button type="button" class="app-settings-dangerBtn" data-shortcuts-revoke-token ${shortcutState.enabled ? "" : "disabled"}>Revocar token</button>
+      </div>
+      ${settingsShortcutTokenValue ? `
+        <label class="app-settings-tokenReveal">
+          <span>Token nuevo</span>
+          <textarea readonly rows="3">${escapeHtml(settingsShortcutTokenValue)}</textarea>
+        </label>
+      ` : ""}
+      <dl class="app-settings-pushDiagnostics app-settings-shortcutUrls">
+        <div><dt>Opciones</dt><dd>${escapeHtml(shortcutEndpoints.financeOptions || "")}</dd></div>
+        <div><dt>Cuentas</dt><dd>${escapeHtml(shortcutEndpoints.financeAccounts || "")}</dd></div>
+        <div><dt>Categorias</dt><dd>${escapeHtml(shortcutEndpoints.financeCategories || "")}</dd></div>
+        <div><dt>Movimientos</dt><dd>${escapeHtml(shortcutEndpoints.financeMovements || "")}</dd></div>
+        <div><dt>Pendiente de hoy</dt><dd>${escapeHtml(shortcutEndpoints.remindersToday || "")}</dd></div>
+      </dl>
+      <p data-shortcuts-feedback>Usa Authorization: Bearer con este token en Obtener contenido de URL.</p>
     </section>
     <section class="app-settings-section" aria-label="Diagnóstico temporal Web Push">
       <div class="app-settings-section__eyebrow">Web Push · diagnóstico temporal</div>
@@ -1024,6 +1059,57 @@ function ensureSettingsModal() {
         console.error("[push:action]", error);
         if (feedback) feedback.textContent = `Error: ${error.message}`;
         pushAction.disabled = false;
+      });
+      return;
+    }
+    const todayPushAction = event.target?.closest?.("[data-reminders-today-push]");
+    if (todayPushAction) {
+      todayPushAction.disabled = true;
+      const feedback = backdrop.querySelector("[data-reminders-today-feedback]");
+      if (feedback) feedback.textContent = "Enviando pendiente de hoy...";
+      sendTodayPendingPush().then((result) => {
+        if (result?.count > 0 && result?.accepted) {
+          if (feedback) feedback.textContent = `Enviado: ${result.count} recordatorios.`;
+        } else if (result?.count === 0 || result?.skipped) {
+          if (feedback) feedback.textContent = "No tienes recordatorios pendientes hoy.";
+        } else {
+          if (feedback) feedback.textContent = `No se pudo entregar: ${result?.reason || "push_delivery_failed"}`;
+        }
+      }).catch((error) => {
+        console.error("[reminders:today-push]", error);
+        if (feedback) feedback.textContent = `Error: ${error.message}`;
+      }).finally(() => {
+        todayPushAction.disabled = false;
+      });
+      return;
+    }
+    const shortcutGenerateAction = event.target?.closest?.("[data-shortcuts-generate-token]");
+    if (shortcutGenerateAction) {
+      shortcutGenerateAction.disabled = true;
+      const feedback = backdrop.querySelector("[data-shortcuts-feedback]");
+      if (feedback) feedback.textContent = "Generando token...";
+      generateShortcutToken().then((result) => {
+        settingsShortcutTokenValue = String(result?.tokenValue || "");
+        void renderSettingsModal();
+      }).catch((error) => {
+        console.error("[shortcuts:generate]", error);
+        if (feedback) feedback.textContent = `Error: ${error.message}`;
+        shortcutGenerateAction.disabled = false;
+      });
+      return;
+    }
+    const shortcutRevokeAction = event.target?.closest?.("[data-shortcuts-revoke-token]");
+    if (shortcutRevokeAction) {
+      shortcutRevokeAction.disabled = true;
+      const feedback = backdrop.querySelector("[data-shortcuts-feedback]");
+      if (feedback) feedback.textContent = "Revocando token...";
+      revokeShortcutToken().then(() => {
+        settingsShortcutTokenValue = "";
+        void renderSettingsModal();
+      }).catch((error) => {
+        console.error("[shortcuts:revoke]", error);
+        if (feedback) feedback.textContent = `Error: ${error.message}`;
+        shortcutRevokeAction.disabled = false;
       });
       return;
     }

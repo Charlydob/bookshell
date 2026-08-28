@@ -109,6 +109,161 @@ INSERT INTO data_usage_log (user_id, path, operation, created_at)
 VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()));
 ```
 
+## iPhone Shortcuts API
+
+Base URL: `https://api-bookshell.charlydob.com`
+
+All Shortcuts endpoints require:
+
+```http
+Authorization: Bearer <shortcut-token>
+Accept: application/json
+```
+
+Movement creation should also send:
+
+```http
+Idempotency-Key: <unique-key-from-shortcuts>
+Content-Type: application/json
+```
+
+Tokens are managed from Bookshell web settings with `GET /shortcuts/status`,
+`POST /shortcuts/token`, and `DELETE /shortcuts/token`. The full token is
+returned only by `POST /shortcuts/token` as `tokenValue`; the backend stores a
+SHA-256 hash plus display prefix/last four characters.
+
+### Get Finance Options
+
+`GET /shortcuts/finance/options`
+
+Optional category filter: `GET /shortcuts/finance/options?type=expense`
+
+Response:
+
+```json
+{
+  "ok": true,
+  "financePath": "finance/finance",
+  "accounts": [
+    { "id": "acc_1", "name": "PostFinance", "currency": "CHF", "assetType": "cash" }
+  ],
+  "categories": [
+    { "id": "cat_food", "name": "Comida" }
+  ],
+  "currencies": ["EUR", "PEN", "BTC", "USD", "GBP", "CHF"],
+  "movementTypes": ["expense", "income", "transfer"]
+}
+```
+
+### Get Accounts
+
+`GET /shortcuts/finance/accounts`
+
+Response:
+
+```json
+{
+  "ok": true,
+  "accounts": [
+    { "id": "acc_1", "name": "PostFinance", "currency": "CHF", "assetType": "cash" }
+  ]
+}
+```
+
+### Get Categories
+
+`GET /shortcuts/finance/categories`
+
+Optional filter: `GET /shortcuts/finance/categories?type=expense`
+
+Response:
+
+```json
+{
+  "ok": true,
+  "categories": [
+    { "id": "cat_food", "name": "Comida" }
+  ]
+}
+```
+
+### Create Movement
+
+`POST /shortcuts/finance/movements`
+
+Expense/income body:
+
+```json
+{
+  "amount": 12.5,
+  "currency": "CHF",
+  "accountId": "acc_1",
+  "type": "expense",
+  "categoryId": "cat_food",
+  "description": "Migros",
+  "date": "2026-08-28T10:00:00+02:00"
+}
+```
+
+Transfer body:
+
+```json
+{
+  "amount": 20,
+  "currency": "EUR",
+  "fromAccountId": "acc_eur",
+  "toAccountId": "acc_chf",
+  "type": "transfer",
+  "date": "2026-08-28T10:00:00+02:00"
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "movementId": "uuid",
+  "financePath": "finance/finance",
+  "movement": {},
+  "balance": {
+    "currency": "EUR",
+    "expensesEUR": 12.875,
+    "incomeEUR": 0,
+    "netEUR": -12.875
+  }
+}
+```
+
+Errors use the existing `{ "ok": false, "error": "CODE" }` shape, for example
+`INVALID_SHORTCUT_TOKEN`, `INVALID_AMOUNT`, `ACCOUNT_NOT_FOUND`,
+`CATEGORY_NOT_FOUND`, `INVALID_CURRENCY`, and `IDEMPOTENCY_CONFLICT`.
+
+### Today Pending Reminders
+
+`POST /shortcuts/reminders/today`
+
+Optional body:
+
+```json
+{ "timezone": "Europe/Zurich" }
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "accepted": true,
+  "count": 3,
+  "targetDate": "2026-08-28",
+  "timezone": "Europe/Zurich"
+}
+```
+
+If there are no pending reminders today, the backend returns `count: 0`,
+`skipped: true`, and does not send an empty push.
+
 ## Canonical Reminder
 
 ```json
@@ -122,7 +277,7 @@ VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()));
   "category": "Compras",
   "targetDate": "2026-08-28",
   "targetTime": "10:30",
-  "timezone": "Europe/Madrid",
+  "timezone": "Europe/Zurich",
   "source": {
     "type": "gmail",
     "externalId": "gmail-message-id",

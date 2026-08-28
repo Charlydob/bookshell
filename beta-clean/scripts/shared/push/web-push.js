@@ -107,6 +107,13 @@ export async function sendTestPush() {
   return api("/push/test", { method: "POST", body: JSON.stringify({ endpoint: subscription.endpoint }) });
 }
 
+export async function sendTodayPendingPush(timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Zurich") {
+  return api("/reminders/today/push", {
+    method: "POST",
+    body: JSON.stringify({ timezone }),
+  });
+}
+
 export async function sendReminderTestPush(reminderId = "", kind = "reminder") {
   const safeReminderId = String(reminderId || "").trim();
   if (!safeReminderId) throw new Error("reminder_required");
@@ -119,4 +126,16 @@ export async function sendReminderTestPush(reminderId = "", kind = "reminder") {
       kind,
     }),
   });
+}
+
+export async function getShortcutStatus() {
+  return api("/shortcuts/status", { method: "GET" });
+}
+
+export async function generateShortcutToken() {
+  return api("/shortcuts/token", { method: "POST", body: JSON.stringify({}) });
+}
+
+export async function revokeShortcutToken() {
+  return api("/shortcuts/token", { method: "DELETE" });
 }

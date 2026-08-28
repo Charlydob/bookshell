@@ -1,5 +1,7 @@
 const http = require("http");
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 let Pool = null;
 let webPush = null;
 
@@ -66,6 +68,34 @@ const FORBIDDEN_PATH_PARTS = new Set([
   "constructor",
 ]);
 
+const MIGRATIONS_DIR = path.join(__dirname, "db", "migrations");
+const MIGRATION_FILES = Object.freeze({
+  pushSubscriptions: "20260827_web_push_base.sql",
+  reminderNotifications: "20260828_reminder_web_push_scheduler.sql",
+  shortcuts: "20260828_shortcuts_api.sql",
+});
+
+function readMigrationSql(name) {
+  return fs.readFileSync(path.join(MIGRATIONS_DIR, name), "utf8");
+}
+
+async function ensureMigrationBackedSchema(db, migrationFile, requiredRelations = []) {
+  const migrationPath = path.join(MIGRATIONS_DIR, migrationFile);
+  if (fs.existsSync(migrationPath)) {
+    return db.query(readMigrationSql(migrationFile));
+  }
+
+  const missing = [];
+  for (const relation of requiredRelations) {
+    const result = await db.query("SELECT to_regclass($1) AS relation_name", [relation]);
+    if (!result.rows[0]?.relation_name) missing.push(relation);
+  }
+  if (missing.length) {
+    throw new Error(`migration_file_missing:${migrationFile}:${missing.join(",")}`);
+  }
+  return { rows: [], rowCount: 0 };
+}
+
 // --------------------------------------------------
 // CORS
 // --------------------------------------------------
@@ -87,7 +117,7 @@ function corsHeaders(req) {
     ...(isAllowedOrigin(origin)
       ? { "Access-Control-Allow-Origin": origin }
       : {}),
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Bookshell-Automation-Secret",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Bookshell-Automation-Secret, Idempotency-Key",
     "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Credentials": "true",
     "Vary": "Origin",
@@ -171,25 +201,9 @@ function ensurePushSubscriptionsSchema(db = pool) {
   }
   let ready = pushSchemaReadyByDb.get(db);
   if (!ready) {
-    ready = db.query(`
-      CREATE TABLE IF NOT EXISTS push_subscriptions (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id uuid NOT NULL,
-        endpoint text NOT NULL UNIQUE,
-        p256dh text NOT NULL,
-        auth text NOT NULL,
-        user_agent text,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        last_success_at timestamptz,
-        last_failure_at timestamptz,
-        failure_count integer NOT NULL DEFAULT 0,
-        disabled_at timestamptz
-      );
-
-      CREATE INDEX IF NOT EXISTS push_subscriptions_active_user_idx
-        ON push_subscriptions (user_id) WHERE disabled_at IS NULL;
-    `);
+    ready = ensureMigrationBackedSchema(db, MIGRATION_FILES.pushSubscriptions, [
+      "public.push_subscriptions",
+    ]);
     pushSchemaReadyByDb.set(db, ready);
   }
   return ready;
@@ -492,6 +506,848 @@ async function mutateUserData(mutator) {
   } finally {
     client.release();
   }
+}
+
+// --------------------------------------------------
+// SHORTCUTS / FINANCE DOMAIN
+// --------------------------------------------------
+
+const API_PUBLIC_BASE_URL = String(
+  process.env.BOOKSHELL_API_PUBLIC_URL || "https://api-bookshell.charlydob.com"
+).trim().replace(/\/+$/g, "");
+const SHORTCUT_TOKEN_PREFIX = "bsh_";
+const SHORTCUT_TOKEN_BYTES = 32;
+const SHORTCUT_TOKEN_NAME = "iPhone Shortcuts";
+const SHORTCUT_FINANCE_ROOT_PATH = "finance/finance";
+const SHORTCUT_FINANCE_LEGACY_ROOT_PATH = "finance";
+const SHORTCUT_ALLOWED_TYPES = new Set(["expense", "income", "transfer"]);
+const SHORTCUT_SUPPORTED_CURRENCIES = Object.freeze([
+  "EUR", "PEN", "BTC", "USD", "GBP", "CHF", "JPY", "CNY", "MXN",
+  "COP", "ARS", "BRL", "CLP", "CAD", "AUD", "NOK", "SEK", "DKK",
+]);
+
+const SHORTCUT_FX_TO_EUR = Object.freeze({
+  EUR: 1,
+  PEN: 0.247,
+  BTC: 1,
+  USD: 0.92,
+  GBP: 1.17,
+  CHF: 1.03,
+  JPY: 0.0059,
+  CNY: 0.127,
+  MXN: 0.051,
+  COP: 0.00022,
+  ARS: 0.001,
+  BRL: 0.17,
+  CLP: 0.001,
+  CAD: 0.67,
+  AUD: 0.61,
+  NOK: 0.086,
+  SEK: 0.087,
+  DKK: 0.134,
+});
+
+const shortcutSchemaReadyByDb = new WeakMap();
+
+function ensureShortcutSchema(db = pool) {
+  if (!db || typeof db.query !== "function") {
+    throw new Error("database_unavailable");
+  }
+  let ready = shortcutSchemaReadyByDb.get(db);
+  if (!ready) {
+    ready = ensureMigrationBackedSchema(db, MIGRATION_FILES.shortcuts, [
+      "public.shortcut_api_tokens",
+      "public.shortcut_idempotency_keys",
+    ]);
+    shortcutSchemaReadyByDb.set(db, ready);
+  }
+  return ready;
+}
+
+function sha256(value = "") {
+  return crypto.createHash("sha256").update(String(value)).digest("hex");
+}
+
+function stableJson(value) {
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+}
+
+function tokenHash(token = "") {
+  return sha256(token);
+}
+
+function makeShortcutToken() {
+  return `${SHORTCUT_TOKEN_PREFIX}${crypto.randomBytes(SHORTCUT_TOKEN_BYTES).toString("base64url")}`;
+}
+
+function safeTimingEqualHex(left = "", right = "") {
+  const leftBuffer = Buffer.from(String(left || ""), "hex");
+  const rightBuffer = Buffer.from(String(right || ""), "hex");
+  return (
+    leftBuffer.length === rightBuffer.length &&
+    leftBuffer.length > 0 &&
+    crypto.timingSafeEqual(leftBuffer, rightBuffer)
+  );
+}
+
+function getBearerToken(req) {
+  const header = String(req.headers.authorization || "").trim();
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return String(match?.[1] || "").trim();
+}
+
+async function getShortcutStatus(db = pool) {
+  await ensureShortcutSchema(db);
+  const result = await db.query(
+    `
+      SELECT id, name, token_prefix, token_last_four, created_at, updated_at, last_used_at
+      FROM shortcut_api_tokens
+      WHERE user_id = $1
+        AND revoked_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT 1
+    `,
+    [SINGLE_USER_ID]
+  );
+  const row = result.rows[0] || null;
+  return {
+    enabled: Boolean(row),
+    token: row
+      ? {
+          id: row.id,
+          name: row.name,
+          prefix: row.token_prefix,
+          lastFour: row.token_last_four,
+          createdAt: row.created_at ? new Date(row.created_at).toISOString() : "",
+          updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : "",
+          lastUsedAt: row.last_used_at ? new Date(row.last_used_at).toISOString() : "",
+        }
+      : null,
+    endpoints: buildShortcutEndpointMap(),
+  };
+}
+
+async function rotateShortcutToken(db = pool) {
+  await ensureShortcutSchema(db);
+  const token = makeShortcutToken();
+  const hash = tokenHash(token);
+  await db.query(
+    `
+      UPDATE shortcut_api_tokens
+      SET revoked_at = NOW(), updated_at = NOW()
+      WHERE user_id = $1
+        AND revoked_at IS NULL
+    `,
+    [SINGLE_USER_ID]
+  );
+  const inserted = await db.query(
+    `
+      INSERT INTO shortcut_api_tokens (
+        user_id,
+        name,
+        token_hash,
+        token_prefix,
+        token_last_four
+      )
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, name, token_prefix, token_last_four, created_at, updated_at
+    `,
+    [
+      SINGLE_USER_ID,
+      SHORTCUT_TOKEN_NAME,
+      hash,
+      token.slice(0, SHORTCUT_TOKEN_PREFIX.length + 4),
+      token.slice(-4),
+    ]
+  );
+  return {
+    ...(await getShortcutStatus(db)),
+    tokenValue: token,
+    tokenId: inserted.rows[0]?.id || "",
+  };
+}
+
+async function revokeShortcutTokens(db = pool) {
+  await ensureShortcutSchema(db);
+  const result = await db.query(
+    `
+      UPDATE shortcut_api_tokens
+      SET revoked_at = NOW(), updated_at = NOW()
+      WHERE user_id = $1
+        AND revoked_at IS NULL
+    `,
+    [SINGLE_USER_ID]
+  );
+  return { revoked: result.rowCount || 0 };
+}
+
+async function authenticateShortcutRequest(req, db = pool) {
+  const supplied = getBearerToken(req);
+  if (!supplied) return null;
+  await ensureShortcutSchema(db);
+  const suppliedHash = tokenHash(supplied);
+  const result = await db.query(
+    `
+      SELECT id, token_hash
+      FROM shortcut_api_tokens
+      WHERE user_id = $1
+        AND revoked_at IS NULL
+      ORDER BY created_at DESC
+    `,
+    [SINGLE_USER_ID]
+  );
+  const match = result.rows.find((row) => safeTimingEqualHex(row.token_hash, suppliedHash));
+  if (!match) return null;
+  await db.query(
+    `
+      UPDATE shortcut_api_tokens
+      SET last_used_at = NOW(), updated_at = NOW()
+      WHERE id = $1
+    `,
+    [match.id]
+  );
+  return getSingleUser();
+}
+
+function buildShortcutEndpointMap() {
+  return {
+    financeOptions: `${API_PUBLIC_BASE_URL}/shortcuts/finance/options`,
+    financeAccounts: `${API_PUBLIC_BASE_URL}/shortcuts/finance/accounts`,
+    financeCategories: `${API_PUBLIC_BASE_URL}/shortcuts/finance/categories`,
+    financeMovements: `${API_PUBLIC_BASE_URL}/shortcuts/finance/movements`,
+    remindersToday: `${API_PUBLIC_BASE_URL}/shortcuts/reminders/today`,
+  };
+}
+
+function normalizeShortcutCurrency(value = "") {
+  const code = String(value || "EUR").trim().toUpperCase();
+  return SHORTCUT_SUPPORTED_CURRENCIES.includes(code) ? code : "";
+}
+
+function shortcutCurrencyToEUR(amount = 0, currency = "EUR") {
+  const value = Number(amount || 0);
+  const code = normalizeShortcutCurrency(currency);
+  if (!Number.isFinite(value)) return Number.NaN;
+  if (!code) return Number.NaN;
+  return value * Number(SHORTCUT_FX_TO_EUR[code] || 1);
+}
+
+function shortcutConvertCurrency(amount = 0, from = "EUR", to = "EUR") {
+  const value = Number(amount || 0);
+  const fromCode = normalizeShortcutCurrency(from);
+  const toCode = normalizeShortcutCurrency(to);
+  if (!Number.isFinite(value) || !fromCode || !toCode) return Number.NaN;
+  if (fromCode === toCode) return value;
+  const fromToEUR = Number(SHORTCUT_FX_TO_EUR[fromCode] || 0);
+  const toToEUR = Number(SHORTCUT_FX_TO_EUR[toCode] || 0);
+  if (!(fromToEUR > 0) || !(toToEUR > 0)) return Number.NaN;
+  return (value * fromToEUR) / toToEUR;
+}
+
+function normalizeShortcutType(value = "") {
+  const safe = String(value || "").trim().toLowerCase();
+  if (safe === "gasto" || safe === "egreso") return "expense";
+  if (safe === "ingreso") return "income";
+  if (safe === "transferencia" || safe === "traspaso") return "transfer";
+  return SHORTCUT_ALLOWED_TYPES.has(safe) ? safe : "";
+}
+
+function normalizeShortcutDay(value = "", now = new Date()) {
+  const raw = String(value || "").trim();
+  const direct = normalizeDateOnly(raw);
+  if (direct) return direct;
+  const date = raw ? new Date(raw) : now;
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeShortcutText(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function normalizeShortcutCategoryName(value = "") {
+  const safe = normalizeShortcutText(value);
+  return safe || "";
+}
+
+function shortcutSafeKey(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.#$/[\]]/g, "_")
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function getFinanceRootAtPath(data = {}, path = SHORTCUT_FINANCE_ROOT_PATH) {
+  return getAtPath(data, path.split("/").filter(Boolean)) || {};
+}
+
+function financeRootHasData(root = {}) {
+  return Boolean(
+    root &&
+    typeof root === "object" &&
+    (
+      Object.keys(root.accounts || {}).length ||
+      Object.keys(root.transactions || {}).length ||
+      Object.keys(root.movements || {}).length ||
+      Object.keys(root.tx || {}).length
+    )
+  );
+}
+
+function resolveFinanceRootPath(data = {}) {
+  const current = getFinanceRootAtPath(data, SHORTCUT_FINANCE_ROOT_PATH);
+  const legacy = getFinanceRootAtPath(data, SHORTCUT_FINANCE_LEGACY_ROOT_PATH);
+  if (financeRootHasData(current)) return SHORTCUT_FINANCE_ROOT_PATH;
+  if (financeRootHasData(legacy)) return SHORTCUT_FINANCE_LEGACY_ROOT_PATH;
+  return SHORTCUT_FINANCE_ROOT_PATH;
+}
+
+function ensureFinanceRoot(data = {}, path = SHORTCUT_FINANCE_ROOT_PATH) {
+  const parts = path.split("/").filter(Boolean);
+  return ensureParent(data, parts);
+}
+
+async function readCurrentUserData(db = pool) {
+  const result = await db.query(
+    `
+      SELECT id, data
+      FROM firebase_import_raw
+      WHERE user_id = $1
+      ORDER BY imported_at DESC
+      LIMIT 1
+    `,
+    [SINGLE_USER_ID]
+  );
+  return result.rows[0] || null;
+}
+
+function normalizeShortcutAccount(id = "", account = {}) {
+  const safeId = String(account?.id || id || "").trim();
+  const name = normalizeShortcutText(account?.name || account?.title || safeId);
+  const assetType = String(account?.assetType || "").trim().toLowerCase() || (
+    account?.isBitcoin === true || String(account?.currency || "").toUpperCase() === "BTC"
+      ? "crypto"
+      : "cash"
+  );
+  const currency = assetType === "crypto"
+    ? "BTC"
+    : (normalizeShortcutCurrency(account?.currency) || "EUR");
+  return {
+    ...account,
+    id: safeId,
+    name,
+    currency,
+    assetType,
+    active: account?.active !== false && account?.disabled !== true && account?.deleted !== true,
+  };
+}
+
+function listShortcutAccountsFromRoot(root = {}) {
+  return Object.entries(root?.accounts || {})
+    .map(([id, account]) => normalizeShortcutAccount(id, account))
+    .filter((account) => account.id && account.active)
+    .sort((left, right) => {
+      const leftOrder = Number(left.displayOrder);
+      const rightOrder = Number(right.displayOrder);
+      if (Number.isFinite(leftOrder) || Number.isFinite(rightOrder)) {
+        if (!Number.isFinite(leftOrder)) return 1;
+        if (!Number.isFinite(rightOrder)) return -1;
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      }
+      return left.name.localeCompare(right.name, "es");
+    });
+}
+
+function normalizeShortcutCategory(id = "", category = {}) {
+  const source = category && typeof category === "object" ? category : {};
+  const name = normalizeShortcutCategoryName(source.name || id);
+  if (!name) return null;
+  return {
+    ...source,
+    id: String(source.id || id || shortcutSafeKey(name) || name).trim(),
+    name,
+    type: String(source.type || source.movementType || "").trim().toLowerCase(),
+  };
+}
+
+function listShortcutCategoriesFromRoot(root = {}, type = "") {
+  const categories = new Map();
+  Object.entries(root?.catalog?.categories || {}).forEach(([id, value]) => {
+    const normalized = normalizeShortcutCategory(id, value);
+    if (!normalized) return;
+    categories.set(normalized.name, normalized);
+  });
+  Object.values(root?.transactions || {}).forEach((tx) => {
+    const name = normalizeShortcutCategoryName(tx?.category);
+    if (name && !categories.has(name)) {
+      categories.set(name, { id: tx?.categoryId || shortcutSafeKey(name) || name, name, type: normalizeShortcutType(tx?.type) });
+    }
+  });
+  const safeType = normalizeShortcutType(type);
+  return [...categories.values()]
+    .filter((category) => {
+      if (!safeType || safeType === "transfer") return true;
+      return !category.type || category.type === safeType;
+    })
+    .sort((left, right) => left.name.localeCompare(right.name, "es"));
+}
+
+function resolveShortcutAccount(root = {}, accountId = "") {
+  const safeId = String(accountId || "").trim();
+  if (!safeId || !root?.accounts?.[safeId]) return null;
+  const account = normalizeShortcutAccount(safeId, root.accounts[safeId]);
+  return account.id && account.active ? account : null;
+}
+
+function resolveShortcutCategory(root = {}, categoryIdOrName = "", type = "") {
+  if (normalizeShortcutType(type) === "transfer") return { id: "transfer", name: "transfer" };
+  const safe = normalizeShortcutText(categoryIdOrName);
+  if (!safe) return null;
+  const categories = listShortcutCategoriesFromRoot(root, type);
+  return categories.find((category) => (
+    String(category.id || "") === safe ||
+    category.name === safe ||
+    shortcutSafeKey(category.name) === shortcutSafeKey(safe)
+  )) || null;
+}
+
+function parseShortcutMovementInput(body = {}) {
+  const type = normalizeShortcutType(body?.type || body?.movementType);
+  const amount = Number(body?.amount);
+  const currency = normalizeShortcutCurrency(body?.currency || body?.inputCurrency || "EUR");
+  const date = normalizeShortcutDay(body?.date || body?.dateISO || "");
+  return {
+    amount,
+    currency,
+    type,
+    date,
+    accountId: normalizeShortcutText(body?.accountId),
+    fromAccountId: normalizeShortcutText(body?.fromAccountId || body?.sourceAccountId),
+    toAccountId: normalizeShortcutText(body?.toAccountId || body?.targetAccountId),
+    categoryId: normalizeShortcutText(body?.categoryId || body?.category),
+    description: normalizeShortcutText(body?.description || body?.note || body?.title),
+    title: normalizeShortcutText(body?.title),
+  };
+}
+
+function buildShortcutCategoryCatalogPayload(name = "", previous = {}, nowMs = Date.now()) {
+  const safeName = normalizeShortcutCategoryName(name);
+  if (!safeName) return null;
+  return {
+    ...(previous && typeof previous === "object" ? previous : {}),
+    id: String(previous?.id || shortcutSafeKey(safeName) || safeName).trim(),
+    name: safeName,
+    emoji: String(previous?.emoji || "").trim(),
+    color: String(previous?.color || "").trim(),
+    icon: String(previous?.icon || "").trim(),
+    lastUsedAt: nowMs,
+    updatedAt: nowMs,
+    createdAt: Number(previous?.createdAt || 0) || nowMs,
+  };
+}
+
+function normalizeShortcutSnapshots(snapshots = {}) {
+  return Object.entries(snapshots || {})
+    .map(([day, row]) => ({
+      day: normalizeDateOnly(day) || String(day || "").slice(0, 10),
+      value: Number(row?.value),
+      updatedAt: Number(row?.updatedAt || 0),
+    }))
+    .filter((row) => row.day && Number.isFinite(row.value))
+    .sort((left, right) => left.day.localeCompare(right.day));
+}
+
+function normalizeShortcutEntries(entries = {}) {
+  return Object.entries(entries || {})
+    .map(([day, row]) => ({
+      day: normalizeDateOnly(day) || String(day || "").slice(0, 10),
+      value: Number(row?.value),
+      updatedAt: Number(row?.updatedAt || row?.ts || 0),
+    }))
+    .filter((row) => row.day && Number.isFinite(row.value))
+    .sort((left, right) => left.day.localeCompare(right.day));
+}
+
+function listShortcutTransactions(root = {}) {
+  return Object.entries(root?.transactions || {})
+    .map(([id, row]) => ({
+      ...(row && typeof row === "object" ? row : {}),
+      id: String(row?.id || id || "").trim(),
+      type: normalizeShortcutType(row?.type),
+      amount: Number(row?.amount || 0),
+      date: normalizeShortcutDay(row?.date || row?.dateISO || ""),
+      accountId: String(row?.accountId || "").trim(),
+      fromAccountId: String(row?.fromAccountId || "").trim(),
+      toAccountId: String(row?.toAccountId || "").trim(),
+      category: normalizeShortcutCategoryName(row?.category),
+    }))
+    .filter((row) => row.id && SHORTCUT_ALLOWED_TYPES.has(row.type) && row.date && Number.isFinite(row.amount));
+}
+
+function buildShortcutAccountEntries(root = {}, accountId = "", fromDay = "", nowMs = Date.now()) {
+  const safeAccountId = String(accountId || "").trim();
+  const account = root?.accounts?.[safeAccountId];
+  if (!safeAccountId || !account) return {};
+  const snapshots = normalizeShortcutSnapshots(account.snapshots || {});
+  const entries = normalizeShortcutEntries(account.entries || account.daily || {});
+  const transactions = listShortcutTransactions(root).filter((tx) => (
+    tx.accountId === safeAccountId ||
+    tx.fromAccountId === safeAccountId ||
+    tx.toAccountId === safeAccountId
+  ));
+  const days = new Set([
+    ...snapshots.map((row) => row.day),
+    ...transactions.map((tx) => tx.date),
+    normalizeDateOnly(fromDay),
+  ].filter(Boolean));
+  const allDays = [...days].sort();
+  const startDay = normalizeDateOnly(fromDay) || allDays[0] || "";
+  if (!startDay) return {};
+  let carry = 0;
+  const previousEntry = entries.filter((entry) => entry.day < startDay).at(-1);
+  const previousSnapshot = snapshots.filter((snapshot) => snapshot.day < startDay).at(-1);
+  if (previousEntry) carry = Number(previousEntry.value || 0);
+  else if (previousSnapshot) carry = Number(previousSnapshot.value || 0);
+
+  const updates = {};
+  for (const day of allDays.filter((item) => item >= startDay)) {
+    const snapshot = snapshots.find((row) => row.day === day);
+    let value = snapshot ? Number(snapshot.value || 0) : carry;
+    for (const tx of transactions.filter((row) => row.date === day)) {
+      if (tx.type === "income" && tx.accountId === safeAccountId) value += Number(tx.accountAmount ?? tx.amount ?? 0);
+      if (tx.type === "expense" && tx.accountId === safeAccountId) value -= Number(tx.accountAmount ?? tx.amount ?? 0);
+      if (tx.type === "transfer" && tx.fromAccountId === safeAccountId) value -= Number(tx.amount || 0);
+      if (tx.type === "transfer" && tx.toAccountId === safeAccountId) value += Number(tx.amount || 0);
+    }
+    carry = value;
+    updates[day] = {
+      dateISO: `${day}T00:00:00.000Z`,
+      value,
+      updatedAt: nowMs,
+      source: snapshot ? "snapshot" : "derived",
+    };
+  }
+  return updates;
+}
+
+function buildShortcutFinanceSummary(root = {}, targetCurrency = "EUR") {
+  const safeTarget = normalizeShortcutCurrency(targetCurrency) || "EUR";
+  const accounts = listShortcutAccountsFromRoot(root);
+  const accountBalances = accounts.map((account) => {
+    const entries = normalizeShortcutEntries(account.entries || account.daily || {});
+    const value = Number(entries.at(-1)?.value ?? 0);
+    const converted = shortcutConvertCurrency(value, account.currency, safeTarget);
+    return { accountId: account.id, currency: account.currency, value, converted };
+  });
+  const txRows = listShortcutTransactions(root);
+  const totals = txRows.reduce((acc, tx) => {
+    const amount = shortcutCurrencyToEUR(Number(tx.totalEUR || tx.convertedAmountEUR || tx.amount || 0), tx.totalEUR || tx.convertedAmountEUR ? "EUR" : (tx.originalCurrency || tx.currency || "EUR"));
+    if (tx.type === "expense") acc.expensesEUR += Number.isFinite(amount) ? Math.abs(amount) : 0;
+    if (tx.type === "income") acc.incomeEUR += Number.isFinite(amount) ? Math.abs(amount) : 0;
+    return acc;
+  }, { expensesEUR: 0, incomeEUR: 0 });
+  const accountTotal = accountBalances.reduce((sum, row) => sum + (Number.isFinite(row.converted) ? row.converted : 0), 0);
+  return {
+    currency: safeTarget,
+    accountTotal,
+    expensesEUR: totals.expensesEUR,
+    incomeEUR: totals.incomeEUR,
+    netEUR: totals.incomeEUR - totals.expensesEUR,
+    accounts: accountBalances,
+    movementCount: txRows.length,
+  };
+}
+
+function buildShortcutMovementPayload(input = {}, root = {}, nowMs = Date.now(), txId = crypto.randomUUID()) {
+  const type = normalizeShortcutType(input.type);
+  const currency = normalizeShortcutCurrency(input.currency);
+  if (!type) throw Object.assign(new Error("INVALID_TYPE"), { statusCode: 400 });
+  if (!Number.isFinite(input.amount) || input.amount <= 0) {
+    throw Object.assign(new Error("INVALID_AMOUNT"), { statusCode: 400 });
+  }
+  if (!currency) throw Object.assign(new Error("INVALID_CURRENCY"), { statusCode: 400 });
+  if (!normalizeDateOnly(input.date)) throw Object.assign(new Error("INVALID_DATE"), { statusCode: 400 });
+
+  let account = null;
+  let fromAccount = null;
+  let toAccount = null;
+  if (type === "transfer") {
+    fromAccount = resolveShortcutAccount(root, input.fromAccountId);
+    toAccount = resolveShortcutAccount(root, input.toAccountId);
+    if (!fromAccount) throw Object.assign(new Error("FROM_ACCOUNT_NOT_FOUND"), { statusCode: 404 });
+    if (!toAccount) throw Object.assign(new Error("TO_ACCOUNT_NOT_FOUND"), { statusCode: 404 });
+    if (fromAccount.id === toAccount.id) throw Object.assign(new Error("INVALID_TRANSFER_ACCOUNTS"), { statusCode: 400 });
+  } else {
+    account = resolveShortcutAccount(root, input.accountId);
+    if (!account) throw Object.assign(new Error("ACCOUNT_NOT_FOUND"), { statusCode: 404 });
+  }
+
+  const category = resolveShortcutCategory(root, input.categoryId, type);
+  if (type !== "transfer" && !category) {
+    throw Object.assign(new Error("CATEGORY_NOT_FOUND"), { statusCode: 404 });
+  }
+
+  const accountCurrency = account ? account.currency : currency;
+  const accountAmount = account ? shortcutConvertCurrency(input.amount, currency, accountCurrency) : input.amount;
+  if (!Number.isFinite(accountAmount) || accountAmount <= 0) {
+    throw Object.assign(new Error("CURRENCY_CONVERSION_UNAVAILABLE"), { statusCode: 400 });
+  }
+  const convertedAmountEUR = shortcutCurrencyToEUR(input.amount, currency);
+  if (!Number.isFinite(convertedAmountEUR) || convertedAmountEUR <= 0) {
+    throw Object.assign(new Error("CURRENCY_CONVERSION_UNAVAILABLE"), { statusCode: 400 });
+  }
+  const note = input.description || input.title || "";
+  return {
+    id: txId,
+    type,
+    amount: type === "transfer" ? Number(input.amount) : Number(accountAmount),
+    originalAmount: Number(input.amount),
+    originalCurrency: currency,
+    inputCurrency: currency,
+    accountCurrency,
+    accountAmount: type === "transfer" ? Number(input.amount) : Number(accountAmount),
+    exchangeRateToEUR: currency === "EUR" ? 1 : Number(SHORTCUT_FX_TO_EUR[currency] || 1),
+    convertedAmountEUR,
+    totalEUR: convertedAmountEUR,
+    currency: type === "transfer" ? currency : accountCurrency,
+    date: input.date,
+    dateISO: `${input.date}T00:00:00`,
+    monthKey: input.date.slice(0, 7),
+    accountId: type === "transfer" ? "" : account.id,
+    fromAccountId: type === "transfer" ? fromAccount.id : "",
+    toAccountId: type === "transfer" ? toAccount.id : "",
+    category: type === "transfer" ? "transfer" : category.name,
+    categoryId: type === "transfer" ? "transfer" : String(category.id || category.name),
+    title: input.title || "",
+    note,
+    allocation: {
+      mode: "point",
+      period: "day",
+      anchorDate: input.date,
+      customStart: "",
+      customEnd: "",
+    },
+    extras: null,
+    source: "shortcut-api",
+    shortcut: true,
+    status: "synced",
+    pending: false,
+    draft: false,
+    disabled: false,
+    excluded: false,
+    deleted: false,
+    confirmed: true,
+    updatedAt: nowMs,
+    createdAt: nowMs,
+  };
+}
+
+async function withShortcutIdempotency(client, scope = "", key = "", requestHash = "", producer) {
+  const safeKey = String(key || "").trim();
+  if (!safeKey) return producer();
+  if (safeKey.length > 200) {
+    throw Object.assign(new Error("INVALID_IDEMPOTENCY_KEY"), { statusCode: 400 });
+  }
+  const existing = await client.query(
+    `
+      SELECT request_hash, status_code, response_body
+      FROM shortcut_idempotency_keys
+      WHERE user_id = $1
+        AND scope = $2
+        AND idempotency_key = $3
+      LIMIT 1
+    `,
+    [SINGLE_USER_ID, scope, safeKey]
+  );
+  if (existing.rows.length) {
+    const row = existing.rows[0];
+    if (row.request_hash !== requestHash) {
+      throw Object.assign(new Error("IDEMPOTENCY_CONFLICT"), { statusCode: 409 });
+    }
+    return {
+      statusCode: Number(row.status_code || 200),
+      body: { ...(row.response_body || {}), idempotent: true },
+      replay: true,
+    };
+  }
+  const result = await producer();
+  await client.query(
+    `
+      INSERT INTO shortcut_idempotency_keys (
+        user_id,
+        scope,
+        idempotency_key,
+        request_hash,
+        status_code,
+        response_body
+      )
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    `,
+    [
+      SINGLE_USER_ID,
+      scope,
+      safeKey,
+      requestHash,
+      result.statusCode,
+      JSON.stringify(result.body || {}),
+    ]
+  );
+  return result;
+}
+
+async function createShortcutFinanceMovement(body = {}, { idempotencyKey = "", db = pool } = {}) {
+  await ensureShortcutSchema(db);
+  const input = parseShortcutMovementInput(body);
+  const requestHash = sha256(stableJson(input));
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await withShortcutIdempotency(
+      client,
+      "finance:movements",
+      idempotencyKey,
+      requestHash,
+      async () => {
+        const dataResult = await client.query(
+          `
+            SELECT id, data
+            FROM firebase_import_raw
+            WHERE user_id = $1
+            ORDER BY imported_at DESC
+            LIMIT 1
+            FOR UPDATE
+          `,
+          [SINGLE_USER_ID]
+        );
+        if (!dataResult.rows.length) {
+          throw Object.assign(new Error("DATA_NOT_FOUND"), { statusCode: 404 });
+        }
+        const row = dataResult.rows[0];
+        const data = row.data || {};
+        const financePath = resolveFinanceRootPath(data);
+        const root = ensureFinanceRoot(data, financePath);
+        root.accounts = root.accounts || {};
+        root.transactions = root.transactions || {};
+        root.catalog = root.catalog || {};
+        root.catalog.categories = root.catalog.categories || {};
+
+        const txId = crypto.randomUUID();
+        const payload = buildShortcutMovementPayload(input, root, Date.now(), txId);
+        root.transactions[txId] = payload;
+        if (payload.type !== "transfer") {
+          root.catalog.categories[payload.category] = buildShortcutCategoryCatalogPayload(
+            payload.category,
+            root.catalog.categories[payload.category],
+            payload.updatedAt
+          );
+        }
+
+        const touchedAccounts = payload.type === "transfer"
+          ? [payload.fromAccountId, payload.toAccountId]
+          : [payload.accountId];
+        for (const accountId of touchedAccounts.filter(Boolean)) {
+          const account = root.accounts[accountId];
+          if (!account) continue;
+          account.entries = {
+            ...(account.entries || {}),
+            ...buildShortcutAccountEntries(root, accountId, payload.date, payload.updatedAt),
+          };
+          account.updatedAt = payload.updatedAt;
+        }
+
+        await client.query(
+          `
+            UPDATE firebase_import_raw
+            SET data = $1::jsonb
+            WHERE id = $2
+          `,
+          [JSON.stringify(data), row.id]
+        );
+
+        return {
+          statusCode: 201,
+          body: {
+            ok: true,
+            movement: payload,
+            movementId: txId,
+            financePath,
+            balance: buildShortcutFinanceSummary(root, "EUR"),
+          },
+        };
+      }
+    );
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getShortcutFinanceOptions(type = "", db = pool) {
+  const row = await readCurrentUserData(db);
+  if (!row) return null;
+  const financePath = resolveFinanceRootPath(row.data || {});
+  const root = getFinanceRootAtPath(row.data || {}, financePath);
+  return {
+    financePath,
+    accounts: listShortcutAccountsFromRoot(root).map((account) => ({
+      id: account.id,
+      name: account.name,
+      currency: account.currency,
+      assetType: account.assetType,
+    })),
+    categories: listShortcutCategoriesFromRoot(root, type).map((category) => ({
+      id: category.id,
+      name: category.name,
+      ...(category.type ? { type: category.type } : {}),
+    })),
+    currencies: SHORTCUT_SUPPORTED_CURRENCIES,
+    movementTypes: ["expense", "income", "transfer"],
+  };
+}
+
+async function sendTodayPendingPush({ timeZone = DEFAULT_REMINDER_TIMEZONE } = {}) {
+  if (!isPushConfigured) {
+    return { ok: false, accepted: false, statusCode: 503, error: "push_not_configured" };
+  }
+  await ensurePushSubscriptionsSchema(pool);
+  const safeTimezone = normalizeTimezone(timeZone);
+  const targetDate = todayDateStringInZone(safeTimezone);
+  const reminders = await listDailySummaryReminders(targetDate, safeTimezone);
+  if (!reminders.length) {
+    return {
+      ok: true,
+      accepted: false,
+      skipped: true,
+      reason: "no_pending_reminders_today",
+      count: 0,
+      targetDate,
+      timezone: safeTimezone,
+    };
+  }
+  const payload = buildDailySummaryPayload({ targetDate, timezone: safeTimezone, reminders });
+  const delivery = await sendPushToActiveSubscriptions(pool, webPush, payload, { ttl: 7200 });
+  return {
+    ok: delivery.accepted,
+    accepted: delivery.accepted,
+    count: reminders.length,
+    targetDate,
+    timezone: safeTimezone,
+    payload,
+    ...delivery,
+  };
 }
 
 // --------------------------------------------------
@@ -1054,66 +1910,10 @@ function ensureReminderNotificationSchema(db = pool) {
   }
   let ready = reminderNotificationSchemaReadyByDb.get(db);
   if (!ready) {
-    ready = db.query(`
-      CREATE TABLE IF NOT EXISTS reminder_notification_deliveries (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id uuid NOT NULL,
-        delivery_type text NOT NULL,
-        delivery_key text NOT NULL,
-        timezone text NOT NULL DEFAULT 'Europe/Zurich',
-        target_date date,
-        target_at timestamptz,
-        reminder_ids uuid[] NOT NULL DEFAULT '{}'::uuid[],
-        payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-        status text NOT NULL DEFAULT 'sending',
-        attempt_count integer NOT NULL DEFAULT 0,
-        locked_at timestamptz,
-        locked_by text,
-        sent_at timestamptz,
-        failed_at timestamptz,
-        error_message text,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        CONSTRAINT reminder_notification_deliveries_status_check
-          CHECK (status IN ('sending', 'sent', 'failed', 'skipped')),
-        CONSTRAINT reminder_notification_deliveries_type_key_unique
-          UNIQUE (user_id, delivery_type, delivery_key)
-      );
-
-      CREATE INDEX IF NOT EXISTS reminder_notification_deliveries_lookup_idx
-        ON reminder_notification_deliveries (user_id, delivery_type, target_date, status);
-
-      INSERT INTO reminder_alerts (
-        reminder_id,
-        mode,
-        minutes_before,
-        notify_at,
-        channel,
-        status,
-        created_at,
-        updated_at
-      )
-      SELECT
-        r.id,
-        'relative',
-        0,
-        ((r.target_date::date + COALESCE(r.target_time::time, TIME '09:00')) AT TIME ZONE COALESCE(NULLIF(r.timezone, ''), 'Europe/Zurich')),
-        'telegram',
-        'pending',
-        now(),
-        now()
-      FROM reminders r
-      WHERE r.status = 'pending'
-        AND r.target_date IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1
-          FROM reminder_alerts a
-          WHERE a.reminder_id = r.id
-            AND a.mode = 'relative'
-            AND COALESCE(a.minutes_before, -1) = 0
-            AND a.status <> 'cancelled'
-        );
-    `);
+    ready = ensureMigrationBackedSchema(db, MIGRATION_FILES.reminderNotifications, [
+      "public.reminder_notification_deliveries",
+      "public.reminder_alerts",
+    ]);
     reminderNotificationSchemaReadyByDb.set(db, ready);
   }
   return ready;
@@ -3431,6 +4231,160 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ------------------------------------------------
+  // SHORTCUTS SETTINGS (web session)
+  // ------------------------------------------------
+
+  if (req.method === "GET" && url.pathname === "/shortcuts/status") {
+    try {
+      return sendJson(req, res, 200, {
+        ok: true,
+        ...(await getShortcutStatus(pool)),
+      });
+    } catch (error) {
+      console.error("[shortcuts:status]", error);
+      return sendJson(req, res, 500, { ok: false, error: "SHORTCUT_STATUS_FAILED" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/shortcuts/token") {
+    try {
+      return sendJson(req, res, 201, {
+        ok: true,
+        ...(await rotateShortcutToken(pool)),
+      });
+    } catch (error) {
+      console.error("[shortcuts:token]", error);
+      return sendJson(req, res, 500, { ok: false, error: "SHORTCUT_TOKEN_FAILED" });
+    }
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/shortcuts/token") {
+    try {
+      const result = await revokeShortcutTokens(pool);
+      return sendJson(req, res, 200, { ok: true, ...result, ...(await getShortcutStatus(pool)) });
+    } catch (error) {
+      console.error("[shortcuts:revoke]", error);
+      return sendJson(req, res, 500, { ok: false, error: "SHORTCUT_REVOKE_FAILED" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/reminders/today/push") {
+    try {
+      const body = await readJson(req);
+      const result = await sendTodayPendingPush({
+        timeZone: body?.timezone || req.headers["x-bookshell-timezone"] || DEFAULT_REMINDER_TIMEZONE,
+      });
+      return sendJson(
+        req,
+        res,
+        result.ok ? 200 : (result.statusCode || 500),
+        result
+      );
+    } catch (error) {
+      console.error("[reminders:today-push]", error);
+      return sendJson(req, res, error?.statusCode || 500, {
+        ok: false,
+        accepted: false,
+        error: error?.message || "TODAY_PENDING_PUSH_FAILED",
+      });
+    }
+  }
+
+  // ------------------------------------------------
+  // SHORTCUTS API (Bearer token)
+  // ------------------------------------------------
+
+  if (url.pathname.startsWith("/shortcuts/finance/") || url.pathname === "/shortcuts/reminders/today") {
+    let user = null;
+    try {
+      user = await authenticateShortcutRequest(req, pool);
+    } catch (error) {
+      console.error("[shortcuts:auth]", error);
+      return sendJson(req, res, 500, {
+        ok: false,
+        error: "SHORTCUT_AUTH_FAILED",
+      });
+    }
+    if (!user) {
+      return sendJson(req, res, 401, {
+        ok: false,
+        error: "INVALID_SHORTCUT_TOKEN",
+      });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/shortcuts/finance/options") {
+    try {
+      const options = await getShortcutFinanceOptions(url.searchParams.get("type") || "", pool);
+      if (!options) return sendJson(req, res, 404, { ok: false, error: "DATA_NOT_FOUND" });
+      return sendJson(req, res, 200, { ok: true, ...options });
+    } catch (error) {
+      console.error("[shortcuts:finance:options]", error);
+      return sendJson(req, res, 500, { ok: false, error: "FINANCE_OPTIONS_FAILED" });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/shortcuts/finance/accounts") {
+    try {
+      const options = await getShortcutFinanceOptions("", pool);
+      if (!options) return sendJson(req, res, 404, { ok: false, error: "DATA_NOT_FOUND" });
+      return sendJson(req, res, 200, { ok: true, accounts: options.accounts });
+    } catch (error) {
+      console.error("[shortcuts:finance:accounts]", error);
+      return sendJson(req, res, 500, { ok: false, error: "FINANCE_ACCOUNTS_FAILED" });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/shortcuts/finance/categories") {
+    try {
+      const options = await getShortcutFinanceOptions(url.searchParams.get("type") || "", pool);
+      if (!options) return sendJson(req, res, 404, { ok: false, error: "DATA_NOT_FOUND" });
+      return sendJson(req, res, 200, { ok: true, categories: options.categories });
+    } catch (error) {
+      console.error("[shortcuts:finance:categories]", error);
+      return sendJson(req, res, 500, { ok: false, error: "FINANCE_CATEGORIES_FAILED" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/shortcuts/finance/movements") {
+    try {
+      const body = await readJson(req);
+      const result = await createShortcutFinanceMovement(body || {}, {
+        idempotencyKey: req.headers["idempotency-key"] || body?.idempotencyKey || "",
+      });
+      return sendJson(req, res, result.statusCode || 201, result.body);
+    } catch (error) {
+      console.error("[shortcuts:finance:movements]", error?.message || error);
+      return sendJson(req, res, error?.statusCode || 500, {
+        ok: false,
+        error: error?.message || "FINANCE_MOVEMENT_FAILED",
+      });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/shortcuts/reminders/today") {
+    try {
+      const body = await readJson(req);
+      const result = await sendTodayPendingPush({
+        timeZone: body?.timezone || req.headers["x-bookshell-timezone"] || DEFAULT_REMINDER_TIMEZONE,
+      });
+      return sendJson(
+        req,
+        res,
+        result.ok ? 200 : (result.statusCode || 500),
+        result
+      );
+    } catch (error) {
+      console.error("[shortcuts:reminders:today]", error);
+      return sendJson(req, res, error?.statusCode || 500, {
+        ok: false,
+        accepted: false,
+        error: error?.message || "TODAY_PENDING_PUSH_FAILED",
+      });
+    }
+  }
+
+  // ------------------------------------------------
   // WEB PUSH DIAGNOSTICS
   // ------------------------------------------------
 
@@ -4608,10 +5562,11 @@ if (require.main === module) {
   void Promise.all([
     ensurePushSubscriptionsSchema(pool),
     ensureReminderNotificationSchema(pool),
+    ensureShortcutSchema(pool),
   ]).then(() => {
-    console.log("[push:schema] push subscriptions and reminder notifications ready");
+    console.log("[schema] push, reminders and shortcuts ready");
   }).catch((error) => {
-    console.warn("[push:schema] setup failed", String(error?.message || error));
+    console.warn("[schema] setup failed", String(error?.message || error));
   });
 
   server.listen(PORT, "0.0.0.0", () => {
@@ -4645,6 +5600,24 @@ module.exports = {
     buildDailySummaryPayload,
     resolveReminderTestPushPayload,
     sendReminderTestPush,
+    sendTodayPendingPush,
+    ensureShortcutSchema,
+    getShortcutStatus,
+    rotateShortcutToken,
+    revokeShortcutTokens,
+    authenticateShortcutRequest,
+    buildShortcutEndpointMap,
+    getShortcutFinanceOptions,
+    createShortcutFinanceMovement,
+    parseShortcutMovementInput,
+    buildShortcutMovementPayload,
+    buildShortcutAccountEntries,
+    buildShortcutFinanceSummary,
+    listShortcutTransactions,
+    listShortcutAccountsFromRoot,
+    listShortcutCategoriesFromRoot,
+    resolveShortcutAccount,
+    resolveShortcutCategory,
     claimDailySummaryDelivery,
     runDailySummaryPushCycle,
     runDueReminderAlertPushCycle,

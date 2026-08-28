@@ -2024,6 +2024,52 @@ input[type="search"] {
   font-size: 15px;
 }
 
+.app-settings-pushDiagnostics {
+  display: grid;
+  gap: 8px;
+}
+
+.app-settings-pushDiagnostics div {
+  display: grid;
+  gap: 3px;
+}
+
+.app-settings-pushDiagnostics dt {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.app-settings-pushDiagnostics dd {
+  margin: 0;
+  color: var(--app-text);
+  overflow-wrap: anywhere;
+}
+
+.app-settings-tokenReveal {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.app-settings-tokenReveal span {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.app-settings-tokenReveal textarea {
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface-strong);
+  color: var(--app-text);
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
 .app-metrics-alerts,
 .app-metrics-moduleList,
 .app-metrics-pathList {

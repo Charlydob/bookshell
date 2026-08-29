@@ -1,7 +1,7 @@
 import {
   getSnapshotRecord,
   putSnapshotRecord,
-} from "./offline-db.js?v=2026-04-05-v5";
+} from "./offline-db.js";
 import { registerCacheMetric } from "../data/read-debug.js";
 
 function buildSnapshotKey(moduleName, uid) {

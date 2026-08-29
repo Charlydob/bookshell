@@ -15,8 +15,8 @@ import {
   deleteReminder as deleteCanonicalReminder,
   listReminders as listCanonicalReminders,
   updateReminder as updateCanonicalReminder,
-} from "../../../shared/data/reminders-api.js?v=2026-08-25-v1";
-import { buildTagDefinitionKey } from "../domain/tag-utils.js?v=2026-04-28-v2";
+} from "../../../shared/data/reminders-api.js";
+import { buildTagDefinitionKey } from "../domain/tag-utils.js";
 import {
   mapFolderToDb,
   mapNoteToDb,
@@ -24,7 +24,7 @@ import {
   mapReminderFromDb,
   mapSnapshotToDomain,
   mapTagDefinitionToDb,
-} from "./notes-mapper.js?v=2026-08-26-v3";
+} from "./notes-mapper.js";
 
 const REMINDER_REFRESH_EVENT = "bookshell:notes-reminders-refresh";
 const REMINDER_POLL_VISIBLE_MS = 15 * 1000;

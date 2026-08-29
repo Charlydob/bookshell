@@ -3,7 +3,7 @@ import {
   getOperationFromDb,
   listOperationsFromDb,
   putOperationInDb,
-} from "./offline-db.js?v=2026-04-05-v5";
+} from "./offline-db.js";
 
 export const OFFLINE_OPERATION_STATUS = Object.freeze({
   PENDING: "pending",

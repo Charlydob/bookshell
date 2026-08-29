@@ -609,6 +609,23 @@ await test("POST /shortcuts/world/places acepta coma decimal localizada de Apple
   assert.equal(item.lon, 7.861456);
 });
 
+await test("POST /shortcuts/world/places acepta grados, signo unicode y puntos cardinales", async () => {
+  const { db, data } = makeDb();
+  await __test.createShortcutWorldPlace({
+    latitude: "46,686123° N",
+    longitude: "7.861456 E",
+    type: "saved",
+  }, { db, idempotencyKey: "world-cardinal-positive" });
+  await __test.createShortcutWorldPlace({
+    latitude: "−15,6492308 S",
+    longitude: "71.6015465 W",
+    type: "saved",
+  }, { db, idempotencyKey: "world-cardinal-negative" });
+  const saved = Object.values(worldRoot(data).saved);
+  assert.equal(saved.some((item) => item.lat === 46.686123 && item.lon === 7.861456), true);
+  assert.equal(saved.some((item) => item.lat === -15.6492308 && item.lon === -71.6015465), true);
+});
+
 await test("POST /shortcuts/world/places acepta limites exactos de latitud y longitud", async () => {
   const { db, data } = makeDb();
   await __test.createShortcutWorldPlace({

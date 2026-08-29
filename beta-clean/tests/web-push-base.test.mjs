@@ -130,7 +130,8 @@ await test("version visible queda expuesta en ajustes y HTML inicial", () => {
   const inlineBootSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(mainSource, /Acerca de/);
   assert.match(mainSource, /getBookshellVersionSummary/);
-  assert.match(inlineBootSource, /2026-08-28-reminder-delete-push-update-v1/);
+  assert.match(inlineBootSource, /__BOOKSHELL_RELEASE__/);
+  assert.match(inlineBootSource, /main\.js\?v=/);
 });
 
 await test("actualizacion de service worker conserva push y notificationclick", () => {

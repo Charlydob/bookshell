@@ -17,10 +17,10 @@ import { computeTimeByHabitDataset, debugComputeTimeByHabit, resolveFirstRecordT
 import { buildCsv, downloadZip, sanitizeFileToken, triggerDownload } from "./export-utils.js";
 import { computeDayCreditsAndScores } from "./schedule-credits.js";
 import { ensureEcharts } from "../../shared/vendors/echarts.js";
-import { canWriteDirectly } from "../../shared/services/sync-manager.js?v=2026-04-05-v5";
-import { applyQueuedWritesToPath } from "../../shared/storage/offline-queue.js?v=2026-04-05-v5";
-import { readModuleSnapshot, writeModuleSnapshot } from "../../shared/storage/offline-snapshots.js?v=2026-04-05-v5";
-import { createOfflinePushId, writeBackendWithOfflineQueue } from "../../shared/data/offline-backend.js?v=2026-04-05-v5";
+import { canWriteDirectly } from "../../shared/services/sync-manager.js";
+import { applyQueuedWritesToPath } from "../../shared/storage/offline-queue.js";
+import { readModuleSnapshot, writeModuleSnapshot } from "../../shared/storage/offline-snapshots.js";
+import { createOfflinePushId, writeBackendWithOfflineQueue } from "../../shared/data/offline-backend.js";
 
 let currentUid = auth.currentUser?.uid ?? null;
 let BASE = null;

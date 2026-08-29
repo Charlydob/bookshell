@@ -380,12 +380,14 @@ Body:
 
 `latitude` and `longitude` may be sent as JSON numbers or as strings. Strings
 may use either dot or comma as the decimal separator, for example
-`"46.686123"` or `"46,686123"`. The backend normalizes coordinates to numbers
-before validation.
+`"46.686123"` or `"46,686123"`. The parser also accepts common mobile/location
+formats with degree symbols, Unicode minus, and cardinal suffixes/prefixes such
+as `"46,686123° N"` or `"71.6015465 W"`. The backend normalizes coordinates to
+numbers before validation.
 
 Allowed `type` values:
 
-- `saved`: quick save into `world/saved`, visible in Mundo under `Guardados`
+- `saved`: quick save into `world/saved`, visible in Mundo under `Guardados rápidos`
 - `place`: canonical geographical place in `world/geography`
 - `local`: canonical local/establishment in `world/places`
 

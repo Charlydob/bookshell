@@ -1,6 +1,9 @@
-const APP_VERSION = "2026-08-29-data-export-latlon-v1";
-const PUBLISHED_COMMIT = "data-export-latlon-v1";
-const CACHE_PREFIX = "bookshell-";
+importScripts("./scripts/shared/config/release.js");
+
+const BOOKSHELL_RELEASE = self.__BOOKSHELL_RELEASE__ || {};
+const APP_VERSION = String(BOOKSHELL_RELEASE.version || "dev");
+const PUBLISHED_COMMIT = String(BOOKSHELL_RELEASE.build || APP_VERSION);
+const CACHE_PREFIX = String(BOOKSHELL_RELEASE.cachePrefix || "bookshell-");
 const STATIC_CACHE = `bookshell-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 const ACTIVE_CACHE_NAMES = Object.freeze([STATIC_CACHE, RUNTIME_CACHE]);
@@ -8,6 +11,7 @@ const ACTIVE_CACHE_NAMES = Object.freeze([STATIC_CACHE, RUNTIME_CACHE]);
 const LOCAL_PRECACHE_ASSETS = [
   "./",
   "./index.html",
+  "./scripts/shared/config/release.js",
   "./manifest.webmanifest",
   "./assets/geo/world.json",
   "./styles/core/themes.css",
@@ -136,7 +140,7 @@ async function putInCache(cacheName, request, response) {
 async function matchAnyCache(request) {
   const runtimeCache = await caches.open(RUNTIME_CACHE);
   const staticCache = await caches.open(STATIC_CACHE);
-  const [staticMatch, runtimeMatch] = await Promise.all([
+  const [runtimeMatch, staticMatch] = await Promise.all([
     runtimeCache.match(request),
     staticCache.match(request),
   ]);
@@ -244,6 +248,7 @@ async function notifyClients(message = {}) {
       source: "bookshell-service-worker",
       version: APP_VERSION,
       commit: PUBLISHED_COMMIT,
+      release: BOOKSHELL_RELEASE,
       activeCaches: ACTIVE_CACHE_NAMES,
       ...message,
     });
@@ -252,7 +257,10 @@ async function notifyClients(message = {}) {
 
 self.addEventListener("install", (event) => {
   console.info("[offline:boot]", { phase: "sw-install", version: APP_VERSION, commit: PUBLISHED_COMMIT });
-  event.waitUntil(Promise.resolve());
+  event.waitUntil((async () => {
+    await precacheLocalAssets();
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (event) => {
@@ -279,13 +287,16 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("message", (event) => {
   const type = String(event?.data?.type || "");
   if (type === "BOOKSHELL_GET_VERSION") {
-    event.source?.postMessage?.({
+    const payload = {
       source: "bookshell-service-worker",
       type: "version",
       version: APP_VERSION,
       commit: PUBLISHED_COMMIT,
+      release: BOOKSHELL_RELEASE,
       activeCaches: ACTIVE_CACHE_NAMES,
-    });
+    };
+    if (event.ports?.[0]) event.ports[0].postMessage(payload);
+    else event.source?.postMessage?.(payload);
     return;
   }
   if (type === "BOOKSHELL_PURGE_CACHES") {

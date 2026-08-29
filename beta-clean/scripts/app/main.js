@@ -20,11 +20,10 @@ import {
   initSyncManager,
   notifySyncUserChanged,
   subscribeSyncState,
-} from "../shared/services/sync-manager.js?v=2026-04-05-v5";
+} from "../shared/services/sync-manager.js";
 import { applyTheme, getAvailableThemes, getCurrentTheme, initThemeService } from "../shared/services/theme/index.js";
 import { registerPublicCatalogMigrationDebugApi } from "../shared/services/public-catalog-migration.js";
 import { cleanupViewListeners, clearFirebaseMetrics, exposeFirebaseReadDebug, getFirebaseMetricsSnapshot, logFirebaseRead, registerViewListener } from "../shared/data/read-debug.js";
-import { disablePush, downloadBookshellExport, enablePush, generateShortcutToken, getPushState, getShortcutStatus, revokeShortcutToken, sendTestPush, sendTodayPendingPush } from "../shared/push/web-push.js?v=2026-08-29-data-export-latlon-v1";
 
 const LAST_VIEW_KEY = "bookshell:lastView";
 const NAV_LAYOUT_KEY = "bookshell:navLayout:v1";
@@ -89,18 +88,24 @@ const RECOMMENDED_NAV_GROUPS = Object.freeze({
   },
 });
 const APP_PERF_STORE_KEY = "__bookshellPerfMetrics";
-const HABITS_MODULE_VERSION = "2026-04-05-v7";
-const NOTES_MODULE_VERSION = "2026-08-28-reminder-delete-push-update-v1";
-const APP_PUBLISHED_COMMIT = "data-export-latlon-v1";
-const SERVICE_WORKER_VERSION = "2026-08-29-data-export-latlon-v1";
-const FINANCE_MODULE_VERSION = "2026-08-23-api-data-provider-no-rtdb";
-const BOOKSHELL_CACHE_PREFIX = "bookshell-";
+const BOOKSHELL_RELEASE = Object.freeze({
+  version: "dev",
+  build: "dev",
+  releasedAt: "",
+  cachePrefix: "bookshell-",
+  ...(globalThis.__BOOKSHELL_RELEASE__ && typeof globalThis.__BOOKSHELL_RELEASE__ === "object" ? globalThis.__BOOKSHELL_RELEASE__ : {}),
+});
+const APP_PUBLISHED_COMMIT = String(BOOKSHELL_RELEASE.build || BOOKSHELL_RELEASE.version || "dev");
+const SERVICE_WORKER_VERSION = String(BOOKSHELL_RELEASE.version || APP_PUBLISHED_COMMIT);
+const BOOKSHELL_RELEASED_AT = String(BOOKSHELL_RELEASE.releasedAt || "");
+const BOOKSHELL_CACHE_PREFIX = String(BOOKSHELL_RELEASE.cachePrefix || "bookshell-");
 const BOOKSHELL_EXPECTED_CACHE_NAMES = Object.freeze([
   `bookshell-static-${SERVICE_WORKER_VERSION}`,
   `bookshell-runtime-${SERVICE_WORKER_VERSION}`,
 ]);
 const BOOKSHELL_CACHE_PURGE_MARKER_KEY = "bookshell:cache-purge-version";
 const SW_UPDATE_RELOAD_KEY = "bookshell:sw-update-reload-in-flight";
+const SW_UPDATE_CHECK_MIN_INTERVAL_MS = 90 * 1000;
 const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "books", label: "Leer", viewId: "view-books" },
   { key: "notes", label: "Nota", viewId: "view-notes" },
@@ -109,6 +114,10 @@ const GLOBAL_QUICK_FAB_ACTIONS = Object.freeze([
   { key: "finance", label: "Gasto", viewId: "view-finance" },
 ]);
 let pendingServiceWorkerUpdate = null;
+let applyingServiceWorkerUpdate = false;
+let serviceWorkerRegistrationPromise = null;
+let lastServiceWorkerUpdateCheckAt = 0;
+let webPushApiPromise = null;
 
 registerPublicCatalogMigrationDebugApi();
 const __originalConsole = { ...console };
@@ -118,6 +127,8 @@ window.__bookshellVersion = {
   appVersion: SERVICE_WORKER_VERSION,
   serviceWorkerVersion: SERVICE_WORKER_VERSION,
   commit: APP_PUBLISHED_COMMIT,
+  release: BOOKSHELL_RELEASE,
+  releasedAt: BOOKSHELL_RELEASED_AT,
   cachePrefix: BOOKSHELL_CACHE_PREFIX,
   expectedCaches: BOOKSHELL_EXPECTED_CACHE_NAMES.slice(),
 };
@@ -221,6 +232,54 @@ function setStoredValue(storage, key, value) {
   } catch (_) {}
 }
 
+function resolveVersionedAppUrl(resourceUrl) {
+  const url = new URL(resourceUrl, import.meta.url);
+  if (url.origin === window.location.origin) {
+    url.searchParams.set("v", SERVICE_WORKER_VERSION);
+  }
+  return url;
+}
+
+function markServiceWorkerReloadPending(reason = "update") {
+  try {
+    window.sessionStorage?.setItem?.(SW_UPDATE_RELOAD_KEY, JSON.stringify({
+      at: Date.now(),
+      reason,
+      currentFrontendVersion: SERVICE_WORKER_VERSION,
+    }));
+  } catch (_) {}
+}
+
+function consumeServiceWorkerReloadPending() {
+  try {
+    const raw = window.sessionStorage?.getItem?.(SW_UPDATE_RELOAD_KEY) || "";
+    if (!raw) return false;
+    window.sessionStorage?.removeItem?.(SW_UPDATE_RELOAD_KEY);
+    const parsed = JSON.parse(raw);
+    return Date.now() - Number(parsed?.at || 0) < 30 * 1000;
+  } catch (_) {
+    try { window.sessionStorage?.removeItem?.(SW_UPDATE_RELOAD_KEY); } catch (_) {}
+    return true;
+  }
+}
+
+function clearServiceWorkerReloadPending() {
+  try { window.sessionStorage?.removeItem?.(SW_UPDATE_RELOAD_KEY); } catch (_) {}
+}
+
+function getWebPushApi() {
+  if (!webPushApiPromise) {
+    webPushApiPromise = importDynamicModule("../shared/push/web-push.js", {
+      viewId: "app-web-push",
+      phase: "app:web-push-import",
+    }).catch((error) => {
+      webPushApiPromise = null;
+      throw error;
+    });
+  }
+  return webPushApiPromise;
+}
+
 function isOldBookshellServiceWorker(registration) {
   const worker = registration?.active || registration?.waiting || registration?.installing || null;
   const scriptUrl = String(worker?.scriptURL || "");
@@ -291,8 +350,7 @@ if ("serviceWorker" in navigator) {
       commit: APP_PUBLISHED_COMMIT,
       controlled: !!navigator.serviceWorker.controller,
     });
-    if (window.sessionStorage?.getItem?.(SW_UPDATE_RELOAD_KEY) !== SERVICE_WORKER_VERSION) return;
-    window.sessionStorage.removeItem(SW_UPDATE_RELOAD_KEY);
+    if (!consumeServiceWorkerReloadPending()) return;
     window.location.reload();
   });
 }
@@ -884,9 +942,11 @@ async function renderSettingsModal() {
   } catch (_) {}
 
   let pushState = { supported: false, permission: "unsupported", registered: false, configured: false };
-  try { pushState = await getPushState(); } catch (error) { console.warn("[push:status]", error); }
+  let pushApi = null;
+  try { pushApi = await getWebPushApi(); } catch (error) { console.warn("[push:module]", error); }
+  try { pushState = pushApi ? await pushApi.getPushState() : pushState; } catch (error) { console.warn("[push:status]", error); }
   let shortcutState = { enabled: false, token: null, endpoints: {} };
-  try { shortcutState = await getShortcutStatus(); } catch (error) { console.warn("[shortcuts:status]", error); }
+  try { shortcutState = pushApi ? await pushApi.getShortcutStatus() : shortcutState; } catch (error) { console.warn("[shortcuts:status]", error); }
   const pushDiagnostics = pushState.diagnostics || {
     currentUrl: window.location.href,
     displayModeStandalone: Boolean(window.matchMedia?.("(display-mode: standalone)")?.matches),
@@ -902,7 +962,7 @@ async function renderSettingsModal() {
   const standaloneValue = pushDiagnostics.navigatorStandalone === undefined
     ? "undefined"
     : String(pushDiagnostics.navigatorStandalone);
-  const versionSummary = getBookshellVersionSummary();
+  const versionSummary = await getBookshellVersionSummaryAsync();
   const shortcutEndpoints = shortcutState.endpoints || {};
   const shortcutTokenLabel = shortcutState.enabled && shortcutState.token
     ? `${shortcutState.token.prefix || "bsh_"}...${shortcutState.token.lastFour || ""}`
@@ -924,6 +984,7 @@ async function renderSettingsModal() {
         <div class="app-settings-kpi"><small>Bookshell</small><strong>${escapeHtml(versionSummary.appVersion)}</strong></div>
         <div class="app-settings-kpi"><small>Service worker</small><strong>${escapeHtml(versionSummary.serviceWorkerVersion)}</strong></div>
         <div class="app-settings-kpi"><small>Build</small><strong>${escapeHtml(versionSummary.commit)}</strong></div>
+        <div class="app-settings-kpi"><small>Release</small><strong>${escapeHtml(versionSummary.releasedAt || "sin fecha")}</strong></div>
       </div>
     </section>
     <section class="app-settings-section">
@@ -1060,8 +1121,10 @@ function ensureSettingsModal() {
       pushAction.disabled = true;
       const feedback = backdrop.querySelector("[data-push-feedback]");
       if (feedback) feedback.textContent = "Procesando…";
-      const operation = pushAction.matches("[data-push-enable]") ? enablePush()
-        : pushAction.matches("[data-push-disable]") ? disablePush() : sendTestPush();
+      const operation = getWebPushApi().then((api) => (
+        pushAction.matches("[data-push-enable]") ? api.enablePush()
+          : pushAction.matches("[data-push-disable]") ? api.disablePush() : api.sendTestPush()
+      ));
       operation.then(() => renderSettingsModal()).catch((error) => {
         console.error("[push:action]", error);
         if (feedback) feedback.textContent = `Error: ${error.message}`;
@@ -1074,7 +1137,7 @@ function ensureSettingsModal() {
       todayPushAction.disabled = true;
       const feedback = backdrop.querySelector("[data-reminders-today-feedback]");
       if (feedback) feedback.textContent = "Enviando pendiente de hoy...";
-      sendTodayPendingPush().then((result) => {
+      getWebPushApi().then((api) => api.sendTodayPendingPush()).then((result) => {
         if (result?.count > 0 && result?.accepted) {
           if (feedback) feedback.textContent = `Enviado: ${result.count} recordatorios.`;
         } else if (result?.count === 0 || result?.skipped) {
@@ -1095,7 +1158,7 @@ function ensureSettingsModal() {
       exportAction.disabled = true;
       const feedback = backdrop.querySelector("[data-export-feedback]");
       if (feedback) feedback.textContent = "Preparando exportacion...";
-      downloadBookshellExport().then((result) => {
+      getWebPushApi().then((api) => api.downloadBookshellExport()).then((result) => {
         if (feedback) feedback.textContent = `Exportacion descargada: ${result.filename}`;
       }).catch((error) => {
         console.error("[export]", error);
@@ -1110,7 +1173,7 @@ function ensureSettingsModal() {
       shortcutGenerateAction.disabled = true;
       const feedback = backdrop.querySelector("[data-shortcuts-feedback]");
       if (feedback) feedback.textContent = "Generando token...";
-      generateShortcutToken().then((result) => {
+      getWebPushApi().then((api) => api.generateShortcutToken()).then((result) => {
         settingsShortcutTokenValue = String(result?.tokenValue || "");
         void renderSettingsModal();
       }).catch((error) => {
@@ -1125,7 +1188,7 @@ function ensureSettingsModal() {
       shortcutRevokeAction.disabled = true;
       const feedback = backdrop.querySelector("[data-shortcuts-feedback]");
       if (feedback) feedback.textContent = "Revocando token...";
-      revokeShortcutToken().then(() => {
+      getWebPushApi().then((api) => api.revokeShortcutToken()).then(() => {
         settingsShortcutTokenValue = "";
         void renderSettingsModal();
       }).catch((error) => {
@@ -1660,7 +1723,10 @@ function scheduleLikelyVendorWarmup(viewId) {
 
   scheduleIdleTask(async () => {
     state.echartsWarmScheduled = false;
-    const { warmEcharts } = await import("../shared/vendors/echarts.js");
+    const { warmEcharts } = await importDynamicModule("../shared/vendors/echarts.js", {
+      viewId: "app-echarts-warmup",
+      phase: "app:echarts-warmup-import",
+    });
     warmEcharts({ idle: false });
   }, { delayMs: 1200, timeout: 5000 });
 }
@@ -1671,7 +1737,37 @@ function getBookshellVersionSummary() {
     appVersion: String(versionState.appVersion || SERVICE_WORKER_VERSION),
     serviceWorkerVersion: String(versionState.lastServiceWorkerMessage?.version || versionState.serviceWorkerVersion || SERVICE_WORKER_VERSION),
     commit: String(versionState.commit || APP_PUBLISHED_COMMIT),
+    releasedAt: String(versionState.release?.releasedAt || versionState.releasedAt || BOOKSHELL_RELEASED_AT),
   };
+}
+
+function requestServiceWorkerVersion({ timeoutMs = 900 } = {}) {
+  if (!navigator.serviceWorker?.controller || typeof MessageChannel !== "function") {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    const timer = window.setTimeout(() => resolve(null), timeoutMs);
+    channel.port1.onmessage = (event) => {
+      window.clearTimeout(timer);
+      const payload = event?.data || null;
+      if (payload?.source === "bookshell-service-worker") {
+        window.__bookshellVersion.lastServiceWorkerMessage = payload;
+      }
+      resolve(payload);
+    };
+    try {
+      navigator.serviceWorker.controller.postMessage({ type: "BOOKSHELL_GET_VERSION" }, [channel.port2]);
+    } catch (_) {
+      window.clearTimeout(timer);
+      resolve(null);
+    }
+  });
+}
+
+async function getBookshellVersionSummaryAsync() {
+  await requestServiceWorkerVersion();
+  return getBookshellVersionSummary();
 }
 
 function hideServiceWorkerUpdatePrompt() {
@@ -1701,25 +1797,91 @@ function showServiceWorkerUpdatePrompt(registration) {
   prompt.classList.remove("hidden");
 }
 
-async function applyServiceWorkerUpdate() {
-  const registration = pendingServiceWorkerUpdate || await navigator.serviceWorker?.getRegistration?.("./");
-  const waiting = registration?.waiting;
-  window.sessionStorage?.setItem?.(SW_UPDATE_RELOAD_KEY, SERVICE_WORKER_VERSION);
-  hideServiceWorkerUpdatePrompt();
-  if (waiting) {
-    waiting.postMessage({ type: "BOOKSHELL_SKIP_WAITING" });
-    window.setTimeout(() => {
-      if (window.sessionStorage?.getItem?.(SW_UPDATE_RELOAD_KEY) === SERVICE_WORKER_VERSION) {
-        window.location.reload();
-      }
-    }, 4000);
-    return;
+async function applyServiceWorkerUpdate({ registration = null, reason = "manual" } = {}) {
+  if (applyingServiceWorkerUpdate) return;
+  applyingServiceWorkerUpdate = true;
+  try {
+    const targetRegistration = registration || pendingServiceWorkerUpdate || await navigator.serviceWorker?.getRegistration?.("./");
+    let waiting = targetRegistration?.waiting;
+    pendingServiceWorkerUpdate = targetRegistration || pendingServiceWorkerUpdate;
+    window.__bookshellVersion.lastUpdateApplyReason = reason;
+    window.__bookshellVersion.lastUpdateApplyAt = new Date().toISOString();
+    hideServiceWorkerUpdatePrompt();
+    const scheduleFallbackReload = () => window.setTimeout(() => {
+      if (!consumeServiceWorkerReloadPending()) return;
+      window.location.reload();
+    }, 4500);
+    if (waiting) {
+      markServiceWorkerReloadPending(reason);
+      scheduleFallbackReload();
+      waiting.postMessage({ type: "BOOKSHELL_SKIP_WAITING", reason });
+      return;
+    }
+    await targetRegistration?.update?.();
+    waiting = targetRegistration?.waiting;
+    if (waiting) {
+      markServiceWorkerReloadPending(reason);
+      scheduleFallbackReload();
+      waiting.postMessage({ type: "BOOKSHELL_SKIP_WAITING", reason });
+      return;
+    }
+    clearServiceWorkerReloadPending();
+    applyingServiceWorkerUpdate = false;
+  } catch (error) {
+    clearServiceWorkerReloadPending();
+    applyingServiceWorkerUpdate = false;
+    throw error;
   }
-  await registration?.update?.();
-  window.location.reload();
+}
+
+async function checkForServiceWorkerUpdate(reason = "resume", { force = false } = {}) {
+  if (!("serviceWorker" in navigator)) return null;
+  const now = Date.now();
+  if (!force && now - lastServiceWorkerUpdateCheckAt < SW_UPDATE_CHECK_MIN_INTERVAL_MS) return null;
+  lastServiceWorkerUpdateCheckAt = now;
+  try {
+    const registration = await (serviceWorkerRegistrationPromise || navigator.serviceWorker.getRegistration("./"));
+    if (!registration?.update) return registration || null;
+    console.info("[sw:update-request]", {
+      reason,
+      version: SERVICE_WORKER_VERSION,
+      commit: APP_PUBLISHED_COMMIT,
+      controlled: !!navigator.serviceWorker.controller,
+    });
+    await registration.update();
+    await requestServiceWorkerVersion({ timeoutMs: 600 });
+    if (registration.waiting && navigator.serviceWorker.controller) {
+      pendingServiceWorkerUpdate = registration;
+      await applyServiceWorkerUpdate({ registration, reason });
+    }
+    return registration;
+  } catch (error) {
+    console.warn("[sw:update-request:error]", { reason, error });
+    return null;
+  }
+}
+
+function bindServiceWorkerResumeUpdateChecks() {
+  if (!("serviceWorker" in navigator)) return;
+  const request = (reason, options = {}) => {
+    void checkForServiceWorkerUpdate(reason, options);
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") request("visibilitychange");
+  });
+  window.addEventListener("pageshow", (event) => {
+    request(event.persisted ? "pageshow-bfcache" : "pageshow");
+  });
+  window.addEventListener("focus", () => request("focus"));
 }
 
 async function registerAppServiceWorker() {
+  if (serviceWorkerRegistrationPromise) return serviceWorkerRegistrationPromise;
+  serviceWorkerRegistrationPromise = registerAppServiceWorkerOnce();
+  return serviceWorkerRegistrationPromise;
+}
+
+async function registerAppServiceWorkerOnce() {
   if (!("serviceWorker" in navigator)) return null;
   const isLocalhost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
   if (isLocalhost) {
@@ -1763,11 +1925,13 @@ async function registerAppServiceWorker() {
       const installing = registration.installing;
       installing?.addEventListener?.("statechange", () => {
         if (installing.state === "installed" && navigator.serviceWorker.controller) {
-          showServiceWorkerUpdatePrompt(registration);
+          pendingServiceWorkerUpdate = registration;
+          void applyServiceWorkerUpdate({ registration, reason: "updatefound-installed" });
           window.dispatchEvent(new CustomEvent("bookshell:sw-update-available"));
         }
       });
     });
+    lastServiceWorkerUpdateCheckAt = Date.now();
     await registration.update();
     console.info("[offline:boot]", {
       phase: "sw-update-requested",
@@ -1776,17 +1940,19 @@ async function registerAppServiceWorker() {
       commit: APP_PUBLISHED_COMMIT,
     });
     if (registration.waiting && navigator.serviceWorker.controller) {
-      showServiceWorkerUpdatePrompt(registration);
+      await applyServiceWorkerUpdate({ registration, reason: "register-waiting" });
     }
+    await requestServiceWorkerVersion({ timeoutMs: 600 });
     return registration;
   } catch (error) {
     console.warn("[shell] no se pudo registrar el service worker", error);
+    serviceWorkerRegistrationPromise = null;
     return null;
   }
 }
 
 async function importDynamicModule(moduleUrl, context = {}) {
-  const resolvedUrl = new URL(moduleUrl, import.meta.url).href;
+  const resolvedUrl = resolveVersionedAppUrl(moduleUrl).href;
   const phase = String(context.phase || `dynamic-import:${context.viewId || "unknown"}`);
   const logPrefix = context.viewId === "view-finance" ? "[finance boot]" : "[dynamic import]";
   window.__BOOKSHELL_LAST_DYNAMIC_IMPORT__ = resolvedUrl;
@@ -1821,10 +1987,10 @@ const viewModules = {
     moduleLoader: () => importDynamicModule("../modules/books/index.js", { viewId: "view-books", phase: "view:view-books:module-import" }),
   },
   "view-notes": {
-    cssUrl: `../../styles/modules/notes.css?v=${NOTES_MODULE_VERSION}`,
-    htmlUrl: `../../views/notes.html?v=${NOTES_MODULE_VERSION}`,
-    moduleUrl: `../modules/notes/index.js?v=${NOTES_MODULE_VERSION}`,
-    moduleLoader: () => importDynamicModule(`../modules/notes/index.js?v=${NOTES_MODULE_VERSION}`, { viewId: "view-notes", phase: "view:view-notes:module-import" }),
+    cssUrl: "../../styles/modules/notes.css",
+    htmlUrl: "../../views/notes.html",
+    moduleUrl: "../modules/notes/index.js",
+    moduleLoader: () => importDynamicModule("../modules/notes/index.js", { viewId: "view-notes", phase: "view:view-notes:module-import" }),
   },
   "view-world": {
     cssUrl: "../../styles/modules/world.css",
@@ -1839,16 +2005,16 @@ const viewModules = {
     moduleLoader: () => importDynamicModule("../modules/recipes/index.js", { viewId: "view-recipes", phase: "view:view-recipes:module-import" }),
   },
   "view-habits": {
-    cssUrl: `../../styles/modules/habits.css?v=${HABITS_MODULE_VERSION}`,
-    htmlUrl: `../../views/habits.html?v=${HABITS_MODULE_VERSION}`,
-    moduleUrl: `../modules/habits/index.js?v=${HABITS_MODULE_VERSION}`,
-    moduleLoader: () => importDynamicModule(`../modules/habits/index.js?v=${HABITS_MODULE_VERSION}`, { viewId: "view-habits", phase: "view:view-habits:module-import" }),
+    cssUrl: "../../styles/modules/habits.css",
+    htmlUrl: "../../views/habits.html",
+    moduleUrl: "../modules/habits/index.js",
+    moduleLoader: () => importDynamicModule("../modules/habits/index.js", { viewId: "view-habits", phase: "view:view-habits:module-import" }),
   },
   "view-finance": {
     cssUrl: "../../styles/modules/finance.css",
     htmlUrl: "../../views/finance.html",
-    moduleUrl: `../modules/finance/index.js?v=${FINANCE_MODULE_VERSION}`,
-    moduleLoader: () => importDynamicModule(`../modules/finance/index.js?v=${FINANCE_MODULE_VERSION}`, { viewId: "view-finance", phase: "view:view-finance:module-import" }),
+    moduleUrl: "../modules/finance/index.js",
+    moduleLoader: () => importDynamicModule("../modules/finance/index.js", { viewId: "view-finance", phase: "view:view-finance:module-import" }),
   },
   "view-gym": {
     cssUrl: "../../styles/modules/gym.css",
@@ -1941,8 +2107,11 @@ function ensureSessionQuickstartReady() {
 }
 
 async function fetchHtml(htmlUrl, { highPriority = false } = {}) {
-  const absoluteUrl = new URL(htmlUrl, import.meta.url);
-  const response = await fetch(absoluteUrl, highPriority ? { priority: "high" } : undefined);
+  const absoluteUrl = resolveVersionedAppUrl(htmlUrl);
+  const response = await fetch(absoluteUrl, {
+    cache: "no-store",
+    ...(highPriority ? { priority: "high" } : {}),
+  });
   if (!response.ok) {
     throw new Error(`[shell] no se pudo cargar ${absoluteUrl.pathname}`);
   }
@@ -1951,7 +2120,7 @@ async function fetchHtml(htmlUrl, { highPriority = false } = {}) {
 }
 
 function loadStyleOnce(href, { highPriority = false } = {}) {
-  const absoluteUrl = new URL(href, import.meta.url).href;
+  const absoluteUrl = resolveVersionedAppUrl(href).href;
   if (loadedStyles.has(absoluteUrl)) {
     return loadedStyles.get(absoluteUrl);
   }
@@ -4311,6 +4480,7 @@ exposeShellApis();
 bindAuthGate();
 bindViewportHeightVar();
 bindNetworkDebug();
+bindServiceWorkerResumeUpdateChecks();
 logPwaEvent("cold-start", {
   visibility: document.visibilityState,
 });

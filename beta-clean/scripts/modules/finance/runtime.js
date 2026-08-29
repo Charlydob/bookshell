@@ -63,7 +63,7 @@ import {
   syncProductDeleteToGoogleSheets,
   syncProductSummaryUpsertToGoogleSheets,
   syncProductUpsertToGoogleSheets,
-} from './infrastructure/googleSheetsSync.js?v=2026-06-25-ticket-atomic-sync';
+} from './infrastructure/googleSheetsSync.js';
 
 let unsubscribeLegacyFinance = null;
 let financeRootsCache = { newRoot: {}, legacyRoot: {} };

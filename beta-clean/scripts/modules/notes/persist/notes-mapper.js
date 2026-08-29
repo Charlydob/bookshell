@@ -1,4 +1,4 @@
-import { buildTagDefinitionKey, normalizeTagLabel } from "../domain/tag-utils.js?v=2026-04-28-v2";
+import { buildTagDefinitionKey, normalizeTagLabel } from "../domain/tag-utils.js";
 
 const DEFAULT_REMINDER_COLOR = "#63d6ff";
 

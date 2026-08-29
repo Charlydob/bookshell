@@ -568,8 +568,10 @@ function getSavedLocationLine(row = {}){
 }
 function renderSaved(){
   const mount = $id("world-saved-list");
+  const count = $id("world-saved-count");
   if (!mount) return;
   const rows = [...(state.saved || [])].sort((a, b) => Number(b.capturedAtMs || b.createdAt || 0) - Number(a.capturedAtMs || a.createdAt || 0));
+  if (count) count.textContent = String(rows.length);
   mount.innerHTML = rows.map((row) => {
     const title = row.name || row.locality || row.city || "Guardado";
     const date = formatSavedCapturedAt(row);

@@ -22,7 +22,7 @@ import {
   getFolderPath,
   isFolderParentAllowed,
   sortNotes,
-} from "./domain/store.js?v=2026-05-13-v1";
+} from "./domain/store.js";
 import {
   createFolder,
   createNote,
@@ -41,8 +41,8 @@ import {
   updateFolder,
   updateNote,
   updateReminder,
-} from "./persist/notes-datasource.js?v=2026-08-28-reminder-delete-push-update-v1";
-import { sendReminderTestPush } from "../../shared/push/web-push.js?v=2026-08-28-reminder-delete-push-update-v1";
+} from "./persist/notes-datasource.js";
+import { sendReminderTestPush } from "../../shared/push/web-push.js";
 import {
   buildReminderOccurrenceKey,
   createGenerationGate,
@@ -51,7 +51,7 @@ import {
   isTerminalReminderAlert,
   isTerminalReminderStatus,
   normalizeReminderRuntimeStatus,
-} from "./reminders-runtime-guards.js?v=2026-08-26-v3";
+} from "./reminders-runtime-guards.js";
 import {
   deleteNoteAttachmentImageAsset,
   deleteNoteImageAsset,
@@ -60,12 +60,12 @@ import {
   uploadNoteAttachmentImageAsset,
   uploadNoteImageAsset,
   uploadNoteTagImageAsset,
-} from "./persist/notes-storage.js?v=2026-05-15-v1";
+} from "./persist/notes-storage.js";
 import {
   buildTagDefinitionKey,
   normalizeTagLabel,
   parseTagList,
-} from "./domain/tag-utils.js?v=2026-04-28-v2";
+} from "./domain/tag-utils.js";
 
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat("es-ES", {
   day: "numeric",

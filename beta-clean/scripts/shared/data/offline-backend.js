@@ -7,11 +7,11 @@ import {
   update,
 } from "../data/index.js";
 import { auth } from "../auth/index.js";
-import { enqueueOfflineOperation } from "../storage/offline-queue.js?v=2026-04-05-v5";
+import { enqueueOfflineOperation } from "../storage/offline-queue.js";
 import {
   canWriteDirectly,
   notifyOfflineQueueChanged,
-} from "../services/sync-manager.js?v=2026-04-05-v5";
+} from "../services/sync-manager.js";
 
 function sanitizePath(path) {
   return String(path || "")

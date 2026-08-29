@@ -1,5 +1,4 @@
 let runtimeModule = null;
-const HABITS_RUNTIME_VERSION = "2026-04-05-v7";
 
 function logHabitsModule(phase, extra = {}, level = "info") {
   const payload = {
@@ -20,19 +19,19 @@ export async function init() {
     return;
   }
   logHabitsModule("runtime:import:start", {
-    runtimeVersion: HABITS_RUNTIME_VERSION,
+    runtimeUrl: "./runtime.js",
   });
   try {
-    runtimeModule = await import(`./runtime.js?v=${HABITS_RUNTIME_VERSION}`);
+    runtimeModule = await import("./runtime.js");
     logHabitsModule("runtime:import:ready", {
-      runtimeVersion: HABITS_RUNTIME_VERSION,
+      runtimeUrl: "./runtime.js",
       exports: Object.keys(runtimeModule || {}),
     });
   } catch (error) {
     console.error("[habits:init:error]", error);
     console.error("[view:error]", { viewId: "view-habits", error });
     logHabitsModule("runtime:import:error", {
-      runtimeVersion: HABITS_RUNTIME_VERSION,
+      runtimeUrl: "./runtime.js",
       message: error?.message || String(error || ""),
       stack: error?.stack || "",
     }, "error");

@@ -1635,9 +1635,22 @@ function parseShortcutCoordinate(value, { min, max, errorCode }) {
   if (typeof value === "number") {
     coordinate = value;
   } else if (typeof value === "string") {
-    const safe = value.trim();
+    let safe = value
+      .normalize("NFKC")
+      .replace(/[\u2212\u2012\u2013\u2014]/g, "-")
+      .trim();
+    const directionMatch = safe.match(/^\s*([NSEW])\s*(.+)$/i) || safe.match(/^(.+?)\s*([NSEW])\s*$/i);
+    const direction = directionMatch
+      ? String(directionMatch[1].length === 1 ? directionMatch[1] : directionMatch[2]).toUpperCase()
+      : "";
+    if (directionMatch) {
+      safe = String(directionMatch[1].length === 1 ? directionMatch[2] : directionMatch[1]).trim();
+    }
+    safe = safe.replace(/[°º]/g, "").replace(/\s+/g, "");
     if (/^[+-]?\d+(?:[.,]\d+)?$/.test(safe)) {
       coordinate = Number(safe.replace(",", "."));
+      if (direction === "S" || direction === "W") coordinate = -Math.abs(coordinate);
+      if (direction === "N" || direction === "E") coordinate = Math.abs(coordinate);
     }
   }
 

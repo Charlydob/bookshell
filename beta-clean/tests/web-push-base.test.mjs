@@ -23,15 +23,32 @@ await test("subscription UPSERT is keyed by endpoint and re-enables the installa
 
 await test("test push serializes JSON and records provider acceptance", async () => {
   const calls = [];
+  let providerOptions = null;
   const db = { query: async (sql) => {
     calls.push(sql);
     if (/SELECT id/.test(sql)) return { rows: [{ id: "push-1", ...subscription, p256dh: "public-key", auth: "auth-secret" }] };
     return { rows: [], rowCount: 1 };
   } };
-  const provider = { sendNotification: async (_sub, payload) => { assert.equal(JSON.parse(payload).type, "test"); return { statusCode: 201 }; } };
-  const result = await __test.sendPushToEndpoint(db, provider, subscription.endpoint, { title: "Bookshell", type: "test" });
+  const provider = { sendNotification: async (_sub, payload, options) => {
+    providerOptions = options;
+    assert.equal(JSON.parse(payload).type, "test");
+    return { statusCode: 201 };
+  } };
+  const result = await __test.sendPushToEndpoint(
+    db,
+    provider,
+    subscription.endpoint,
+    { title: "Bookshell", type: "test" },
+    { ttl: 240, urgency: "high" },
+  );
   assert.equal(result.accepted, true);
+  assert.deepEqual(providerOptions, { TTL: 240, urgency: "high" });
   assert.ok(calls.some((sql) => /last_success_at/.test(sql)));
+});
+
+await test("Web Push options clamp TTL and ignore unsupported urgency", () => {
+  assert.deepEqual(__test.normalizeWebPushOptions({ ttl: 120, urgency: "high" }), { TTL: 120, urgency: "high" });
+  assert.deepEqual(__test.normalizeWebPushOptions({ TTL: -1, urgency: "instant" }), { TTL: 0 });
 });
 
 for (const statusCode of [404, 410]) {

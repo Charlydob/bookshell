@@ -18282,21 +18282,47 @@ async function updateAccountMeta(accountId, payload = {}) {
   clearFinanceDerivedCaches();
   scheduleFinanceSnapshotSave('account-meta-update');
 }
-async function saveSnapshot(accountId, day, value) {
-  const parsedValue = parseEuroNumber(value);
-  if (!Number.isFinite(parsedValue) || !day) return false;
+const pendingSnapshotSaves = new Map();
+
+async function persistSnapshot(accountId, day, parsedValue) {
+  const snapshotPayload = { value: parsedValue, updatedAt: nowTs() };
   const account = (state.accounts || []).find((item) => String(item.id) === String(accountId));
   const previousValue = Number(accountValueForDay(account, day));
-  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`), { value: parsedValue, updatedAt: nowTs() }));
+  await safeFirebase(() => set(ref(db, `${state.financePath}/accounts/${accountId}/snapshots/${day}`), snapshotPayload));
+  const cacheKey = resolveFinanceAccountCacheKey(accountId);
+  patchFinanceCacheRoot(cacheKey, `accounts/${accountId}/snapshots/${day}`, snapshotPayload);
   if (isCryptoAccount(account)) {
-    await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), { btcUnits: parsedValue, currency: 'BTC', assetType: 'crypto', isBitcoin: true, updatedAt: nowTs() }));
+    const accountPatch = { btcUnits: parsedValue, currency: 'BTC', assetType: 'crypto', isBitcoin: true, updatedAt: snapshotPayload.updatedAt };
+    await safeFirebase(() => update(ref(db, `${state.financePath}/accounts/${accountId}`), accountPatch));
+    Object.entries(accountPatch).forEach(([key, nextValue]) => {
+      patchFinanceCacheRoot(cacheKey, `accounts/${accountId}/${key}`, nextValue);
+    });
   }
-  await recomputeAccountEntries(accountId, day);
+  const mergedRoot = buildMergedFinanceSnapshotRoot();
+  syncLocalAccountsFromRoot(mergedRoot);
+  clearFinanceDerivedCaches();
+  scheduleFinanceSnapshotSave('account-snapshot-save');
+  await recomputeAccountEntries(accountId, day, mergedRoot);
   if (Number(previousValue) !== Number(parsedValue)) {
     queueAccountGoogleSheetsHistoryCreate(accountId);
   }
   toast('Guardado');
   return true;
+}
+
+async function saveSnapshot(accountId, day, value) {
+  const parsedValue = parseEuroNumber(value);
+  if (!Number.isFinite(parsedValue) || !day) return false;
+  const saveKey = `${String(accountId)}:${String(day)}:${parsedValue}`;
+  const pendingSave = pendingSnapshotSaves.get(saveKey);
+  if (pendingSave) return pendingSave;
+  const savePromise = persistSnapshot(accountId, day, parsedValue);
+  pendingSnapshotSaves.set(saveKey, savePromise);
+  try {
+    return await savePromise;
+  } finally {
+    if (pendingSnapshotSaves.get(saveKey) === savePromise) pendingSnapshotSaves.delete(saveKey);
+  }
 }
 
 async function deleteDay(accountId, day) {

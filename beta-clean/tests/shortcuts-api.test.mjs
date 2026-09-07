@@ -292,6 +292,98 @@ await test("gasto por Atajos aparece en listado, balance, cuenta y categorias", 
   assert.equal(root.catalog.categories.Comida.name, "Comida");
 });
 
+await test("gasto sin moneda usa CHF de la cuenta sin convertir el importe", async () => {
+  const { result, root } = await createMovementAndRoot({
+    amount: 5,
+    accountId: "acc_chf",
+    type: "expense",
+    categoryId: "cat_food",
+    date: "2026-08-28",
+  });
+  const movement = root.transactions[result.body.movementId];
+  assert.equal(movement.amount, 5);
+  assert.equal(movement.accountAmount, 5);
+  assert.equal(movement.currency, "CHF");
+  assert.equal(movement.inputCurrency, "CHF");
+  assert.equal(root.accounts.acc_chf.entries["2026-08-28"].value, 95);
+});
+
+await test("gasto EUR explicito convierte el importe para una cuenta CHF", async () => {
+  const { result, root } = await createMovementAndRoot({
+    amount: 5,
+    currency: "EUR",
+    accountId: "acc_chf",
+    type: "expense",
+    categoryId: "cat_food",
+    date: "2026-08-28",
+  });
+  const movement = root.transactions[result.body.movementId];
+  assert.equal(movement.originalCurrency, "EUR");
+  assert.equal(movement.currency, "CHF");
+  assert.equal(movement.accountAmount, 5 / 1.03);
+  assert.equal(root.accounts.acc_chf.entries["2026-08-28"].value, 100 - (5 / 1.03));
+});
+
+await test("gasto CHF explicito en cuenta CHF no hace conversion", async () => {
+  const { result, root } = await createMovementAndRoot({
+    amount: 5,
+    currency: "CHF",
+    accountId: "acc_chf",
+    type: "expense",
+    categoryId: "cat_food",
+    date: "2026-08-28",
+  });
+  const movement = root.transactions[result.body.movementId];
+  assert.equal(movement.amount, 5);
+  assert.equal(movement.accountAmount, 5);
+  assert.equal(movement.currency, "CHF");
+  assert.equal(root.accounts.acc_chf.entries["2026-08-28"].value, 95);
+});
+
+await test("transferencia sin moneda usa la moneda de la cuenta origen", async () => {
+  const { result, root } = await createMovementAndRoot({
+    amount: 5,
+    fromAccountId: "acc_chf",
+    toAccountId: "acc_eur",
+    type: "transfer",
+    date: "2026-08-28",
+  });
+  const movement = root.transactions[result.body.movementId];
+  assert.equal(movement.currency, "CHF");
+  assert.equal(movement.inputCurrency, "CHF");
+  assert.equal(movement.accountCurrency, "CHF");
+  assert.equal(root.accounts.acc_chf.entries["2026-08-28"].value, 95);
+});
+
+await test("guardar snapshot parchea la cache antes de recalcular entries", () => {
+  const saveSource = financeRuntimeSource.slice(
+    financeRuntimeSource.indexOf("async function persistSnapshot"),
+    financeRuntimeSource.indexOf("async function saveSnapshot")
+  );
+  const writeIndex = saveSource.indexOf("await safeFirebase(() => set(");
+  const patchIndex = saveSource.indexOf("patchFinanceCacheRoot(cacheKey, `accounts/${accountId}/snapshots/${day}`, snapshotPayload)");
+  const syncIndex = saveSource.indexOf("syncLocalAccountsFromRoot(mergedRoot)");
+  const invalidateIndex = saveSource.indexOf("clearFinanceDerivedCaches()");
+  const recomputeIndex = saveSource.indexOf("await recomputeAccountEntries(accountId, day, mergedRoot)");
+  assert.ok(writeIndex >= 0);
+  assert.ok(writeIndex < patchIndex);
+  assert.ok(patchIndex < syncIndex);
+  assert.ok(syncIndex < invalidateIndex);
+  assert.ok(invalidateIndex < recomputeIndex);
+  assert.match(saveSource, /const snapshotPayload = \{ value: parsedValue, updatedAt: nowTs\(\) \}/);
+});
+
+await test("focusout y boton Guardar comparten un unico guardado de snapshot en vuelo", () => {
+  const saveSource = financeRuntimeSource.slice(
+    financeRuntimeSource.indexOf("const pendingSnapshotSaves"),
+    financeRuntimeSource.indexOf("async function deleteDay")
+  );
+  assert.match(saveSource, /const pendingSnapshotSaves = new Map\(\)/);
+  assert.match(saveSource, /const pendingSave = pendingSnapshotSaves\.get\(saveKey\)/);
+  assert.match(saveSource, /if \(pendingSave\) return pendingSave/);
+  assert.match(saveSource, /pendingSnapshotSaves\.set\(saveKey, savePromise\)/);
+});
+
 await test("balance y estadisticas web se alimentan de balanceTxList sobre transactions", () => {
   assert.match(financeRuntimeSource, /const fromNew = Object\.entries\(balance\?\.transactions \|\| \{\}\)/);
   assert.match(financeRuntimeSource, /const txRows = balanceTxList\(\)/);

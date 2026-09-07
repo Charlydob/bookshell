@@ -865,7 +865,7 @@ function buildShortcutEndpointMap() {
 }
 
 function normalizeShortcutCurrency(value = "") {
-  const code = String(value || "EUR").trim().toUpperCase();
+  const code = String(value || "").trim().toUpperCase();
   return SHORTCUT_SUPPORTED_CURRENCIES.includes(code) ? code : "";
 }
 
@@ -1074,7 +1074,7 @@ function resolveShortcutCategory(root = {}, categoryIdOrName = "", type = "") {
 function parseShortcutMovementInput(body = {}) {
   const type = normalizeShortcutType(body?.type || body?.movementType);
   const amount = Number(body?.amount);
-  const currency = normalizeShortcutCurrency(body?.currency || body?.inputCurrency || "EUR");
+  const currency = normalizeShortcutCurrency(body?.currency || body?.inputCurrency || "");
   const date = normalizeShortcutDay(body?.date || body?.dateISO || "");
   return {
     amount,
@@ -1251,12 +1251,11 @@ function buildShortcutFinanceSummary(root = {}, targetCurrency = "EUR") {
 
 function buildShortcutMovementPayload(input = {}, root = {}, nowMs = Date.now(), txId = crypto.randomUUID(), resolvedCategory = null) {
   const type = normalizeShortcutType(input.type);
-  const currency = normalizeShortcutCurrency(input.currency);
+  const explicitCurrency = normalizeShortcutCurrency(input.currency);
   if (!type) throw Object.assign(new Error("INVALID_TYPE"), { statusCode: 400 });
   if (!Number.isFinite(input.amount) || input.amount <= 0) {
     throw Object.assign(new Error("INVALID_AMOUNT"), { statusCode: 400 });
   }
-  if (!currency) throw Object.assign(new Error("INVALID_CURRENCY"), { statusCode: 400 });
   if (!normalizeDateOnly(input.date)) throw Object.assign(new Error("INVALID_DATE"), { statusCode: 400 });
 
   let account = null;
@@ -1273,12 +1272,18 @@ function buildShortcutMovementPayload(input = {}, root = {}, nowMs = Date.now(),
     if (!account) throw Object.assign(new Error("ACCOUNT_NOT_FOUND"), { statusCode: 404 });
   }
 
+  // Apple Shortcuts may omit the currency. An account-bound amount is then
+  // denominated in that account (or in the transfer's source account), never
+  // in an arbitrary application default currency.
+  const currency = explicitCurrency || (type === "transfer" ? fromAccount?.currency : account?.currency);
+  if (!currency) throw Object.assign(new Error("INVALID_CURRENCY"), { statusCode: 400 });
+
   const category = resolvedCategory || resolveShortcutCategory(root, input.categoryId, type);
   if (type !== "transfer" && !category) {
     throw Object.assign(new Error("CATEGORY_NOT_FOUND"), { statusCode: 404 });
   }
 
-  const accountCurrency = account ? account.currency : currency;
+  const accountCurrency = account ? account.currency : fromAccount.currency;
   const accountAmount = account ? shortcutConvertCurrency(input.amount, currency, accountCurrency) : input.amount;
   if (!Number.isFinite(accountAmount) || accountAmount <= 0) {
     throw Object.assign(new Error("CURRENCY_CONVERSION_UNAVAILABLE"), { statusCode: 400 });

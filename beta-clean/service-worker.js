@@ -1,4 +1,4 @@
-importScripts("./scripts/shared/config/release.js");
+importScripts("./scripts/shared/config/release.js?v=2026-09-09-data-refresh-v1");
 
 const BOOKSHELL_RELEASE = self.__BOOKSHELL_RELEASE__ || {};
 const APP_VERSION = String(BOOKSHELL_RELEASE.version || "dev");
@@ -220,6 +220,23 @@ function isExecutableRequest(request, url) {
   return /\.(?:js|mjs)$/i.test(url.pathname);
 }
 
+function versionedLocalRequest(request, url) {
+  if (url.origin !== self.location.origin) return request;
+  const versionedUrl = new URL(url.href);
+  versionedUrl.searchParams.set("v", APP_VERSION);
+  return new Request(versionedUrl.href, {
+    method: request.method,
+    headers: request.headers,
+    mode: request.mode,
+    credentials: request.credentials,
+    cache: "no-store",
+    redirect: request.redirect,
+    referrer: request.referrer,
+    referrerPolicy: request.referrerPolicy,
+    integrity: request.integrity,
+  });
+}
+
 function isServiceWorkerScript(url) {
   return url.origin === self.location.origin && url.pathname.endsWith("/service-worker.js");
 }
@@ -374,7 +391,7 @@ self.addEventListener("fetch", (event) => {
       version: APP_VERSION,
       activeCaches: ACTIVE_CACHE_NAMES,
     });
-    event.respondWith(networkFirst(request));
+    event.respondWith(networkFirst(versionedLocalRequest(request, url)));
     return;
   }
 
@@ -384,7 +401,7 @@ self.addEventListener("fetch", (event) => {
       version: APP_VERSION,
       activeCaches: ACTIVE_CACHE_NAMES,
     });
-    event.respondWith(networkFirst(request));
+    event.respondWith(networkFirst(versionedLocalRequest(request, url)));
     return;
   }
 

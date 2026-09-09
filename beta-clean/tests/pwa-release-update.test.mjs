@@ -23,7 +23,7 @@ await test("release unico alimenta HTML main y service worker", () => {
   assert.match(indexSource, /scripts\/shared\/config\/release\.js/);
   assert.match(indexSource, /main\.js\?v=/);
   assert.match(mainSource, /globalThis\.__BOOKSHELL_RELEASE__/);
-  assert.match(serviceWorkerSource, /importScripts\("\.\/scripts\/shared\/config\/release\.js"\)/);
+  assert.match(serviceWorkerSource, /importScripts\("\.\/scripts\/shared\/config\/release\.js\?v=[^"]+"\)/);
   assert.doesNotMatch(indexSource, /2026-08-28-reminder-delete-push-update-v1/);
   assert.doesNotMatch(mainSource, /2026-08-28-reminder-delete-push-update-v1/);
   assert.doesNotMatch(serviceWorkerSource, /2026-08-29-data-export-latlon-v1/);
@@ -53,6 +53,8 @@ await test("assets dinamicos usan release query y HTML de vistas se pide no-stor
   assert.match(mainSource, /fetch\(absoluteUrl,\s*\{\s*cache: "no-store"/s);
   assert.match(mainSource, /importDynamicModule\("\.\.\/modules\/world\/index\.js"/);
   assert.match(mainSource, /htmlUrl: "\.\.\/\.\.\/views\/world\.html"/);
+  assert.match(serviceWorkerSource, /function versionedLocalRequest/);
+  assert.match(serviceWorkerSource, /versionedUrl\.searchParams\.set\("v", APP_VERSION\)/);
 });
 
 await test("Mundo expone world saved como Guardados rapidos plegado y con contador", () => {

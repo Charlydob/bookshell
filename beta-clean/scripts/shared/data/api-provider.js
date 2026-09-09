@@ -18,6 +18,7 @@ const PUSH_CHARS = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuv
 const RTDB_INFO_CONNECTED_PATH = [".info", "connected"].join("/");
 let lastPushTime = 0;
 let lastRandChars = [];
+const activeDataListeners = new Set();
 
 console.info("[data-provider] api");
 
@@ -34,6 +35,20 @@ function splitPath(path = "") {
 
 function joinPath(...parts) {
   return parts.map(trimSlashes).filter(Boolean).join("/");
+}
+
+function pathsOverlap(leftPath = "", rightPath = "") {
+  const left = normalizeDataPath(leftPath);
+  const right = normalizeDataPath(rightPath);
+  if (!left || !right) return true;
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
+function refreshDataListeners(changedPath = "") {
+  activeDataListeners.forEach((listener) => {
+    if (!pathsOverlap(listener.path, changedPath)) return;
+    listener.refresh();
+  });
 }
 
 function isPlainObject(value) {
@@ -354,7 +369,30 @@ export function onValue(pathOrQuery, callback, onError) {
   let active = true;
   let timer = 0;
   let inFlight = false;
+  let refreshRequested = false;
   let lastSerialized = "";
+
+  const schedulePoll = (delayMs) => {
+    if (!active) return;
+    if (timer) window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = 0;
+      void poll();
+    }, Math.max(0, Number(delayMs) || 0));
+  };
+
+  const listener = {
+    path,
+    refresh() {
+      if (!active) return;
+      if (inFlight) {
+        refreshRequested = true;
+        return;
+      }
+      schedulePoll(0);
+    },
+  };
+  activeDataListeners.add(listener);
 
   // Temporary API listener: polling until the backend exposes SSE/WebSocket.
   const poll = async () => {
@@ -372,8 +410,13 @@ export function onValue(pathOrQuery, callback, onError) {
     } finally {
       inFlight = false;
       if (active) {
-        const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
-        timer = window.setTimeout(poll, hidden ? HIDDEN_POLL_INTERVAL_MS : POLL_INTERVAL_MS);
+        if (refreshRequested) {
+          refreshRequested = false;
+          schedulePoll(0);
+        } else {
+          const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+          schedulePoll(hidden ? HIDDEN_POLL_INTERVAL_MS : POLL_INTERVAL_MS);
+        }
       }
     }
   };
@@ -382,6 +425,7 @@ export function onValue(pathOrQuery, callback, onError) {
 
   return () => {
     active = false;
+    activeDataListeners.delete(listener);
     if (timer) window.clearTimeout(timer);
   };
 }
@@ -390,6 +434,7 @@ export async function writeValue(pathOrRef, payload) {
   const target = resolveTarget(pathOrRef);
   logUsage("WRITE", target);
   await requestJson("PUT", target.path || target, { body: payload ?? null, debugMethod: "PUT" });
+  refreshDataListeners(target.path || target);
 }
 
 export const set = writeValue;
@@ -414,6 +459,7 @@ export async function patchValue(pathOrRef, patch = {}) {
   const normalizedPatch = normalizePatchKeys(basePath, patch || {});
   logUsage("UPDATE", target);
   await requestJson("PATCH", basePath, { body: normalizedPatch, debugMethod: "PATCH" });
+  refreshDataListeners(basePath);
 }
 
 export const update = patchValue;
@@ -422,6 +468,7 @@ export async function deleteValue(pathOrRef) {
   const target = resolveTarget(pathOrRef);
   logUsage("DELETE", target);
   await requestJson("DELETE", target.path || target, { debugMethod: "DELETE" });
+  refreshDataListeners(target.path || target);
 }
 
 export const remove = deleteValue;
@@ -439,7 +486,10 @@ export async function createRecord(path = "", payload = {}) {
     debugMethod: "POST",
   });
   const key = extractPushKey(response);
-  if (key) return key;
+  if (key) {
+    refreshDataListeners(safePath);
+    return key;
+  }
   throw new Error(`[api-data] POST /data/push/${safePath} did not return a key`);
 }
 
@@ -480,6 +530,7 @@ export async function runTransaction(pathOrRef, updater) {
           debugMethod: "POST",
         });
         const value = unwrapApiValue(payload);
+        refreshDataListeners(path);
         return { committed: true, snapshot: createSnapshot(value ?? nextValue, path) };
       } catch (error) {
         if (error?.status !== 409 || typeof updater !== "function") throw error;

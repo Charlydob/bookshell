@@ -73,6 +73,7 @@ const MIGRATION_FILES = Object.freeze({
   pushSubscriptions: "20260827_web_push_base.sql",
   reminderNotifications: "20260828_reminder_web_push_scheduler.sql",
   shortcuts: "20260828_shortcuts_api.sql",
+  jarvis: "20260919_jarvis_api.sql",
 });
 
 function readMigrationSql(name) {
@@ -456,8 +457,8 @@ function valuesEqual(a, b) {
   }
 }
 
-async function getUserData() {
-  const result = await pool.query(
+async function getUserData(db = pool) {
+  const result = await db.query(
     `
     SELECT id, data
     FROM firebase_import_raw
@@ -591,8 +592,8 @@ async function sendBookshellExport(req, res, {
   });
 }
 
-async function mutateUserData(mutator) {
-  const client = await pool.connect();
+async function mutateUserData(mutator, db = pool) {
+  const client = await db.connect();
 
   try {
     await client.query("BEGIN");
@@ -850,6 +851,267 @@ async function authenticateShortcutRequest(req, db = pool) {
     [match.id]
   );
   return getSingleUser();
+}
+
+const JARVIS_DOMAIN_SCOPES = Object.freeze({
+  books: "books", gym: "gym", habits: "habits", finance: "finance",
+  reminders: "reminders", notes: "notes", world: "world", recipes: "recipes",
+});
+const jarvisSchemaReadyByDb = new WeakMap();
+
+function ensureJarvisSchema(db = pool) {
+  if (!db || typeof db.query !== "function") throw new Error("database_unavailable");
+  let ready = jarvisSchemaReadyByDb.get(db);
+  if (!ready) {
+    ready = ensureMigrationBackedSchema(db, MIGRATION_FILES.jarvis, [
+      "public.jarvis_api_tokens",
+    ]);
+    jarvisSchemaReadyByDb.set(db, ready);
+  }
+  return ready;
+}
+
+async function authenticateJarvisRequest(req, db = pool) {
+  const supplied = getBearerToken(req);
+  if (!supplied) return null;
+  await ensureJarvisSchema(db);
+  const suppliedHash = tokenHash(supplied);
+  const result = await db.query(`
+    SELECT id, token_hash, scopes
+    FROM jarvis_api_tokens
+    WHERE user_id = $1 AND revoked_at IS NULL
+    ORDER BY created_at DESC
+  `, [SINGLE_USER_ID]);
+  const match = result.rows.find((row) => safeTimingEqualHex(row.token_hash, suppliedHash));
+  if (!match) return null;
+  await db.query(`
+    UPDATE jarvis_api_tokens
+    SET last_used_at = NOW(), updated_at = NOW()
+    WHERE id = $1
+  `, [match.id]);
+  return { user: getSingleUser(), tokenId: match.id, scopes: new Set(match.scopes || []) };
+}
+
+function jarvisScopeAllowed(auth, domain, operation = "read") {
+  const canonical = JARVIS_DOMAIN_SCOPES[String(domain || "").trim().toLowerCase()];
+  return Boolean(canonical && auth?.scopes?.has(`${canonical}:${operation}`));
+}
+
+function normalizeJarvisText(value = "") {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function resolveJarvisDataDomain(pathParts = []) {
+  const first = String(pathParts[0] || "").toLowerCase();
+  return JARVIS_DOMAIN_SCOPES[first] || "";
+}
+
+function jarvisBookSummary(id, book = {}, readingLog = {}) {
+  const pages = Math.max(0, Number(book.pages) || 0);
+  const currentPage = Math.max(0, Number(book.currentPage) || 0);
+  const readingDates = Object.entries(readingLog || {})
+    .filter(([, values]) => values && Number(values[id] || 0) !== 0)
+    .map(([day]) => day).sort();
+  return {
+    id, title: book.title || "", author: book.author || null,
+    currentPage, pages, remainingPages: Math.max(0, pages - currentPage),
+    progressPercent: pages ? Math.round((currentPage / pages) * 1000) / 10 : null,
+    status: book.status || "reading", updatedAt: Number(book.updatedAt || 0),
+    finishedAt: book.finishedAt || null, finishedOn: book.finishedOn || null,
+    lastReadingDate: readingDates.at(-1) || null,
+  };
+}
+
+async function queryJarvisBooks({ mode = "current", title = "", limit = 10 } = {}, db = pool) {
+  const row = await getUserData(db);
+  const root = row?.data || {};
+  const books = root?.books?.books || {};
+  const readingLog = root?.books?.readingLog || {};
+  const rows = Object.entries(books).map(([id, book]) => jarvisBookSummary(id, book, readingLog));
+  rows.sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0));
+  const wanted = normalizeJarvisText(title);
+  const matches = wanted ? rows.filter((book) => normalizeJarvisText(book.title).includes(wanted)) : rows;
+  if (mode === "search") return { items: matches.slice(0, clampInt(limit, 10, 1, 50)), count: matches.length };
+  const book = (matches.filter((item) => item.status === "reading")[0] || matches[0] || null);
+  if (!book) return { found: false, message: "No hay un libro coincidente." };
+  if (mode === "history") {
+    const history = Object.entries(readingLog).flatMap(([day, values]) => (
+      values && Number(values[book.id] || 0) !== 0 ? [{ date: day, pagesRead: Number(values[book.id]) }] : []
+    )).sort((left, right) => right.date.localeCompare(left.date));
+    return { found: true, book, history: history.slice(0, clampInt(limit, 30, 1, 100)) };
+  }
+  return { found: true, book };
+}
+
+async function updateJarvisBookProgress({ bookId = "", title = "", page } = {}, db = pool, now = new Date()) {
+  const targetPage = Number(page);
+  if (!Number.isFinite(targetPage) || targetPage < 0) throw new Error("invalid_page");
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(`
+      SELECT id, data FROM firebase_import_raw
+      WHERE user_id = $1 ORDER BY imported_at DESC LIMIT 1 FOR UPDATE
+    `, [SINGLE_USER_ID]);
+    if (!result.rows.length) throw new Error("data_not_found");
+    const row = result.rows[0];
+    const data = row.data || {};
+    const booksRoot = data.books = data.books || {};
+    const books = booksRoot.books = booksRoot.books || {};
+    let id = String(bookId || "").trim();
+    if (!id) {
+      const wanted = normalizeJarvisText(title);
+      const matches = Object.entries(books).filter(([, book]) => normalizeJarvisText(book?.title).includes(wanted));
+      if (matches.length !== 1) throw new Error(matches.length ? "ambiguous_book" : "book_not_found");
+      id = matches[0][0];
+    }
+    const current = books[id];
+    if (!current) throw new Error("book_not_found");
+    const pages = Math.max(0, Number(current.pages) || 0);
+    const previousPage = Math.max(0, Number(current.currentPage) || 0);
+    const nextPage = pages ? Math.min(pages, Math.round(targetPage)) : Math.round(targetPage);
+    const timestamp = now.getTime();
+    const day = todayDateStringInZone(DEFAULT_REMINDER_TIMEZONE, now);
+    const finishedBefore = current.status === "finished" || (pages > 0 && previousPage >= pages);
+    const finishedNow = pages > 0 && nextPage >= pages;
+    const updated = { ...current, currentPage: nextPage, updatedAt: timestamp };
+    if (finishedNow) {
+      updated.status = "finished";
+      updated.finishedPast = false;
+      if (!finishedBefore || !current.finishedOn) {
+        updated.finishedAt = timestamp;
+        updated.finishedOn = current.finishedOn || day;
+      }
+    } else if (finishedBefore) {
+      updated.status = "reading";
+      updated.finishedAt = null;
+      updated.finishedOn = null;
+      updated.finishedPast = false;
+    }
+    books[id] = updated;
+    const delta = nextPage - previousPage;
+    if (delta !== 0 && !updated.finishedPast) {
+      const readingLog = booksRoot.readingLog = booksRoot.readingLog || {};
+      const daily = readingLog[day] = readingLog[day] || {};
+      const nextLogged = Math.max(0, Number(daily[id] || 0) + delta);
+      if (nextLogged) daily[id] = nextLogged;
+      else delete daily[id];
+    }
+    await client.query("UPDATE firebase_import_raw SET data = $1::jsonb WHERE id = $2", [JSON.stringify(data), row.id]);
+    await client.query("COMMIT");
+    return { updated: true, verified: books[id].currentPage === nextPage, previousPage, book: jarvisBookSummary(id, books[id], booksRoot.readingLog) };
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function markJarvisHabit({ habitId = "", name = "", date = "", value = true, completed = true, unit = "" } = {}, db = pool) {
+  const targetDate = normalizeDateOnly(date) || todayDateStringInZone(DEFAULT_REMINDER_TIMEZONE);
+  let response = null;
+  await mutateUserData(async (data) => {
+    const root = data.habits = data.habits || {};
+    const habits = root.habits || {};
+    let id = String(habitId || "").trim();
+    if (!id) {
+      const wanted = normalizeJarvisText(name);
+      const matches = Object.entries(habits).filter(([, habit]) => normalizeJarvisText(habit?.name).includes(wanted));
+      if (matches.length !== 1) throw new Error(matches.length ? "ambiguous_habit" : "habit_not_found");
+      id = matches[0][0];
+    }
+    const habit = habits[id];
+    if (!habit || habit.archived) throw new Error("habit_not_found");
+    const goal = String(habit.goal || "check");
+    if (goal === "count") {
+      const safe = completed ? Math.max(0, Math.floor(Number(value) || 0)) : 0;
+      const store = root.habitCounts = root.habitCounts || {};
+      const entries = store[id] = store[id] || {};
+      if (safe) entries[targetDate] = safe; else delete entries[targetDate];
+      response = { id, name: habit.name, goal, date: targetDate, value: safe, completed: safe > 0 };
+    } else if (goal === "time") {
+      const numeric = Math.max(0, Number(value) || 0);
+      const seconds = completed ? Math.round(unit === "seconds" ? numeric : numeric * 60) : 0;
+      const store = root.habitSessions = root.habitSessions || {};
+      const entries = store[id] = store[id] || {};
+      if (seconds) entries[targetDate] = { totalSec: seconds, updatedAt: Date.now() }; else delete entries[targetDate];
+      response = { id, name: habit.name, goal, date: targetDate, value: seconds, completed: seconds > 0 };
+    } else {
+      const store = root.habitChecks = root.habitChecks || {};
+      const entries = store[id] = store[id] || {};
+      if (completed) entries[targetDate] = true; else delete entries[targetDate];
+      response = { id, name: habit.name, goal, date: targetDate, value: Boolean(completed), completed: Boolean(completed) };
+    }
+    return data;
+  }, db);
+  return { updated: true, verified: true, habit: response };
+}
+
+function jarvisWorkoutTotals(exercises = {}) {
+  let totalReps = 0;
+  let totalVolumeKg = 0;
+  Object.values(exercises || {}).forEach((exercise) => {
+    (exercise?.sets || []).forEach((set) => {
+      if (set?.done === false) return;
+      const reps = Math.max(0, Number(set?.reps) || 0);
+      const kg = Math.max(0, Number(set?.kg ?? set?.weightKg) || 0);
+      totalReps += reps;
+      totalVolumeKg += reps * kg;
+    });
+  });
+  return { totalReps, totalVolumeKg };
+}
+
+async function createJarvisGymSession(input = {}, db = pool, now = new Date()) {
+  const date = normalizeDateOnly(input.date) || todayDateStringInZone(DEFAULT_REMINDER_TIMEZONE, now);
+  const name = String(input.name || "Entrenamiento").trim() || "Entrenamiento";
+  const idempotencyKey = String(input.idempotencyKey || "").trim();
+  let response = null;
+  await mutateUserData(async (data) => {
+    const gymContainer = data.gym = data.gym || {};
+    const gym = gymContainer.gym = gymContainer.gym || {};
+    const workouts = gym.workouts = gym.workouts || {};
+    const day = workouts[date] = workouts[date] || {};
+    const existing = idempotencyKey
+      ? Object.values(day).find((workout) => workout?.source?.jarvisIdempotencyKey === idempotencyKey)
+      : null;
+    if (existing) {
+      response = { created: false, duplicate: true, workout: existing };
+      return data;
+    }
+    const timestamp = now.getTime();
+    const id = String(input.id || crypto.randomUUID());
+    const exercises = input.exercises && typeof input.exercises === "object" && !Array.isArray(input.exercises)
+      ? input.exercises
+      : {};
+    const totals = jarvisWorkoutTotals(exercises);
+    const startedAt = Number(input.startedAt) || timestamp;
+    const finishedAt = Number(input.finishedAt) || timestamp;
+    const workout = {
+      id, date, name,
+      startedAt,
+      finishedAt,
+      durationSec: Math.max(0, Number(input.durationSec) || Math.floor((finishedAt - startedAt) / 1000)),
+      exercises,
+      totalReps: totals.totalReps,
+      totalVolumeKg: totals.totalVolumeKg,
+      source: { ...(input.source || {}), kind: "jarvis", ...(idempotencyKey ? { jarvisIdempotencyKey: idempotencyKey } : {}) },
+      updatedAt: timestamp,
+    };
+    day[id] = workout;
+
+    const templateId = normalizeJarvisText(name).replace(/\s+/g, "-") || id;
+    const templates = gym.templates = gym.templates || {};
+    templates[templateId] = {
+      ...(templates[templateId] || {}), id: templateId, name,
+      exerciseIds: Object.keys(exercises), updatedAt: timestamp,
+    };
+    response = { created: true, duplicate: false, workout };
+    return data;
+  }, db);
+  return { ...response, verified: Boolean(response?.workout?.id) };
 }
 
 function buildShortcutEndpointMap() {
@@ -3634,8 +3896,8 @@ async function cancelReminderRecord(reminderId) {
   }
 }
 
-function todayDateStringInZone(timeZone = DEFAULT_REMINDER_TIMEZONE) {
-  const parts = zonedParts(new Date(), normalizeTimezone(timeZone));
+function todayDateStringInZone(timeZone = DEFAULT_REMINDER_TIMEZONE, now = new Date()) {
+  const parts = zonedParts(now, normalizeTimezone(timeZone));
   return dateStringFromUtcParts(parts.year, parts.month, parts.day);
 }
 
@@ -5512,6 +5774,179 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ------------------------------------------------
+  // JARVIS API (dedicated server-to-server bearer token)
+  // ------------------------------------------------
+
+  let jarvisAuth = null;
+  if (url.pathname === "/jarvis" || url.pathname.startsWith("/jarvis/")) {
+    try {
+      jarvisAuth = await authenticateJarvisRequest(req, pool);
+    } catch (error) {
+      console.error("[jarvis:auth]", error);
+      return sendJson(req, res, 500, { ok: false, error: "JARVIS_AUTH_FAILED" });
+    }
+    if (!jarvisAuth) return sendJson(req, res, 401, { ok: false, error: "INVALID_JARVIS_TOKEN" });
+  }
+
+  if (req.method === "GET" && url.pathname === "/jarvis/capabilities") {
+    return sendJson(req, res, 200, { ok: true, scopes: [...jarvisAuth.scopes].sort() });
+  }
+
+  if (req.method === "GET" && url.pathname === "/jarvis/books") {
+    if (!jarvisScopeAllowed(jarvisAuth, "books", "read")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    try {
+      return sendJson(req, res, 200, { ok: true, ...(await queryJarvisBooks({
+        mode: url.searchParams.get("mode") || "current",
+        title: url.searchParams.get("title") || "",
+        limit: url.searchParams.get("limit") || 10,
+      })) });
+    } catch (error) {
+      console.error("[jarvis:books:read]", error);
+      return sendJson(req, res, 500, { ok: false, error: error?.message || "BOOKS_READ_FAILED" });
+    }
+  }
+
+  if (req.method === "PATCH" && url.pathname === "/jarvis/books/progress") {
+    if (!jarvisScopeAllowed(jarvisAuth, "books", "write")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    try {
+      const result = await updateJarvisBookProgress((await readJson(req)) || {});
+      return sendJson(req, res, 200, { ok: true, ...result });
+    } catch (error) {
+      const status = ["invalid_page", "book_not_found", "ambiguous_book"].includes(error?.message) ? 400 : 500;
+      return sendJson(req, res, status, { ok: false, error: error?.message || "BOOK_PROGRESS_FAILED" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/jarvis/habits/mark") {
+    if (!jarvisScopeAllowed(jarvisAuth, "habits", "write")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    try {
+      return sendJson(req, res, 200, { ok: true, ...(await markJarvisHabit((await readJson(req)) || {})) });
+    } catch (error) {
+      const status = ["habit_not_found", "ambiguous_habit"].includes(error?.message) ? 400 : 500;
+      return sendJson(req, res, status, { ok: false, error: error?.message || "HABIT_MARK_FAILED" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/jarvis/gym/sessions") {
+    if (!jarvisScopeAllowed(jarvisAuth, "gym", "write")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    try {
+      const body = (await readJson(req)) || {};
+      const result = await createJarvisGymSession({
+        ...body,
+        idempotencyKey: req.headers["idempotency-key"] || body.idempotencyKey || "",
+      });
+      return sendJson(req, res, result.created ? 201 : 200, { ok: true, ...result });
+    } catch (error) {
+      return sendJson(req, res, 500, { ok: false, error: error?.message || "GYM_SESSION_FAILED" });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/jarvis/finance/options") {
+    if (!jarvisScopeAllowed(jarvisAuth, "finance", "read")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    const options = await getShortcutFinanceOptions(url.searchParams.get("type") || "", pool);
+    return sendJson(req, res, options ? 200 : 404, options ? { ok: true, ...options } : { ok: false, error: "DATA_NOT_FOUND" });
+  }
+
+  if (req.method === "POST" && url.pathname === "/jarvis/finance/movements") {
+    if (!jarvisScopeAllowed(jarvisAuth, "finance", "write")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    try {
+      const body = (await readJson(req)) || {};
+      const result = await createShortcutFinanceMovement(body, {
+        idempotencyKey: req.headers["idempotency-key"] || body?.idempotencyKey || "",
+      });
+      return sendJson(req, res, result.statusCode || 201, result.body);
+    } catch (error) {
+      return sendJson(req, res, error?.statusCode || 500, { ok: false, error: error?.message || "FINANCE_MOVEMENT_FAILED" });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/jarvis/reminders") {
+    if (!jarvisScopeAllowed(jarvisAuth, "reminders", "read")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    try {
+      const range = String(url.searchParams.get("range") || "").trim();
+      const searchParams = new URLSearchParams(url.searchParams);
+      if (range) {
+        const bounds = getRangeBounds(range);
+        searchParams.delete("range");
+        if (bounds.from) searchParams.set("from", bounds.from);
+        if (bounds.until) searchParams.set("until", bounds.until);
+      }
+      const result = await searchAutomationReminders(searchParams);
+      return sendJson(req, res, 200, { ok: true, ...result, reminders: result.results || [] });
+    } catch (error) {
+      return sendJson(req, res, 500, { ok: false, error: error?.message || "REMINDERS_READ_FAILED" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/jarvis/reminders") {
+    if (!jarvisScopeAllowed(jarvisAuth, "reminders", "write")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    try {
+      const result = await createReminderRecord((await readJson(req)) || {}, "manual");
+      return sendJson(req, res, result.created ? 201 : 200, { ok: true, ...result });
+    } catch (error) {
+      return sendJson(req, res, reminderErrorStatus(error), { ok: false, error: error?.message || "REMINDER_CREATE_FAILED" });
+    }
+  }
+
+  const jarvisReminderMatch = url.pathname.match(/^\/jarvis\/reminders\/([0-9a-f-]{36})$/i);
+  const jarvisReminderCompleteMatch = url.pathname.match(/^\/jarvis\/reminders\/([0-9a-f-]{36})\/complete$/i);
+  if (req.method === "POST" && jarvisReminderCompleteMatch) {
+    if (!jarvisScopeAllowed(jarvisAuth, "reminders", "write")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    const reminder = await completeReminderRecord(jarvisReminderCompleteMatch[1], (await readJson(req)) || {});
+    return sendJson(req, res, reminder ? 200 : 404, reminder ? { ok: true, reminder } : { ok: false, error: "reminder_not_found" });
+  }
+  if (req.method === "GET" && jarvisReminderMatch) {
+    if (!jarvisScopeAllowed(jarvisAuth, "reminders", "read")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    const reminder = await getReminderById(jarvisReminderMatch[1]);
+    return sendJson(req, res, reminder ? 200 : 404, reminder ? { ok: true, reminder } : { ok: false, error: "reminder_not_found" });
+  }
+  if (req.method === "PATCH" && jarvisReminderMatch) {
+    if (!jarvisScopeAllowed(jarvisAuth, "reminders", "write")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    const reminder = await patchReminderRecord(jarvisReminderMatch[1], (await readJson(req)) || {});
+    return sendJson(req, res, reminder ? 200 : 404, reminder ? { ok: true, reminder } : { ok: false, error: "reminder_not_found" });
+  }
+  if (req.method === "DELETE" && jarvisReminderMatch) {
+    if (!jarvisScopeAllowed(jarvisAuth, "reminders", "write")) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    const reminder = await cancelReminderRecord(jarvisReminderMatch[1]);
+    return sendJson(req, res, reminder ? 200 : 404, reminder ? { ok: true, reminder } : { ok: false, error: "reminder_not_found" });
+  }
+
+  const jarvisDataPrefix = "/jarvis/data";
+  if (url.pathname === jarvisDataPrefix || url.pathname.startsWith(`${jarvisDataPrefix}/`)) {
+    const pathParts = getDataPath(url.pathname, jarvisDataPrefix);
+    const domain = resolveJarvisDataDomain(pathParts);
+    const operation = req.method === "GET" ? "read" : "write";
+    if (!domain || !jarvisScopeAllowed(jarvisAuth, domain, operation)) return sendJson(req, res, 403, { ok: false, error: "JARVIS_SCOPE_DENIED" });
+    if (!validatePath(pathParts)) return sendJson(req, res, 400, { ok: false, error: "invalid_path" });
+    try {
+      if (req.method === "GET") {
+        const row = await getUserData();
+        if (!row) return sendJson(req, res, 404, { ok: false, error: "data_not_found" });
+        return sendJson(req, res, 200, { ok: true, path: pathParts.join("/"), data: getAtPath(row.data, pathParts) });
+      }
+      if (req.method === "PUT") {
+        const body = await readJson(req);
+        await mutateUserData(async (data) => setAtPath(data, pathParts, body));
+        return sendJson(req, res, 200, { ok: true, path: pathParts.join("/"), data: body });
+      }
+      if (req.method === "PATCH") {
+        const body = await readJson(req);
+        if (!body || typeof body !== "object" || Array.isArray(body)) return sendJson(req, res, 400, { ok: false, error: "invalid_patch" });
+        await mutateUserData(async (data) => patchAtPath(data, pathParts, body));
+        return sendJson(req, res, 200, { ok: true, path: pathParts.join("/") });
+      }
+      if (req.method === "DELETE") {
+        if (!pathParts.length) return sendJson(req, res, 400, { ok: false, error: "invalid_path" });
+        await mutateUserData(async (data) => deleteAtPath(data, pathParts));
+        return sendJson(req, res, 200, { ok: true, path: pathParts.join("/") });
+      }
+    } catch (error) {
+      console.error("[jarvis:data]", error);
+      return sendJson(req, res, 500, { ok: false, error: error?.message || "JARVIS_DATA_FAILED" });
+    }
+  }
+
+  // ------------------------------------------------
   // SHORTCUTS SETTINGS (web session)
   // ------------------------------------------------
 
@@ -6902,6 +7337,7 @@ if (require.main === module) {
     ensurePushSubscriptionsSchema(pool),
     ensureReminderNotificationSchema(pool),
     ensureShortcutSchema(pool),
+    ensureJarvisSchema(pool),
   ]).then(async () => {
     const reconciliation = await reconcilePendingReminderAlerts({ db: pool });
     console.log("[schema] push, reminders and shortcuts ready");
@@ -6966,6 +7402,13 @@ module.exports = {
     rotateShortcutToken,
     revokeShortcutTokens,
     authenticateShortcutRequest,
+    ensureJarvisSchema,
+    authenticateJarvisRequest,
+    jarvisScopeAllowed,
+    queryJarvisBooks,
+    updateJarvisBookProgress,
+    markJarvisHabit,
+    createJarvisGymSession,
     buildShortcutEndpointMap,
     getShortcutFinanceOptions,
     createShortcutFinanceMovement,

@@ -996,9 +996,10 @@ await test("Pendiente de hoy acepta timezone explicito y documenta Europe/Zurich
 });
 
 await test("la accion de prueba dispara Web Push sin modificar recordatorios", () => {
+  const functionStart = serverSource.indexOf("async function sendTodayPendingPush");
   const fnSource = serverSource.slice(
-    serverSource.indexOf("async function sendTodayPendingPush"),
-    serverSource.indexOf("// --------------------------------------------------\n// REMINDERS")
+    functionStart,
+    serverSource.indexOf("// REMINDERS", functionStart)
   );
   assert.match(fnSource, /sendPushToActiveSubscriptions/);
   assert.doesNotMatch(fnSource, /INSERT INTO reminders/);

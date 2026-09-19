@@ -962,9 +962,17 @@ async function updateJarvisBookProgress({ bookId = "", title = "", page } = {}, 
     let id = String(bookId || "").trim();
     if (!id) {
       const wanted = normalizeJarvisText(title);
-      const matches = Object.entries(books).filter(([, book]) => normalizeJarvisText(book?.title).includes(wanted));
-      if (matches.length !== 1) throw new Error(matches.length ? "ambiguous_book" : "book_not_found");
-      id = matches[0][0];
+      if (wanted) {
+        const matches = Object.entries(books).filter(([, book]) => normalizeJarvisText(book?.title).includes(wanted));
+        if (matches.length !== 1) throw new Error(matches.length ? "ambiguous_book" : "book_not_found");
+        id = matches[0][0];
+      } else {
+        const ordered = Object.entries(books)
+          .sort(([, left], [, right]) => Number(right?.updatedAt || 0) - Number(left?.updatedAt || 0));
+        const current = ordered.find(([, book]) => String(book?.status || "").toLowerCase() === "reading") || ordered[0];
+        if (!current) throw new Error("book_not_found");
+        id = current[0];
+      }
     }
     const current = books[id];
     if (!current) throw new Error("book_not_found");

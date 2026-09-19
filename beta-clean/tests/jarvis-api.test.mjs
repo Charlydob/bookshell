@@ -59,6 +59,19 @@ await test("book progress updates page, reading log, timestamps and read-back", 
   assert.equal(readback.book.lastReadingDate, "2026-09-19");
 });
 
+await test("book progress without an id resolves the same current reading book as GET", async () => {
+  const fx = fixture({ books: { books: {
+    finished: { title: "Anterior", pages: 100, currentPage: 100, status: "finished", updatedAt: 500 },
+    musashi: { title: "Musashi", pages: 575, currentPage: 221, status: "reading", updatedAt: 100 },
+  }, readingLog: {} } });
+  const current = await __test.queryJarvisBooks({ mode: "current" }, fx.db);
+  const result = await __test.updateJarvisBookProgress({ page: 222 }, fx.db, new Date("2026-09-19T10:00:00Z"));
+  assert.equal(current.book.id, "musashi");
+  assert.equal(result.book.id, current.book.id);
+  assert.equal(fx.data().books.books.musashi.currentPage, 222);
+  assert.equal(fx.data().books.books.finished.currentPage, 100);
+});
+
 await test("habit mark writes canonical store atomically", async () => {
   const fx = fixture({ habits: { habits: { german: { name: "Alemán", goal: "count", schedule: { type: "daily" } } }, habitCounts: {} } });
   const result = await __test.markJarvisHabit({ name: "Aleman", date: "2026-09-19", value: 2 }, fx.db);

@@ -2331,6 +2331,7 @@ const REMINDER_SOURCE_TYPES = new Set([
 const REMINDER_ALERT_MODES = new Set(["absolute", "relative"]);
 
 function clampInt(value, fallback, min, max) {
+  if (value === null || value === undefined || String(value).trim() === "") return fallback;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, Math.min(max, Math.round(parsed)));

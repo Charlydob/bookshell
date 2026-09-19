@@ -6,9 +6,12 @@ const require = createRequire(import.meta.url);
 const {
   __test: {
     buildAutomationReminderSearchQuery,
+    normalizeAutomationReminderSearchParams,
     searchAutomationReminderRows,
   },
 } = require("../deploy-bookshell-api-server.js");
+
+assert.equal(normalizeAutomationReminderSearchParams(new URLSearchParams()).limit, 50);
 
 async function test(name, fn) {
   try {

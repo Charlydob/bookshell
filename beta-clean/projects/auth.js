@@ -51,6 +51,6 @@ function createAuth(pool){
     }
     fail('Ruta no encontrada',404);
   }
-  return {oauth,session,requireAuth,origin,rate,hash,issueTicket};
+  return {oauth,requireAuth,origin,rate,hash,issueTicket};
 }
 module.exports={createAuth,ISSUER,RESOURCE,SCOPES,body,json,html,escape,hash};

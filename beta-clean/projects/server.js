@@ -46,6 +46,8 @@ function createProjects({pool,sendNotification}){
   }
   async function handle(req,res,url){
     if(!url.pathname.startsWith('/projects')&&!url.pathname.startsWith('/oauth/')&&!url.pathname.startsWith('/.well-known/oauth-')&&url.pathname!=='/mcp')return false;
+    const started=Date.now();
+    res.once('finish',()=>console.info('[projects:request]',{method:req.method,path:url.pathname,status:res.statusCode,durationMs:Date.now()-started}));
     try{
       if(req.method==='OPTIONS'){res.writeHead(204,{Allow:'GET, POST, PATCH, DELETE, OPTIONS'});res.end();return true;}
       if(await auth.oauth(req,res,url))return true;
@@ -82,7 +84,7 @@ function createProjects({pool,sendNotification}){
     for(const r of due){const key=r.data.dueAt;const claim=await pool.query(`INSERT INTO project_deliveries(entry_id,schedule_key,status,attempts) VALUES($1,$2,'sending',1) ON CONFLICT(entry_id,schedule_key) DO UPDATE SET status='sending',attempts=project_deliveries.attempts+1,updated_at=now() WHERE project_deliveries.status IN ('pending','failed','no_subscription') AND project_deliveries.attempts<5 AND project_deliveries.updated_at<now()-interval '5 minutes' RETURNING *`,[r.id,key]);if(!claim.rowCount)continue;
       try{const result=await sendNotification(r.user_id,{title:'Bookshell · Proyectos',body:r.data.title,url:'https://bookshell.charlydob.com/#view-projects',tag:'project-reminder:'+r.id,type:'project-reminder'});await pool.query('UPDATE project_deliveries SET status=$3,error=$4,updated_at=now() WHERE entry_id=$1 AND schedule_key=$2',[r.id,key,result.accepted?'sent':result.attemptedCount?'failed':'no_subscription',result.accepted?null:result.reason||'No hay suscripción activa']);}catch(e){await pool.query("UPDATE project_deliveries SET status='failed',error=$3,updated_at=now() WHERE entry_id=$1 AND schedule_key=$2",[r.id,key,String(e.message).slice(0,200)]);}
     }
-    await pool.query("DELETE FROM project_sessions WHERE expires_at<now(); DELETE FROM project_oauth_requests WHERE expires_at<now(); DELETE FROM project_oauth_codes WHERE expires_at<now()");
+    await pool.query("UPDATE project_deliveries SET status='failed',error='delivery_interrupted',updated_at=now() WHERE status='sending' AND updated_at<now()-interval '5 minutes'; DELETE FROM project_sessions WHERE expires_at<now(); DELETE FROM project_oauth_requests WHERE expires_at<now(); DELETE FROM project_oauth_codes WHERE expires_at<now()");
   }catch(e){console.error('[projects:scheduler]',{message:e.message});}finally{ticking=false;}}
   return {handle,domain,tools,tick,start(){const timer=setInterval(()=>void tick(),60000);timer.unref();void tick();return timer;}};
 }

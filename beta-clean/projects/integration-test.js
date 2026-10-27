@@ -11,7 +11,7 @@ const users=[crypto.randomUUID(),crypto.randomUUID()];const password=crypto.rand
 const email='projects-test-'+users[0]+'@example.invalid';let client,clientId;const results=[];
 async function check(name,fn){await fn();results.push({test:name,result:'PASS'});console.log('PASS '+name);}
 async function post(url,data,headers={}){return fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',...headers},body:new URLSearchParams(data),redirect:'manual'});}
-async function call(name,args={},error=false){const r=await client.callTool({name,arguments:args});assert.equal(!!r.isError,error,JSON.stringify(r.content));return r.structuredContent?.result||JSON.parse(r.content[0].text);}
+async function call(name,args={},error=false){const r=await client.callTool({name,arguments:args});assert.equal(!!r.isError,error,JSON.stringify(r.content));if(r.structuredContent)return r.structuredContent.result;try{return JSON.parse(r.content[0].text);}catch{return {error:r.content[0].text};}}
 async function main(){
 for(let i=0;i<2;i++)await pool.query('INSERT INTO users(id,email,display_name,password_hash,disabled) VALUES($1,$2,$3,$4,false)',[users[i],i===0?email:'foreign-'+users[i]+'@example.invalid','Projects integration test',await bcrypt.hash(password,12)]);
 const redirect='https://chatgpt.com/connector/oauth/bookshell_test_'+crypto.randomBytes(5).toString('hex');

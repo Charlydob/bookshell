@@ -45,7 +45,7 @@ function createAuth(pool){
         const code=(await pool.query('SELECT * FROM project_oauth_codes WHERE code_hash=$1 AND expires_at>now()',[hash(b.code||'')])).rows[0];const challenge=crypto.createHash('sha256').update(b.code_verifier||'').digest('base64url');if(!code||code.client_id!==b.client_id||code.redirect_uri!==b.redirect_uri||code.challenge!==challenge||code.resource!==b.resource)fail('invalid_grant');const used=await pool.query('DELETE FROM project_oauth_codes WHERE code_hash=$1 RETURNING code_hash',[hash(b.code)]);if(!used.rowCount)fail('invalid_grant');json(res,200,await tokenPair(code.user_id,code.client_id,code.scope));return true;
       }
       if(b.grant_type==='refresh_token'){
-        const t=(await pool.query('UPDATE project_oauth_tokens SET revoked_at=now() WHERE refresh_hash=$1 AND client_id=$2 AND resource=$3 AND revoked_at IS NULL AND refresh_expires_at>now() RETURNING *',[hash(b.refresh_token||''),b.client_id,RESOURCE])).rows[0];if(!t)fail('invalid_grant');json(res,200,await tokenPair(t.user_id,t.client_id,t.scope));return true;
+        const t=(await pool.query('UPDATE project_oauth_tokens SET revoked_at=now() WHERE refresh_hash=$1 AND client_id=$2 AND resource=$3 AND revoked_at IS NULL RETURNING *',[hash(b.refresh_token||''),b.client_id,RESOURCE])).rows[0];if(!t)fail('invalid_grant');json(res,200,await tokenPair(t.user_id,t.client_id,t.scope));return true;
       }
       fail('unsupported_grant_type');
     }

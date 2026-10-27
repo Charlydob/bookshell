@@ -1,4 +1,4 @@
-importScripts("./scripts/shared/config/release.js?v=2026-10-27-projects-v2");
+importScripts("./scripts/shared/config/release.js?v=2026-10-27-projects-v3");
 
 const BOOKSHELL_RELEASE = self.__BOOKSHELL_RELEASE__ || {};
 const APP_VERSION = String(BOOKSHELL_RELEASE.version || "dev");

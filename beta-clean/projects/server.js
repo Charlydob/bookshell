@@ -55,6 +55,8 @@ function createProjects({pool,sendNotification}){
       const write=!['GET','HEAD'].includes(req.method);if(write)auth.origin(req);
       const a=await auth.requireAuth(req,res,write?'projects:write':'projects:read');if(!a)return true;
       const user=a.userId;
+      if(url.pathname==='/projects/access-code'&&req.method==='POST'){auth.rate(req,'pair-code',30);json(res,201,{ticket:await auth.issueTicket(user,'oauth'),expiresIn:600});return true;}
+      if(url.pathname==='/projects/browser-link'&&req.method==='POST'){auth.rate(req,'browser-link',15);json(res,201,{url:'https://bookshell.charlydob.com/projects-api/projects/activate?ticket='+await auth.issueTicket(user,'web'),expiresIn:600});return true;}
       if(url.pathname==='/projects/access'&&req.method==='GET'){const tokens=(await pool.query('SELECT client_id,scope,expires_at,revoked_at FROM project_oauth_tokens WHERE user_id=$1 AND revoked_at IS NULL',[user])).rows;json(res,200,{tokens});return true;}
       if(url.pathname==='/projects/access'&&req.method==='DELETE'){const b=await body(req);if(b.confirmed!==true)fail('Requiere confirmación');await pool.query('UPDATE project_oauth_tokens SET revoked_at=now() WHERE user_id=$1',[user]);json(res,200,{ok:true});return true;}
       if(url.pathname==='/projects/agenda'&&req.method==='GET'){json(res,200,{result:await domain.agenda(user,Object.fromEntries(url.searchParams))});return true;}

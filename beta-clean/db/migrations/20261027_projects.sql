@@ -19,6 +19,11 @@ CREATE TABLE IF NOT EXISTS project_activity (
 CREATE TABLE IF NOT EXISTS project_sessions (
   token_hash text PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id), expires_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS project_access_tickets (
+  token_hash text PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id),
+  purpose text NOT NULL CHECK(purpose IN ('web','oauth')), expires_at timestamptz NOT NULL,
+  used_at timestamptz
+);
 CREATE TABLE IF NOT EXISTS project_oauth_clients (
   id text PRIMARY KEY, redirect_uris jsonb NOT NULL, secret_hash text,
   auth_method text NOT NULL DEFAULT 'none', created_at timestamptz NOT NULL DEFAULT now()

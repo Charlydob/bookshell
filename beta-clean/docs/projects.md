@@ -5,8 +5,8 @@ Fecha de verificación: 27 de octubre de 2026, Europe/Madrid.
 ## Direcciones y estado
 
 - Módulo integrado: https://bookshell.charlydob.com/#view-projects
-- MCP privado: https://mcp-bookshell.charlydob.com/mcp
-- Acceso de propietario único, sin inicio de sesión por usuario y contraseña. Un enlace privado de un solo uso activa el navegador; desde Acceso se generan códigos privados para OAuth con PKCE S256 en ChatGPT. La sesión web usa una cookie Secure, HttpOnly, SameSite=Lax de 30 días. Enlaces y códigos caducan en diez minutos y se almacenan únicamente como hashes.
+- MCP de Bookshell: https://mcp-bookshell.charlydob.com/mcp
+- Bookshell Proyectos usa el mismo acceso directo que las demás secciones: no requiere cuenta, contraseña, cookie ni enlace de activación. El navegador, móvil y PWA usan la identidad de propietario único ya configurada en Bookshell. ChatGPT conserva OAuth con PKCE S256; los tokens de acceso duran una hora y los refresh rotatorios cien años, hasta revocación.
 - Estado del servidor: desplegado y verificado con un cliente MCP del SDK oficial; 23 herramientas descubiertas y operaciones reales de lectura/escritura comprobadas.
 - Prueba dentro de ChatGPT: completada. Conector privado creado con autorización del usuario, OAuth y DCR operativos, lectura de HOOKBOX y creación/edición/consulta posterior de un proyecto de verificación confirmadas desde ChatGPT y cotejadas directamente en PostgreSQL.
 
@@ -20,7 +20,7 @@ El proxy activo es Caddy de systemd, configuración `/etc/caddy/Caddyfile`. Ya s
 
 El DNS público del nombre solicitado devuelve las direcciones de Cloudflare `188.114.96.12` y `188.114.97.12`; la inspección SSH confirmó el servidor de origen en `46.224.61.193`. No se modificó DNS ni se crearon otros nombres. Caddy obtuvo TLS y el acceso HTTPS a través de Cloudflare quedó verificado.
 
-La API antigua tiene autenticación web desactivada y funciona en modo de usuario único. Las cuentas y sus hashes bcrypt seguían presentes en `users`, pero no se recupera su uso para iniciar sesión. Proyectos conserva un identificador interno de propietario para aislar datos; el acceso se vincula por enlaces y códigos privados de un solo uso. No hay registro de cuentas, selector de usuarios ni contraseña antigua. Cambiar la autenticación de los módulos antiguos queda fuera de este despliegue.
+La API antigua tiene autenticación web desactivada y funciona en modo de usuario único. Las cuentas y sus hashes bcrypt seguían presentes en `users`, pero no se recupera su uso para iniciar sesión. Proyectos conserva el identificador interno de propietario que ya usa Bookshell. La sección web no solicita credenciales y llama a su API como las demás vistas de la aplicación. OAuth se mantiene únicamente en la conexión remota de ChatGPT. Cambiar la autenticación de los módulos antiguos queda fuera de este despliegue.
 
 No había módulo Proyectos ni tablas de proyectos. Notas y su calendario/recordatorios están integrados en la sección antigua de Notas. Las notas existentes se guardan en el JSON canónico `firebase_import_raw`; los recordatorios existentes usan `reminders`, `reminder_alerts` y su registro de entregas. Se contaron 74 filas de recordatorios antes del despliegue.
 
@@ -65,19 +65,17 @@ Las tareas corresponden a contrato, recepción de PCBs, montaje de banco, pantal
 
 ## API nueva y herramientas MCP
 
-El navegador usa `/projects-api/projects...` en el dominio de Bookshell; Caddy elimina `/projects-api` y envía la petición al mismo proceso API. Acceso autenticado obligatorio a todos los datos nuevos. El sitio MCP solamente permite `/mcp`, `/oauth/*` y el descubrimiento OAuth; no expone las rutas antiguas ni la API web por ese dominio.
+El navegador usa `/projects-api/projects...` en el dominio de Bookshell; Caddy elimina `/projects-api` y envía la petición al mismo proceso API. La API web adopta el modelo de acceso directo de Bookshell y usa el propietario único ya configurado. El sitio MCP solamente permite `/mcp`, `/oauth/*` y el descubrimiento OAuth; no expone las rutas antiguas ni la API web por ese dominio.
 
 | Operación | API del proceso existente |
 | --- | --- |
-| Sesión nueva | GET/POST/DELETE `/projects/session` |
 | Proyectos | GET/POST `/projects`, GET/PATCH `/projects/:id` |
 | Registros del proyecto | POST `/projects/:id/entries`, PATCH/DELETE `/projects/:id/entries/:entryId` |
 | Actividad y entregas | GET `/projects/:id/activity`, GET `/projects/:id/deliveries` |
 | Reprogramación de dependientes | POST `/projects/:id/reschedule` |
 | Agenda | GET `/projects/agenda` |
 | Consultar/revocar conexiones | GET/DELETE `/projects/access` |
-| Vincular ChatGPT / otro navegador | POST `/projects/access-code`, POST `/projects/browser-link` |
-| Activación inicial privada | GET/POST `/projects/activate` |
+| Conexión ChatGPT | POST `/projects/access-code` |
 
 Herramientas MCP:
 
@@ -93,7 +91,7 @@ Herramientas MCP:
 
 Completar una tarea usa `update_task` con `status=done`. Consultar un proyecto devuelve registros, dependencias y bloqueos, por lo que no se requiere navegar por la interfaz. Los resultados incluyen JSON estructurado. Las ediciones necesitan la versión leída. Archivar y borrar requieren confirmación explícita; el borrado de registros es lógico y el historial conserva los datos anteriores.
 
-El transporte es MCP Streamable HTTP con el SDK oficial. OAuth admite registro dinámico de cliente, PKCE S256, tokens opacos con hash en la base, audiencia/recurso específico, caducidad y refresh rotatorio. Los códigos son de un solo uso. Los permisos `projects:read` y `projects:write` se comprueban en cada llamada. El servidor valida propietario, entradas y origen de escrituras web. No hay herramientas de escritura anónimas. Los logs registran método, ruta sin parámetros, estado HTTP y duración; los errores internos usan un identificador de diagnóstico y no devuelven secretos.
+El transporte es MCP Streamable HTTP con el SDK oficial. OAuth admite registro dinámico de cliente, PKCE S256, tokens opacos con hash en la base, audiencia/recurso específico, los tokens de acceso duran una hora y refresh rotatorio sin caducidad automática. Los códigos son de un solo uso. Los permisos `projects:read` y `projects:write` se comprueban en cada llamada. El MCP exige OAuth con alcance y propietario. La API web conserva el modelo abierto de Bookshell y valida los datos de entrada y el origen de las escrituras del navegador. Los logs registran método, ruta sin parámetros, estado HTTP y duración; los errores internos usan un identificador de diagnóstico y no devuelven secretos.
 
 ## Añadir el servidor en ChatGPT
 
@@ -105,21 +103,21 @@ Procedimiento contrastado con el formulario de ChatGPT y la [guía oficial de co
 4. URL del servidor: `https://mcp-bookshell.charlydob.com/mcp`.
 5. Autenticación: OAuth. En ajustes avanzados, comprobar detección automática y Registro dinámico de clientes (DCR). No introducir claves ni secretos manualmente. Permisos: `projects:read` y `projects:write`.
 6. Revisa la advertencia y, si estás de acuerdo, pulsa Crear como complemento y después Conectar Bookshell Proyectos.
-7. En un navegador vinculado, abre Proyectos → Acceso → Generar código para ChatGPT. Pega el código en la página de autorización de Bookshell y pulsa Autorizar conexión. No se solicita usuario ni contraseña. Para activar el primer navegador, el administrador emite un enlace mediante `docker exec bookshell-api-api-1 node projects/issue-access.js` sobre la conexión SSH privada; no publicar ni guardar su salida en logs. Para otro navegador, usa Acceso → Vincular otro navegador.
+7. Abre Proyectos directamente desde Bookshell, igual que Finanzas o Libros. Funciona en la web, móvil y PWA sin un paso de activación. La conexión ya creada con ChatGPT se renueva con refresh token rotatorio; puedes revocarla desde Proyectos → ChatGPT.
 8. Comprueba que ChatGPT descubre las 23 herramientas. Selecciona el complemento escribiendo `@` en el cuadro de mensaje y eligiendo Bookshell Proyectos.
 9. Prueba primero «Consulta HOOKBOX y dime tareas, bloqueos y progreso, distinguiendo fabricación». Después crea un proyecto de prueba con una tarea y una nota, edítalos y verifica los cambios en Bookshell. No dar por válida la integración solo porque el formulario haya guardado la URL.
 
-Si el formulario no carga la URL de retorno o la configuración OAuth después de iniciar sesión, recarga ChatGPT y reabre el formulario. En esta sesión la recarga resolvió un fallo inicial y permitió la detección automática. Las políticas de la cuenta pueden limitar los complementos privados.
+Si el formulario no carga la URL de retorno o la configuración OAuth después de iniciar sesión, recarga ChatGPT y reabre el formulario. En esta sesión la recarga resolvió un fallo inicial y permitió la detección automática.
 
-Para desconectar, usa la gestión de complementos de ChatGPT o Proyectos → Acceso → Revocar todas las conexiones MCP. Cerrar la sesión web no revoca por sí solo un conector OAuth.
+Para desconectar, usa la gestión de complementos de ChatGPT o Proyectos → ChatGPT → Revocar conexiones MCP. Bookshell no mantiene una sesión separada para Proyectos. Revocar el conector OAuth no afecta el uso directo de la aplicación.
 
 ## Pruebas y evidencias
 
 - Sintaxis de la API, módulo y JavaScript de interfaz: correcta. La interfaz estática no necesita una compilación de framework.
 - `npm ci`: 241 paquetes, auditoría sin vulnerabilidades en la fecha del despliegue.
 - Diez archivos de regresión anteriores y cinco pruebas nuevas de dominio: correctos, 15 resultados del runner, sin fallos.
-- Diecisiete comprobaciones de integración sobre el HTTPS público: correctas. Incluyen descubrimiento, DCR, PKCE, rechazo de callback externo, audiencia incorrecta y reutilización de código; inicialización y 23 herramientas; CRUD, notas/documentación/eventos/recordatorios/compras/inventario; progreso y bloqueos; aislamiento por propietario; concurrencia; plantillas; reprogramación; confirmaciones; protección CSRF; solo lectura; refresh/revocación y envío programado sin duplicación. La prueba adicional verifica enlaces/códigos de un solo uso, caducidad, separación de propósito y rechazo del acceso por contraseña antigua.
-- Pruebas de interfaz reales: activación privada de un navegador sin usuario/contraseña, tarea temporal, actualización 0→13 % de ocho tareas, disminución de bloqueos, gráfico y Kanban coherentes; fecha guardada visible en calendario y cronograma; documentación con tabla y diagrama Mermaid; escritorio y móvil de 390×844, sin desbordamiento horizontal. Las mutaciones de interfaz se hicieron con un propietario temporal aislado, no en HOOKBOX del propietario real.
+- Diecisiete comprobaciones de integración sobre el HTTPS público: correctas. Incluyen descubrimiento, DCR, PKCE, rechazo de callback externo, audiencia incorrecta y reutilización de código; inicialización y 23 herramientas; CRUD, notas/documentación/eventos/recordatorios/compras/inventario; progreso y bloqueos; aislamiento por propietario; concurrencia; plantillas; reprogramación; confirmaciones; protección CSRF; solo lectura; refresh/revocación y envío programado sin duplicación. La prueba adicional verifica códigos de conexión de un solo uso, caducidad, separación de propósito y rechazo del acceso por contraseña antigua.
+- Pruebas de interfaz reales: tarea temporal, actualización 0→13 % de ocho tareas, disminución de bloqueos, gráfico y Kanban coherentes; fecha guardada visible en calendario y cronograma; documentación con tabla y diagrama Mermaid; escritorio y móvil de 390×844, sin desbordamiento horizontal. Las mutaciones de interfaz se hicieron con un propietario temporal aislado, no en HOOKBOX del propietario real.
 - Reinicio del contenedor: HOOKBOX conserva ocho tareas pendientes y fabricación desconocida. Cuenta, sesiones y datos persistentes sobreviven al reinicio.
 - Regresión de datos: notas, libros y finanzas iguales a la copia previa mediante hashes del JSON correspondiente. Se mantienen las 74 filas antiguas de recordatorios. `/data/notes`, `/reminders` y `/health` responden correctamente. Notas antiguas y su calendario de recordatorios también se abrieron desde la interfaz.
 - Fuente de servidor nueva: bloqueada por Caddy en el sitio estático.

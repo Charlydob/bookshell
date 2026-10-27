@@ -5683,6 +5683,7 @@ function reminderErrorStatus(error) {
 
 const projectsModule = require("./projects/server").createProjects({
   pool,
+  ownerId: SINGLE_USER_ID,
   sendNotification: (userId, payload) => userId === SINGLE_USER_ID
     ? sendPushToActiveSubscriptions(pool, webPush, payload)
     : Promise.resolve({ accepted: false, attemptedCount: 0, reason: "no_subscription" }),

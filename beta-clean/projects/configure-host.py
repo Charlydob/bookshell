@@ -28,7 +28,7 @@ if 'handle_path /projects-api/*' not in source:
     source = source.replace(anchor, anchor + routes)
 if '\nmcp-bookshell.charlydob.com {' not in source:
     source += '''
-# Bookshell Projects: private OAuth-protected MCP, existing API process.
+# Bookshell Projects: direct single-owner Bookshell module and OAuth MCP.
 mcp-bookshell.charlydob.com {
     encode gzip
     header {

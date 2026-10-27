@@ -7,7 +7,7 @@ const {createAuth,RESOURCE,SCOPES,body,json}=require('./auth');
 const uuid=z.string().uuid();
 const kind=z.enum(Object.keys(schemas));
 function safeError(e){return e.issues?e.issues.map(x=>`${x.path.join('.')}: ${x.message}`).join('; '):e.status?e.message:'Error interno; consulta el identificador de diagnóstico';}
-function createProjects({pool,sendNotification}){
+function createProjects({pool,sendNotification,ownerId}){
   const domain=createDomain(pool),auth=createAuth(pool);
   function tools(a){
     const pid={projectId:uuid};
@@ -32,7 +32,7 @@ function createProjects({pool,sendNotification}){
     if(req.headers.origin&&!['https://chatgpt.com','https://bookshell.charlydob.com'].includes(req.headers.origin))fail('Origen no permitido',403);
     const a=await auth.requireAuth(req,res,'projects:read',true);if(!a)return;
     auth.rate(req,'mcp',600);
-    const server=new McpServer({name:'bookshell-projects',version:'1.0.0'},{instructions:'Datos privados del usuario autenticado. Consulta antes de modificar; respeta versiones y confirmaciones. El porcentaje de tareas no es el progreso físico. No inventes avances ni fechas.'});
+    const server=new McpServer({name:'bookshell-projects',version:'1.0.0'},{instructions:'Datos del espacio de Bookshell. Consulta antes de modificar; respeta versiones y confirmaciones. El porcentaje de tareas no es el progreso físico. No inventes avances ni fechas.'});
     for(const[name,description,inputSchema,write,fn]of tools(a)){
       const securitySchemes=[{type:'oauth2',scopes:[write?'projects:write':'projects:read']}];
       server.registerTool(name,{description,inputSchema,annotations:{readOnlyHint:!write,destructiveHint:name==='delete_entry'||name==='update_project',idempotentHint:!write,openWorldHint:false},_meta:{securitySchemes}},async b=>{
@@ -53,10 +53,10 @@ function createProjects({pool,sendNotification}){
       if(await auth.oauth(req,res,url))return true;
       if(url.pathname==='/mcp'){await mcp(req,res);return true;}
       const write=!['GET','HEAD'].includes(req.method);if(write)auth.origin(req);
-      const a=await auth.requireAuth(req,res,write?'projects:write':'projects:read');if(!a)return true;
-      const user=a.userId;
+      if(!ownerId){json(res,503,{error:'workspace_owner_unavailable'});return true;}
+      auth.rate(req,'project-web',1200);
+      const user=ownerId;
       if(url.pathname==='/projects/access-code'&&req.method==='POST'){auth.rate(req,'pair-code',30);json(res,201,{ticket:await auth.issueTicket(user,'oauth'),expiresIn:600});return true;}
-      if(url.pathname==='/projects/browser-link'&&req.method==='POST'){auth.rate(req,'browser-link',15);json(res,201,{url:'https://bookshell.charlydob.com/projects-api/projects/activate?ticket='+await auth.issueTicket(user,'web'),expiresIn:600});return true;}
       if(url.pathname==='/projects/access'&&req.method==='GET'){const tokens=(await pool.query('SELECT client_id,scope,expires_at,revoked_at FROM project_oauth_tokens WHERE user_id=$1 AND revoked_at IS NULL',[user])).rows;json(res,200,{tokens});return true;}
       if(url.pathname==='/projects/access'&&req.method==='DELETE'){const b=await body(req);if(b.confirmed!==true)fail('Requiere confirmación');await pool.query('UPDATE project_oauth_tokens SET revoked_at=now() WHERE user_id=$1',[user]);json(res,200,{ok:true});return true;}
       if(url.pathname==='/projects/agenda'&&req.method==='GET'){json(res,200,{result:await domain.agenda(user,Object.fromEntries(url.searchParams))});return true;}

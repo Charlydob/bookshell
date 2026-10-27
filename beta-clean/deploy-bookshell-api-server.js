@@ -5681,11 +5681,20 @@ function reminderErrorStatus(error) {
 // SERVER
 // --------------------------------------------------
 
+const projectsModule = require("./projects/server").createProjects({
+  pool,
+  sendNotification: (userId, payload) => userId === SINGLE_USER_ID
+    ? sendPushToActiveSubscriptions(pool, webPush, payload)
+    : Promise.resolve({ accepted: false, attemptedCount: 0, reason: "no_subscription" }),
+});
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(
     req.url,
     `http://${req.headers.host || "localhost"}`
   );
+
+  if (await projectsModule.handle(req, res, url)) return;
 
   // ------------------------------------------------
   // CORS
@@ -7347,6 +7356,7 @@ if (require.main === module) {
     ensureReminderNotificationSchema(pool),
     ensureShortcutSchema(pool),
     ensureJarvisSchema(pool),
+    pool.query(readMigrationSql("20261027_projects.sql")),
   ]).then(async () => {
     const reconciliation = await reconcilePendingReminderAlerts({ db: pool });
     console.log("[schema] push, reminders and shortcuts ready");
@@ -7361,6 +7371,7 @@ if (require.main === module) {
     );
     void startupReady.finally(() => {
       startReminderScheduler();
+      projectsModule.start();
     });
   });
 }

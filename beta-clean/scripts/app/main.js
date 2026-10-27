@@ -52,6 +52,7 @@ const NAV_MENU_MARGIN = 10;
 const NAV_VIEW_META = {
   "view-books": { label: "Libros", shortLabel: "Libros" },
   "view-notes": { label: "Notas", shortLabel: "Notas" },
+  "view-projects": { label: "Proyectos", shortLabel: "Proyectos" },
   "view-recipes": { label: "Recetas", shortLabel: "Comida" },
   "view-habits": { label: "Habitos", shortLabel: "Hoy" },
   "view-world": { label: "Mundo", shortLabel: "Mundo" },
@@ -71,6 +72,7 @@ const RECOMMENDED_NAV_ORDER = Object.freeze([
   HABITS_VIEW_ID,
   "view-books",
   "view-notes",
+  "view-projects",
   "group-more",
 ]);
 const RECOMMENDED_NAV_GROUPS = Object.freeze({
@@ -1980,6 +1982,12 @@ async function importDynamicModule(moduleUrl, context = {}) {
 }
 
 const viewModules = {
+  "view-projects": {
+    cssUrl: "../../styles/modules/projects.css",
+    htmlUrl: "../../views/projects.html",
+    moduleUrl: "../modules/projects/index.js",
+    moduleLoader: () => importDynamicModule("../modules/projects/index.js", { viewId: "view-projects", phase: "view:view-projects:module-import" }),
+  },
   "view-books": {
     cssUrl: "../../styles/modules/books.css",
     htmlUrl: "../../views/books.html",

@@ -1,4 +1,4 @@
-importScripts("./scripts/shared/config/release.js?v=2026-09-09-data-refresh-v1");
+importScripts("./scripts/shared/config/release.js?v=2026-10-27-projects-v1");
 
 const BOOKSHELL_RELEASE = self.__BOOKSHELL_RELEASE__ || {};
 const APP_VERSION = String(BOOKSHELL_RELEASE.version || "dev");
@@ -9,6 +9,11 @@ const RUNTIME_CACHE = `bookshell-runtime-${APP_VERSION}`;
 const ACTIVE_CACHE_NAMES = Object.freeze([STATIC_CACHE, RUNTIME_CACHE]);
 
 const LOCAL_PRECACHE_ASSETS = [
+  "./views/projects.html",
+  "./styles/modules/projects.css",
+  "./scripts/modules/projects/index.js",
+  "./assets/vendors/projects/marked.js",
+  "./assets/vendors/projects/purify.js",
   "./",
   "./index.html",
   "./scripts/shared/config/release.js",

@@ -1,7 +1,7 @@
 (function publishBookshellRelease(root) {
   const release = Object.freeze({
-    version: "2026-10-27-projects-mobile-v2",
-    build: "projects-mobile-v2",
+    version: "2026-10-27-projects-mobile-v3",
+    build: "projects-mobile-v3",
     releasedAt: "2026-10-27",
     cachePrefix: "bookshell-",
   });

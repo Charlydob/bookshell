@@ -6,9 +6,9 @@ Fecha de verificación: 27 de octubre de 2026, Europe/Madrid.
 
 - Módulo integrado: https://bookshell.charlydob.com/#view-projects
 - MCP privado: https://mcp-bookshell.charlydob.com/mcp
-- Autenticación: cuenta existente de Bookshell, OAuth con código de autorización y PKCE S256 para ChatGPT. La sesión web de Proyectos usa una cookie Secure, HttpOnly, SameSite=Lax de 12 horas.
+- Acceso de propietario único, sin inicio de sesión por usuario y contraseña. Un enlace privado de un solo uso activa el navegador; desde Acceso se generan códigos privados para OAuth con PKCE S256 en ChatGPT. La sesión web usa una cookie Secure, HttpOnly, SameSite=Lax de 30 días. Enlaces y códigos caducan en diez minutos y se almacenan únicamente como hashes.
 - Estado del servidor: desplegado y verificado con un cliente MCP del SDK oficial; 23 herramientas descubiertas y operaciones reales de lectura/escritura comprobadas.
-- Prueba dentro de ChatGPT: conector privado creado con autorización del usuario; ChatGPT ha detectado OAuth y DCR. Pendiente de completar el inicio de sesión del propietario en la pantalla OAuth y ejecutar las peticiones de prueba. No considerar esta última parte terminada hasta registrar los resultados.
+- Prueba dentro de ChatGPT: conector privado creado con autorización del usuario; ChatGPT ha detectado OAuth y DCR. Pendiente de completar la vinculación privada del propietario y ejecutar las peticiones de prueba. No considerar esta última parte terminada hasta registrar los resultados.
 
 ## Arquitectura comprobada antes de implementar
 
@@ -20,7 +20,7 @@ El proxy activo es Caddy de systemd, configuración `/etc/caddy/Caddyfile`. Ya s
 
 El DNS público del nombre solicitado devuelve las direcciones de Cloudflare `188.114.96.12` y `188.114.97.12`; la inspección SSH confirmó el servidor de origen en `46.224.61.193`. No se modificó DNS ni se crearon otros nombres. Caddy obtuvo TLS y el acceso HTTPS a través de Cloudflare quedó verificado.
 
-La API antigua tiene autenticación web desactivada y funciona en modo de usuario único. Las cuentas y sus hashes bcrypt seguían presentes en `users`. Proyectos verifica esas credenciales y añade autorización por propietario; no hereda el acceso anónimo de los módulos antiguos. Cambiar la autenticación de los módulos antiguos queda fuera de este despliegue.
+La API antigua tiene autenticación web desactivada y funciona en modo de usuario único. Las cuentas y sus hashes bcrypt seguían presentes en `users`, pero no se recupera su uso para iniciar sesión. Proyectos conserva un identificador interno de propietario para aislar datos; el acceso se vincula por enlaces y códigos privados de un solo uso. No hay registro de cuentas, selector de usuarios ni contraseña antigua. Cambiar la autenticación de los módulos antiguos queda fuera de este despliegue.
 
 No había módulo Proyectos ni tablas de proyectos. Notas y su calendario/recordatorios están integrados en la sección antigua de Notas. Las notas existentes se guardan en el JSON canónico `firebase_import_raw`; los recordatorios existentes usan `reminders`, `reminder_alerts` y su registro de entregas. Se contaron 74 filas de recordatorios antes del despliegue.
 
@@ -37,7 +37,7 @@ No había módulo Proyectos ni tablas de proyectos. Notas y su calendario/record
 | `/shortcuts/finance/*`, `/shortcuts/world/*`, `/shortcuts/reminders/today` | Atajos existentes | Sin cambios |
 | `/export`, `/health`, `/data-usage` | Exportación, diagnóstico, métricas antiguas | Sin cambios de contrato |
 
-La lógica nueva vive en `projects/`, cargada dentro del servidor existente. Comparte PostgreSQL, la cuenta y el proveedor Web Push. Sus endpoints propios son necesarios para mantener datos, sesiones, permisos y OAuth separados.
+La lógica nueva vive en `projects/`, cargada dentro del servidor existente. Comparte PostgreSQL, el identificador interno del propietario y el proveedor Web Push. Sus endpoints propios son necesarios para mantener datos, sesiones, permisos y OAuth separados.
 
 ## Uso del módulo
 
@@ -76,6 +76,8 @@ El navegador usa `/projects-api/projects...` en el dominio de Bookshell; Caddy e
 | Reprogramación de dependientes | POST `/projects/:id/reschedule` |
 | Agenda | GET `/projects/agenda` |
 | Consultar/revocar conexiones | GET/DELETE `/projects/access` |
+| Vincular ChatGPT / otro navegador | POST `/projects/access-code`, POST `/projects/browser-link` |
+| Activación inicial privada | GET/POST `/projects/activate` |
 
 Herramientas MCP:
 
@@ -103,7 +105,7 @@ Procedimiento contrastado con el formulario de ChatGPT y la [guía oficial de co
 4. URL del servidor: `https://mcp-bookshell.charlydob.com/mcp`.
 5. Autenticación: OAuth. En ajustes avanzados, comprobar detección automática y Registro dinámico de clientes (DCR). No introducir claves ni secretos manualmente. Permisos: `projects:read` y `projects:write`.
 6. Revisa la advertencia y, si estás de acuerdo, pulsa Crear como complemento y después Conectar Bookshell Proyectos.
-7. En la página de Bookshell, introduce tu correo y contraseña existentes y pulsa Autorizar conexión.
+7. En un navegador vinculado, abre Proyectos → Acceso → Generar código para ChatGPT. Pega el código en la página de autorización de Bookshell y pulsa Autorizar conexión. No se solicita usuario ni contraseña. Para activar el primer navegador, el administrador emite un enlace mediante `docker exec bookshell-api-api-1 node projects/issue-access.js` sobre la conexión SSH privada; no publicar ni guardar su salida en logs. Para otro navegador, usa Acceso → Vincular otro navegador.
 8. Comprueba que ChatGPT descubre las 23 herramientas. Selecciona el complemento escribiendo `@` en el cuadro de mensaje y eligiendo Bookshell Proyectos.
 9. Prueba primero «Consulta HOOKBOX y dime tareas, bloqueos y progreso, distinguiendo fabricación». Después crea un proyecto de prueba con una tarea y una nota, edítalos y verifica los cambios en Bookshell. No dar por válida la integración solo porque el formulario haya guardado la URL.
 
@@ -116,13 +118,13 @@ Para desconectar, usa la gestión de complementos de ChatGPT o Proyectos → Acc
 - Sintaxis de la API, módulo y JavaScript de interfaz: correcta. La interfaz estática no necesita una compilación de framework.
 - `npm ci`: 241 paquetes, auditoría sin vulnerabilidades en la fecha del despliegue.
 - Diez archivos de regresión anteriores y cinco pruebas nuevas de dominio: correctos, 15 resultados del runner, sin fallos.
-- Dieciséis comprobaciones de integración sobre el HTTPS público: correctas. Incluyen descubrimiento, DCR, PKCE, rechazo de callback externo, audiencia incorrecta y reutilización de código; inicialización y 23 herramientas; CRUD, notas/documentación/eventos/recordatorios/compras/inventario; progreso y bloqueos; aislamiento por usuario; concurrencia; plantillas; reprogramación; confirmaciones; protección CSRF; solo lectura; refresh/revocación y envío programado sin duplicación.
+- Diecisiete comprobaciones de integración sobre el HTTPS público: incluyen descubrimiento, DCR, PKCE, rechazo de callback externo, audiencia incorrecta y reutilización de código; inicialización y 23 herramientas; CRUD, notas/documentación/eventos/recordatorios/compras/inventario; progreso y bloqueos; aislamiento por propietario; concurrencia; plantillas; reprogramación; confirmaciones; protección CSRF; solo lectura; refresh/revocación y envío programado sin duplicación. La prueba adicional verifica enlaces/códigos de un solo uso, caducidad, separación de propósito y rechazo del acceso por contraseña antigua.
 - Pruebas de interfaz reales: inicio de sesión, tarea temporal, actualización 0→13 % de ocho tareas, disminución de bloqueos, gráfico y Kanban coherentes; fecha guardada visible en calendario y cronograma; documentación con tabla y diagrama Mermaid; escritorio y móvil de 390×844, sin desbordamiento horizontal. Las mutaciones se hicieron en una cuenta temporal, no en HOOKBOX del propietario.
 - Reinicio del contenedor: HOOKBOX conserva ocho tareas pendientes y fabricación desconocida. Cuenta, sesiones y datos persistentes sobreviven al reinicio.
 - Regresión de datos: notas, libros y finanzas iguales a la copia previa mediante hashes del JSON correspondiente. Se mantienen las 74 filas antiguas de recordatorios. `/data/notes`, `/reminders` y `/health` responden correctamente. Notas antiguas y su calendario de recordatorios también se abrieron desde la interfaz.
 - Fuente de servidor nueva: bloqueada por Caddy en el sitio estático.
 - Copia de seguridad restaurada con éxito en una base temporal y cotejada con los datos actuales.
-- Pendiente registrar la ejecución final de lectura y escritura dentro de ChatGPT tras la autorización del propietario. Las notificaciones en un dispositivo físico tampoco se han confirmado.
+- Pendiente registrar la ejecución final de lectura y escritura dentro de ChatGPT tras la vinculación del propietario. Las notificaciones en un dispositivo físico tampoco se han confirmado.
 
 Capturas de escritorio, móvil y conexión: carpeta local de entrega `deliverables/Bookshell-Proyectos`. No contienen contraseñas. Las capturas de Notion Life OS y Finance Tracker mencionadas en el encargo no estaban entre los archivos adjuntos disponibles; se siguió la descripción visual oscura con acentos verdes.
 

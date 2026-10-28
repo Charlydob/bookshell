@@ -1,4 +1,4 @@
-importScripts("./scripts/shared/config/release.js?v=2026-10-27-projects-mobile-v5");
+importScripts("./scripts/shared/config/release.js?v=2026-10-28-mobile-redesign-v6");
 
 const BOOKSHELL_RELEASE = self.__BOOKSHELL_RELEASE__ || {};
 const APP_VERSION = String(BOOKSHELL_RELEASE.version || "dev");
@@ -12,6 +12,7 @@ const LOCAL_PRECACHE_ASSETS = [
   "./views/projects.html",
   "./styles/modules/projects.css",
   "./scripts/modules/projects/index.js",
+  "./scripts/modules/projects/schedule.js",
   "./assets/vendors/projects/marked.js",
   "./assets/vendors/projects/purify.js",
   "./",

@@ -14,7 +14,7 @@
   --fin-positive: #4bf2a8;
   --fin-negative: #ff708f;
   --fin-neutral: #9db0df;
-  padding: calc(env(safe-area-inset-top, 0px) + 20px) 14px 108px;
+  padding: 20px 14px 108px;
   background:transparen;
   color: var(--fin-text);
 }

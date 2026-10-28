@@ -1,12 +1,12 @@
 # Bookshell mobile redesign — 2026-10-28
 
-Release: `2026-10-28-mobile-redesign-v6`. Existing application and backend contracts are retained.
+Release: `2026-10-28-mobile-redesign-v7`. Existing application and backend contracts are retained.
 
 ## Changes
 
 - Monthly calendar: 42 fixed-height day cells, at most two previews (one at widths <=400px), exact hidden-item count, ellipsis, type colors, today/month navigation, and full daily agenda with edit/complete actions. Multi-day events use local dates and an exclusive end. Day detail includes every item of the selected project/date, independently of a text search.
 - All project and entry editors: full-width title/content, real two-column short fields, grouped dates, collapsed advanced options, and explicit override of inherited global label/select centering. The dialog header/footer stay outside its single scrolling body. Native date/select controls, close focus, error visibility, submit locking, body scroll lock, and visualViewport resize/offset handling are shared.
-- Mobile overview: compact metrics and a Hoy/Semana/Bloqueos/Agenda switch, with visible access to all tasks. Horizontal view navigation has a scroll indicator and preserves its horizontal position without jumping the document. Task and verified physical progress remain separate; project scoping remains shared by every view.
+- Mobile overview: compact metrics and a Hoy/Semana/Bloqueos/Agenda switch, with visible access to all tasks. The closed quick-action globe is accessed through More on mobile so it cannot cover calendar cells. Horizontal view navigation has a scroll indicator and preserves its horizontal position without jumping the document. Task and verified physical progress remain separate; project scoping remains shared by every view.
 - The shared shell owns the iOS top inset via body padding and an opaque fixed status-area surface. Per-view top insets were removed from the shell, Gym, and Finance to avoid duplication. Bottom navigation reserves the home-indicator inset. Existing modal/navigation blur effects remain. Viewport zoom is enabled.
 - Dates remain ISO UTC instants in the existing API/database. Display and editing follow the device zone. Unchanged dates preserve the exact original instant, including seconds/milliseconds and the repeated hour during the autumn transition. Nonexistent spring-transition times produce an actionable error. No existing timestamps are migrated.
 - The service-worker release and precache include the new scheduling utility; browser storage is preserved during updates.

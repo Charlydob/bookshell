@@ -99,3 +99,6 @@ html.pr-modal-open,html.pr-modal-open body{overflow:hidden!important;overscroll-
  .pr-dialog{inset:auto;left:50%;top:calc(var(--pr-viewport-top,0px) + env(safe-area-inset-top,0px) + 8px);transform:translateX(-50%);margin:0;width:min(740px,calc(100% - 16px));max-height:calc(var(--pr-viewport-height,100dvh) - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 16px)}
  .pr-dialog input,.pr-dialog select,.pr-dialog textarea{font-size:16px}
 }
+
+/* Quick actions remain available in More; the closed floating toggle cannot cover a day cell. */
+@media(max-width:999px){html[data-current-view-id=view-projects] .app-global-fab:not(.is-open){display:none}}

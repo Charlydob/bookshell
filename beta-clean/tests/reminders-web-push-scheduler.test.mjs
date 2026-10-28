@@ -332,7 +332,7 @@ await test("reinicio del scheduler/backend: las alertas reclamadas usan locking 
   assert.match(serverSource, /attempt_count = attempt_count \+ 1/);
 });
 
-await test("resumen de las 08:00 con varios recordatorios genera una unica notificacion agrupada", () => {
+await test("payload histórico de recordatorios manuales conserva compatibilidad", () => {
   const payload = __test.buildDailySummaryPayload({
     targetDate: "2026-08-28",
     timezone: "Europe/Zurich",
@@ -348,8 +348,9 @@ await test("resumen de las 08:00 con varios recordatorios genera una unica notif
   assert.match(payload.body, /18:30 - Clase de aleman/);
 });
 
-await test("no enviar resumen si no hay recordatorios queda persistido como skipped", () => {
-  assert.match(serverSource, /reminders\.length \? "sending" : "skipped"/);
+await test("el scheduler anterior delega en el resumen diario nuevo y no programa otra entrega", () => {
+  assert.match(serverSource, /managed_by_daily_0900_scheduler/);
+  assert.doesNotMatch(String(__test.claimDailySummaryDelivery), /localParts|08:00/);
   assert.match(migrationSource, /'skipped'/);
 });
 

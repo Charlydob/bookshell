@@ -947,6 +947,11 @@ async function renderSettingsModal() {
   let pushApi = null;
   try { pushApi = await getWebPushApi(); } catch (error) { console.warn("[push:module]", error); }
   try { pushState = pushApi ? await pushApi.getPushState() : pushState; } catch (error) { console.warn("[push:status]", error); }
+  let notificationState=null;
+  try{notificationState=pushApi?await pushApi.getNotificationStatus():null;}catch(error){console.warn('[notifications:status]',error.message);}
+  const digest=notificationState?.settings||{dailyEnabled:true,dailyTime:'09:00',timezone:'Europe/Zurich'};
+  const zones=Intl.supportedValuesOf?Intl.supportedValuesOf('timeZone'):['Europe/Zurich','Europe/Madrid','Europe/Berlin','Europe/London','America/New_York','UTC'];if(!zones.includes(digest.timezone))zones.unshift(digest.timezone);
+  const deliveryLabel={sent:'Aceptada por push',partial:'Aceptada en parte',retry:'Reintento pendiente',uncertain:'Resultado incierto; sin reenvío automático',no_subscription:'Sin dispositivo activo',expired:'Fuera de plazo',cancelled:'Cancelada',pending:'Programada',failed:'Fallo de envío'};
   let shortcutState = { enabled: false, token: null, endpoints: {} };
   try { shortcutState = pushApi ? await pushApi.getShortcutStatus() : shortcutState; } catch (error) { console.warn("[shortcuts:status]", error); }
   const pushDiagnostics = pushState.diagnostics || {
@@ -994,13 +999,20 @@ async function renderSettingsModal() {
       <h3>Tema activo: ${getCurrentTheme()}</h3>
       <div class="app-settings-themeGrid">${themeButtons}</div>
     </section>
-    <section class="app-settings-section">
-      <div class="app-settings-section__eyebrow">Notificaciones</div>
-      <div class="app-settings-section__actions">
-        <button type="button" class="app-settings-actionBtn" data-settings-open-notifications>Abrir panel de notificaciones</button>
-        <button type="button" class="app-settings-actionBtn" data-reminders-today-push ${!pushState.registered ? "disabled" : ""}>Enviar pendiente de hoy</button>
-      </div>
-      <p data-reminders-today-feedback>Usa los recordatorios reales de hoy y envia una Web Push al dispositivo.</p>
+    <section class="app-settings-section" aria-label="Resumen diario de Bookshell">
+      <div class="app-settings-section__eyebrow">Resumen diario</div>
+      <h3>Tu agenda, cada mañana</h3>
+      <form class="app-digest-form" data-digest-form>
+        <label class="app-digest-enabled"><input name="dailyEnabled" type="checkbox" ${digest.dailyEnabled?'checked':''}> Enviar resumen todos los días, también si no hay pendientes</label>
+        <label>Hora<input name="dailyTime" type="time" value="${escapeHtml(digest.dailyTime)}" required></label>
+        <label>Zona horaria<select name="timezone">${zones.map(zone=>`<option value="${zone}" ${zone===digest.timezone?'selected':''}>${zone.replaceAll('_',' ')}</option>`).join('')}</select></label>
+        <div class="app-settings-section__actions app-digest-actions"><button type="submit" class="app-settings-actionBtn">Guardar horario</button><button type="button" class="app-settings-actionBtn" data-digest-preview>Ver simulación</button><button type="button" class="app-settings-actionBtn" data-digest-test ${pushState.registered?'':'disabled'}>Enviar resumen de prueba</button></div>
+      </form>
+      <p data-digest-feedback role="status">${notificationState?(notificationState.activeDevices?`${notificationState.activeDevices} dispositivo(s) activo(s). `:'Activa las notificaciones en un dispositivo. ')+(digest.nextRunAt?'Próximo resumen: '+new Intl.DateTimeFormat('es-ES',{dateStyle:'short',timeStyle:'short',timeZone:digest.timezone}).format(new Date(digest.nextRunAt))+' · '+digest.timezone:digest.dailyEnabled?'Programado':'Resumen desactivado'):'No se pudo consultar el estado del servidor.'}</p>
+      <pre class="app-digest-preview" data-digest-output hidden></pre>
+      <p>Bookshell calcula y envía el resumen desde el servidor. La simulación y las pruebas no cambian el horario diario.</p>
+      <details class="app-digest-history"><summary>Últimos envíos y diagnóstico</summary>${(notificationState?.recent||[]).slice(0,6).map(r=>`<p>${escapeHtml(r.kind==='daily-summary'?'Resumen diario':r.kind==='test'?'Prueba':'Aviso')} · ${escapeHtml(deliveryLabel[r.status]||r.status)}<br><small>${r.provider_accepted} aceptado(s) por push · ${r.display_reported} confirmación(es) del navegador · ${r.opened} apertura(s)${r.error?' · '+escapeHtml(r.error):''}</small></p>`).join('')||'<p>Sin envíos registrados.</p>'}</details>
+      <div class="app-settings-section__actions"><button type="button" class="app-settings-actionBtn" data-settings-open-notifications>Abrir panel de notificaciones</button></div>
     </section>
     <section class="app-settings-section">
       <div class="app-settings-section__eyebrow">Datos y copias de seguridad</div>
@@ -1117,17 +1129,21 @@ function ensureSettingsModal() {
       closeSettingsModal();
     }
   });
+  backdrop.addEventListener('submit',async event=>{if(!event.target.matches('[data-digest-form]'))return;event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]'),feedback=backdrop.querySelector('[data-digest-feedback]');button.disabled=true;try{const api=await getWebPushApi();await api.saveDailySummarySettings({dailyEnabled:form.elements.dailyEnabled.checked,dailyTime:form.elements.dailyTime.value,timezone:form.elements.timezone.value});await renderSettingsModal();backdrop.querySelector('[data-digest-feedback]').textContent+=' · Horario guardado.';}catch(error){feedback.textContent='No se pudo guardar: '+error.message;}finally{button.disabled=false;}});
   backdrop.addEventListener("click", (event) => {
+    const digestAction=event.target?.closest?.('[data-digest-preview],[data-digest-test]');
+    if(digestAction){digestAction.disabled=true;const feedback=backdrop.querySelector('[data-digest-feedback]'),output=backdrop.querySelector('[data-digest-output]');feedback.textContent='Calculando tu agenda…';getWebPushApi().then(api=>digestAction.matches('[data-digest-test]')?api.sendDailySummaryTest(true):api.previewDailySummary()).then(result=>{output.hidden=false;output.textContent=(result.agenda?.payload.title||result.payload?.title||'Resumen')+'\n\n'+(result.agenda?.payload.body||result.payload?.body||'');feedback.textContent=result.simulation&&result.agenda?'Simulación calculada. El envío diario mantiene su horario.':result.accepted?`Aceptada por el servicio push en ${result.acceptedCount} dispositivo(s). La aceptación no confirma que se haya mostrado en pantalla.`:`Prueba: ${result.status||'fallo'} · ${(result.devices||[]).map(d=>d.provider_status||d.error||d.status).join(', ')}`;}).catch(error=>{feedback.textContent='Error: '+error.message;}).finally(()=>{digestAction.disabled=false;});return;}
     const pushAction = event.target?.closest?.("[data-push-enable], [data-push-disable], [data-push-test]");
     if (pushAction) {
       pushAction.disabled = true;
       const feedback = backdrop.querySelector("[data-push-feedback]");
       if (feedback) feedback.textContent = "Procesando…";
+      const permissionRequest=pushAction.matches("[data-push-enable]")&&"Notification" in window?Notification.requestPermission():null;
       const operation = getWebPushApi().then((api) => (
-        pushAction.matches("[data-push-enable]") ? api.enablePush()
+        pushAction.matches("[data-push-enable]") ? api.enablePush(permissionRequest)
           : pushAction.matches("[data-push-disable]") ? api.disablePush() : api.sendTestPush()
       ));
-      operation.then(() => renderSettingsModal()).catch((error) => {
+      operation.then(async result=>{await renderSettingsModal();if(pushAction.matches('[data-push-test]')){const feedback=backdrop.querySelector('[data-push-feedback]');if(feedback)feedback.textContent=result.accepted?`Prueba aceptada por push en ${result.acceptedCount} dispositivo(s). La recepción visual se confirma por separado.`:`Prueba: ${result.status||'no aceptada'} · ${(result.devices||[]).map(d=>d.provider_status||d.error||d.status).join(', ')}`;}}).catch((error) => {
         console.error("[push:action]", error);
         if (feedback) feedback.textContent = `Error: ${error.message}`;
         pushAction.disabled = false;
@@ -1933,6 +1949,7 @@ async function registerAppServiceWorkerOnce() {
         }
       });
     });
+    void getWebPushApi().then(api=>api.syncPushRegistration()).catch(error=>console.warn('[push:renew]',error.message));
     lastServiceWorkerUpdateCheckAt = Date.now();
     await registration.update();
     console.info("[offline:boot]", {

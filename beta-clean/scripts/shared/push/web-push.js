@@ -12,6 +12,16 @@ function api(path, options = {}) {
   });
 }
 
+function pushDeviceId(){let id=localStorage.getItem('bookshell:push-device:v1');if(!id){id=crypto.randomUUID();localStorage.setItem('bookshell:push-device:v1',id);}return id;}
+async function endpointHash(endpoint){const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(endpoint));return Array.from(new Uint8Array(bytes),v=>v.toString(16).padStart(2,'0')).join('').slice(0,16);}
+async function currentSubscription(registration,status){let subscription=await registration.pushManager.getSubscription();if(subscription&&(status.expiredEndpointHashes||[]).includes(await endpointHash(subscription.endpoint))){await subscription.unsubscribe();subscription=null;}return subscription;}
+async function projectsApi(path,method='GET',data){const r=await fetch('/projects-api/projects/notifications/'+path,{method,credentials:'same-origin',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,cache:'no-store'});const b=await r.json();if(!r.ok)throw new Error(b.error||'No se pudo consultar notificaciones');return b;}
+export const getNotificationStatus=()=>projectsApi('status');
+export const saveDailySummarySettings=settings=>projectsApi('settings','PATCH',settings);
+export const previewDailySummary=()=>projectsApi('preview','POST',{});
+export async function sendDailySummaryTest(summaryTest=true){const subscription=await(await getPushRegistration()).pushManager.getSubscription();if(!subscription)throw new Error('Activa las notificaciones en este dispositivo');return projectsApi('test','POST',{endpoint:subscription.endpoint,summaryTest,requestId:crypto.randomUUID()});}
+export async function syncPushRegistration(){if(!('Notification' in window)||Notification.permission!=='granted'||localStorage.getItem('bookshell:push-disabled:v1')==='1')return;const support=await getPushSupport();if(!support.supported)return;const registration=await getPushRegistration(),status=await api('/push/status');if(!status.configured)return;let subscription=await currentSubscription(registration,status);if(!subscription){try{subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:decodeVapidKey(status.vapidPublicKey)});}catch{return;}}await api('/push/subscribe',{method:'POST',body:JSON.stringify({...subscription.toJSON(),deviceId:pushDeviceId()})});}
+
 function decodeVapidKey(value) {
   const padding = "=".repeat((4 - value.length % 4) % 4);
   const bytes = atob((value + padding).replace(/-/g, "+").replace(/_/g, "/"));
@@ -71,28 +81,31 @@ export async function getPushState() {
   const subscription = await registration.pushManager.getSubscription();
   try {
     const status = await api("/push/status");
-    return { ...support, registered: Boolean(subscription), configured: status.configured, subscription, status };
+    const localHash=subscription?await endpointHash(subscription.endpoint):null;const serverRegistered=subscription&&(status.subscriptions||[]).some(s=>s.endpointHash===localHash);
+    return { ...support, registered: Boolean(serverRegistered)&&localStorage.getItem('bookshell:push-disabled:v1')!=='1', configured: status.configured, subscription, status };
   } catch (statusError) {
     console.warn("[push:status:api]", statusError);
     return { ...support, registered: Boolean(subscription), configured: false, subscription, statusError };
   }
 }
 
-export async function enablePush() {
-  const support = await getPushSupport();
-  if (!support.supported) throw new Error(`push_unsupported:${support.missingApis.join(",")}`);
-  const permission = await Notification.requestPermission();
+export async function enablePush(requestedPermission=null) {
+  if(!('Notification' in window))throw new Error('Instala Bookshell en la pantalla de inicio y activa sus notificaciones.');
+  const permission = await (requestedPermission||Notification.requestPermission());
   if (permission !== "granted") throw new Error(`notification_permission_${permission}`);
+  const support=await getPushSupport();if(!support.supported)throw new Error(`push_unsupported:${support.missingApis.join(',')}`);
   const status = await api("/push/status");
   if (!status.configured || !status.vapidPublicKey) throw new Error("push_not_configured");
   const registration = await getPushRegistration();
-  let subscription = await registration.pushManager.getSubscription();
+  let subscription = await currentSubscription(registration,status);
+  localStorage.removeItem('bookshell:push-disabled:v1');
   subscription ||= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodeVapidKey(status.vapidPublicKey) });
-  await api("/push/subscribe", { method: "POST", body: JSON.stringify(subscription.toJSON()) });
+  await api("/push/subscribe", { method: "POST", body: JSON.stringify({...subscription.toJSON(),deviceId:pushDeviceId()}) });
   return subscription;
 }
 
 export async function disablePush() {
+  localStorage.setItem('bookshell:push-disabled:v1','1');
   const registration = await getPushRegistration();
   const subscription = await registration.pushManager.getSubscription();
   if (!subscription) return false;
@@ -101,11 +114,7 @@ export async function disablePush() {
   return true;
 }
 
-export async function sendTestPush() {
-  const subscription = await (await getPushRegistration()).pushManager.getSubscription();
-  if (!subscription) throw new Error("device_not_registered");
-  return api("/push/test", { method: "POST", body: JSON.stringify({ endpoint: subscription.endpoint }) });
-}
+export async function sendTestPush(){return sendDailySummaryTest(false);}
 
 export async function sendTodayPendingPush(timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Zurich") {
   return api("/reminders/today/push", {

@@ -102,3 +102,14 @@ html.pr-modal-open,html.pr-modal-open body{overflow:hidden!important;overscroll-
 
 /* Quick actions remain available in More; the closed floating toggle cannot cover a day cell. */
 @media(max-width:999px){html[data-current-view-id=view-projects] .app-global-fab:not(.is-open){display:none}}
+/* Task notices stay compact; full details remain optional. */
+.pr-dialog .pr-task-notifications{order:4;min-width:0;margin:0;padding:12px;border:1px solid #34443a;border-radius:10px}
+.pr-task-notifications legend{font-size:12px;color:#b8d5c2;padding:0 6px}.pr-alert-presets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-bottom:9px}
+.pr-dialog .pr-alert-choice{display:flex;align-items:center;gap:6px;min-height:44px;padding:5px;background:#1d2b22;border-radius:7px;font-size:12px}
+.pr-dialog .pr-alert-choice input{flex:none;width:20px;height:20px;min-height:20px;margin:0}
+.pr-task-notifications .pr-actions{margin:8px 0;flex-wrap:wrap}.pr-task-notifications .pr-button{font-size:12px;min-height:44px}.pr-custom-alert{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:end;gap:7px;margin:8px 0}
+.pr-alert-history summary{font-size:12px;min-height:44px;padding:12px 0;cursor:pointer}.pr-alert-history p{padding:5px 0}
+.pr-today-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.pr-today-grid .pr-task{min-width:0}.pr-today-grid .pr-link{overflow-wrap:anywhere}
+@media(max-width:650px){.pr-today-grid{grid-template-columns:1fr}.pr-dialog [data-field=taskId]{grid-column:1/-1;order:5}}
+
+.pr-dialog .pr-entry-main>.pr-task-notifications{order:4}

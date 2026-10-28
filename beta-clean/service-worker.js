@@ -1,4 +1,4 @@
-importScripts("./scripts/shared/config/release.js?v=2026-10-28-mobile-redesign-v7");
+importScripts("./scripts/shared/config/release.js?v=2026-10-28-task-alerts-digest-v8");
 
 const BOOKSHELL_RELEASE = self.__BOOKSHELL_RELEASE__ || {};
 const APP_VERSION = String(BOOKSHELL_RELEASE.version || "dev");
@@ -337,33 +337,27 @@ self.addEventListener("message", (event) => {
   }
 });
 
+async function reportNotificationReceipt(data,event){
+ if(!data?.notificationId||!data?.receiptToken||!data?.subscriptionId)return;
+ const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),4000);
+ try{await fetch(new URL('./projects-api/projects/notifications/receipts',self.location.href),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notificationId:data.notificationId,subscriptionId:data.subscriptionId,receiptToken:data.receiptToken,event}),signal:controller.signal});}catch{}finally{clearTimeout(timeout);}
+}
 self.addEventListener("push", (event) => {
-  let payload = {};
-  try { payload = event.data?.json?.() || {}; } catch (_) { payload = { body: event.data?.text?.() || "" }; }
-  event.waitUntil(self.registration.showNotification(payload.title || "Bookshell", {
-    body: payload.body || "Tienes una nueva notificación.",
-    icon: "./icons/icon-192.png",
-    tag: payload.tag || payload.type || undefined,
-    data: {
-      url: payload.url || "/",
-      reminderId: payload.reminderId || "",
-      alertId: payload.alertId || "",
-      type: payload.type || "",
-    },
-    silent: false,
-  }));
+ let payload={};try{payload=event.data?.json?.()||{};}catch{payload={body:event.data?.text?.()||''};}
+ const data={url:payload.url||'/',reminderId:payload.reminderId||'',alertId:payload.alertId||'',type:payload.type||'',notificationId:payload.notificationId||'',subscriptionId:payload.subscriptionId||'',receiptToken:payload.receiptToken||'',taskId:payload.taskId||'',projectId:payload.projectId||''};
+ event.waitUntil(self.registration.showNotification(payload.title||'Bookshell',{body:payload.body||'Tienes una nueva notificación.',icon:'./icons/icon-192.png',tag:payload.tag||payload.type||undefined,data,silent:false}).then(()=>reportNotificationReceipt(data,'display-reported')));
 });
-
 self.addEventListener("notificationclick", (event) => {
-  event.notification.close();
-  event.waitUntil((async () => {
-    const targetUrl = new URL(event.notification.data?.url || "/", self.location.origin).href;
-    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    const existing = windows.find((client) => new URL(client.url).origin === self.location.origin);
-    if (existing) { await existing.focus(); return existing.navigate(targetUrl); }
-    return self.clients.openWindow(targetUrl);
-  })());
+ event.notification.close();
+ event.waitUntil((async()=>{
+  const data=event.notification.data||{},requested=new URL(data.url||'/',self.location.origin),targetUrl=requested.origin===self.location.origin?requested.href:new URL('./?agenda=today#view-projects',self.location.href).href;
+  const receipt=reportNotificationReceipt(data,'opened');
+  const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});const existing=windows.find(client=>new URL(client.url).origin===self.location.origin);
+  const navigate=existing?(async()=>{await existing.focus();return existing.navigate(targetUrl);})():self.clients.openWindow(targetUrl);
+  await Promise.all([receipt,navigate]);
+ })());
 });
+self.addEventListener('pushsubscriptionchange',event=>{event.waitUntil((async()=>{try{const options=event.oldSubscription?.options;if(!options)return;const subscription=event.newSubscription||await self.registration.pushManager.subscribe(options);await fetch('https://api-bookshell.charlydob.com/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...subscription.toJSON(),previousEndpoint:event.oldSubscription?.endpoint})});}catch(error){console.warn('[push:renew-worker]',error.message);}})());});
 
 self.addEventListener("fetch", (event) => {
   const { request } = event;

@@ -211,16 +211,21 @@ function ensurePushSubscriptionsSchema(db = pool) {
   return ready;
 }
 
-async function upsertPushSubscription(db, subscription, userAgent = null) {
+async function upsertPushSubscription(db, subscription, userAgent = null, deviceId = null) {
+  if(deviceId&&typeof db.connect==='function'){
+    const client=await db.connect();try{await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[SINGLE_USER_ID+deviceId]);await client.query('UPDATE push_subscriptions SET disabled_at=now(),updated_at=now() WHERE user_id=$1 AND device_id=$2 AND endpoint<>$3 AND disabled_at IS NULL',[SINGLE_USER_ID,deviceId,subscription.endpoint]);const row=await upsertPushSubscription(client,subscription,userAgent,null);await client.query('UPDATE push_subscriptions SET device_id=$2 WHERE id=$1',[row.id,deviceId]);await client.query('COMMIT');return row;}catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
+  }
   const result = await db.query(`
-    INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent, device_id)
+    VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (endpoint) DO UPDATE SET
       user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh,
-      auth = EXCLUDED.auth, user_agent = EXCLUDED.user_agent,
+      auth = EXCLUDED.auth, user_agent = EXCLUDED.user_agent, device_id=COALESCE(EXCLUDED.device_id,push_subscriptions.device_id),
       updated_at = now(), disabled_at = NULL, failure_count = 0
     RETURNING id, endpoint, created_at, updated_at, disabled_at
-  `, [SINGLE_USER_ID, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, userAgent]);
+  `, [SINGLE_USER_ID, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, userAgent, deviceId]);
+  if(deviceId)await db.query('UPDATE push_subscriptions SET disabled_at=now(),updated_at=now() WHERE user_id=$1 AND device_id=$2 AND endpoint<>$3 AND disabled_at IS NULL',[SINGLE_USER_ID,deviceId,subscription.endpoint]);
+  await db.query('INSERT INTO notification_preferences(user_id) VALUES($1) ON CONFLICT DO NOTHING',[SINGLE_USER_ID]);
   return result.rows[0];
 }
 
@@ -231,6 +236,8 @@ function normalizeWebPushOptions(options = {}) {
   return {
     TTL: clampInt(options?.TTL ?? options?.ttl, 60, 0, 86400),
     ...(WEB_PUSH_URGENCIES.has(urgency) ? { urgency } : {}),
+    ...(/^[A-Za-z0-9_-]{1,32}$/.test(options.topic||'')?{topic:options.topic}:{}),
+    ...(options.timeout ? {timeout:clampInt(options.timeout,10000,1000,30000)} : {}),
   };
 }
 
@@ -238,7 +245,7 @@ async function sendPushToEndpoint(db, provider, endpoint, payload, options = {})
   const found = await db.query(`
     SELECT id, endpoint, p256dh, auth FROM push_subscriptions
     WHERE user_id = $1 AND endpoint = $2 AND disabled_at IS NULL LIMIT 1
-  `, [SINGLE_USER_ID, endpoint]);
+  `, [options.userId||SINGLE_USER_ID, endpoint]);
   if (!found.rows.length) return { accepted: false, statusCode: 404, reason: "subscription_not_found" };
   const row = found.rows[0];
   try {
@@ -252,7 +259,7 @@ async function sendPushToEndpoint(db, provider, endpoint, payload, options = {})
     const statusCode = Number(error?.statusCode) || 502;
     await db.query(`UPDATE push_subscriptions SET last_failure_at = now(), failure_count = failure_count + 1,
       updated_at = now(), disabled_at = CASE WHEN $2 = ANY(ARRAY[404, 410]) THEN now() ELSE disabled_at END WHERE id = $1`, [row.id, statusCode]);
-    return { accepted: false, statusCode, reason: String(error?.body || error?.message || "push_provider_error").slice(0, 500) };
+    return { accepted: false, statusCode, reason: String(error?.body || error?.message || "push_provider_error").slice(0, 500), uncertain:!Number(error?.statusCode) };
   }
 }
 
@@ -5348,193 +5355,9 @@ async function listDailySummaryReminders(targetDate, timeZone = DEFAULT_REMINDER
   }));
 }
 
-async function claimDailySummaryDelivery({ now = new Date(), timeZone = DEFAULT_REMINDER_TIMEZONE } = {}) {
-  const safeTimezone = normalizeTimezone(timeZone);
-  const localParts = zonedParts(now, safeTimezone);
-  const targetDate = dateStringFromUtcParts(
-    localParts.year,
-    localParts.month,
-    localParts.day
-  );
-
-  if (localParts.hour !== 8) {
-    return {
-      claimed: false,
-      reason: "outside_summary_window",
-      targetDate,
-      timezone: safeTimezone,
-    };
-  }
-
-  await ensureReminderNotificationSchema(pool);
-
-  const reminders = await listDailySummaryReminders(targetDate, safeTimezone);
-  const deliveryKey = `daily:${safeTimezone}:${targetDate}`;
-  const workerId = `summary-${crypto.randomUUID()}`;
-  const payload = buildDailySummaryPayload({
-    targetDate,
-    timezone: safeTimezone,
-    reminders,
-  });
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const inserted = await client.query(
-      `
-        INSERT INTO reminder_notification_deliveries (
-          user_id,
-          delivery_type,
-          delivery_key,
-          timezone,
-          target_date,
-          target_at,
-          reminder_ids,
-          payload,
-          status,
-          attempt_count,
-          locked_at,
-          locked_by,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          $1,
-          'daily_summary',
-          $2,
-          $3,
-          $4::date,
-          $5,
-          $6::uuid[],
-          $7::jsonb,
-          $8,
-          1,
-          NOW(),
-          $9,
-          NOW(),
-          NOW()
-        )
-        ON CONFLICT (user_id, delivery_type, delivery_key) DO NOTHING
-        RETURNING id, status
-      `,
-      [
-        SINGLE_USER_ID,
-        deliveryKey,
-        safeTimezone,
-        targetDate,
-        localDateTimeToUtc(targetDate, "08:00", safeTimezone),
-        reminders.map((reminder) => reminder.reminderId),
-        JSON.stringify(payload),
-        reminders.length ? "sending" : "skipped",
-        workerId,
-      ]
-    );
-
-    await client.query("COMMIT");
-
-    if (!inserted.rows.length) {
-      return {
-        claimed: false,
-        reason: "already_claimed",
-        targetDate,
-        timezone: safeTimezone,
-      };
-    }
-
-    return {
-      claimed: reminders.length > 0,
-      skipped: reminders.length === 0,
-      deliveryId: inserted.rows[0].id,
-      workerId,
-      targetDate,
-      timezone: safeTimezone,
-      reminders,
-      payload,
-    };
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {}
-
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function updateDailySummaryDelivery(deliveryId, patch = {}) {
-  const status = ["sent", "failed", "skipped"].includes(String(patch?.status || ""))
-    ? String(patch.status)
-    : "failed";
-  const result = await pool.query(
-    `
-      UPDATE reminder_notification_deliveries
-      SET
-        status = $2,
-        sent_at = CASE WHEN $2 = 'sent' THEN NOW() ELSE sent_at END,
-        failed_at = CASE WHEN $2 = 'failed' THEN NOW() ELSE failed_at END,
-        error_message = CASE WHEN $2 = 'failed' THEN $3 ELSE NULL END,
-        locked_at = NULL,
-        locked_by = NULL,
-        updated_at = NOW()
-      WHERE id = $1
-      RETURNING id, status
-    `,
-    [
-      deliveryId,
-      status,
-      String(patch?.errorMessage || "").slice(0, 2000),
-    ]
-  );
-
-  return result.rows[0] || null;
-}
-
-async function runDailySummaryPushCycle({ now = new Date(), timeZone = DEFAULT_REMINDER_TIMEZONE } = {}) {
-  if (!isPushConfigured) {
-    return {
-      ok: false,
-      reason: "push_not_configured",
-      claimed: false,
-      sent: false,
-    };
-  }
-
-  const claimed = await claimDailySummaryDelivery({ now, timeZone });
-  if (!claimed.claimed) {
-    return {
-      ok: true,
-      ...claimed,
-      sent: false,
-    };
-  }
-
-  const delivery = await sendPushToActiveSubscriptions(
-    pool,
-    webPush,
-    claimed.payload,
-    { ttl: 7200 }
-  );
-
-  await updateDailySummaryDelivery(
-    claimed.deliveryId,
-    delivery.accepted
-      ? { status: "sent" }
-      : {
-          status: "failed",
-          errorMessage: delivery.reason || "push_delivery_failed",
-        }
-  );
-
-  return {
-    ok: true,
-    ...claimed,
-    sent: delivery.accepted,
-    acceptedCount: delivery.acceptedCount,
-    attemptedCount: delivery.attemptedCount,
-  };
-}
+// Compatibility exports: the obsolete 08:00/empty-day-skipping scheduler is retired.
+async function claimDailySummaryDelivery(){return {claimed:false,reason:'managed_by_daily_0900_scheduler'};}
+async function runDailySummaryPushCycle(){return projectsModule.notifications.tick();}
 
 let reminderSchedulerTimer = null;
 let reminderSchedulerTickInFlight = false;
@@ -5567,7 +5390,7 @@ async function runReminderSchedulerTick(options = {}) {
     const dueReminderAlertPushCycle =
       options?.dueReminderAlertPushCycle || runDueReminderAlertPushCycle;
     const dailySummaryPushCycle =
-      options?.dailySummaryPushCycle || runDailySummaryPushCycle;
+      options?.dailySummaryPushCycle || (async()=>({ok:true,delegatedTo:"bookshell-projects-notifications",reason:"daily_0900_scheduler"}));
     const [alerts, dailySummary] = await Promise.all([
       dueReminderAlertPushCycle({
         limit: options?.limit || 50,
@@ -5684,6 +5507,9 @@ function reminderErrorStatus(error) {
 const projectsModule = require("./projects/server").createProjects({
   pool,
   ownerId: SINGLE_USER_ID,
+  legacyUid: LEGACY_FIREBASE_UID,
+  pushConfigured:isPushConfigured,
+  sendDevice:(userId,endpoint,payload,options)=>isPushConfigured?sendPushToEndpoint(pool,webPush,endpoint,payload,{...options,userId}):Promise.resolve({accepted:false,statusCode:503,reason:"push_not_configured"}),
   sendNotification: (userId, payload) => userId === SINGLE_USER_ID
     ? sendPushToActiveSubscriptions(pool, webPush, payload)
     : Promise.resolve({ accepted: false, attemptedCount: 0, reason: "no_subscription" }),
@@ -6166,12 +5992,14 @@ const server = http.createServer(async (req, res) => {
     try {
       await ensurePushSubscriptionsSchema(pool);
       const result = await pool.query(`SELECT id, endpoint, created_at, updated_at, last_success_at,
-        last_failure_at, failure_count FROM push_subscriptions
+        last_failure_at, failure_count,device_id,user_agent FROM push_subscriptions
         WHERE user_id = $1 AND disabled_at IS NULL ORDER BY updated_at DESC`, [SINGLE_USER_ID]);
+      const expired=(await pool.query('SELECT endpoint FROM push_subscriptions WHERE user_id=$1 AND disabled_at IS NOT NULL AND failure_count>0 AND last_failure_at>=disabled_at',[SINGLE_USER_ID])).rows;
       return sendJson(req, res, 200, {
         ok: true,
         configured: isPushConfigured,
         vapidPublicKey: isPushConfigured ? VAPID_PUBLIC_KEY : null,
+        expiredEndpointHashes:expired.map(row=>crypto.createHash('sha256').update(row.endpoint).digest('hex').slice(0,16)),
         subscriptions: result.rows.map(({ endpoint, ...row }) => ({
           ...row,
           endpointHash: crypto.createHash("sha256").update(endpoint).digest("hex").slice(0, 16),
@@ -6187,9 +6015,12 @@ const server = http.createServer(async (req, res) => {
     try {
       if (!isPushConfigured) return sendJson(req, res, 503, { ok: false, error: "push_not_configured" });
       await ensurePushSubscriptionsSchema(pool);
-      const subscription = normalizePushSubscription(await readJson(req));
+      const pushInput=await readJson(req);const subscription = normalizePushSubscription(pushInput);
+      let deviceId=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pushInput.deviceId||'')?pushInput.deviceId:null;
+      if(pushInput.previousEndpoint&&!deviceId){deviceId=(await pool.query('SELECT device_id FROM push_subscriptions WHERE user_id=$1 AND endpoint=$2',[SINGLE_USER_ID,pushInput.previousEndpoint])).rows[0]?.device_id||null;}
       if (!subscription) return sendJson(req, res, 400, { ok: false, error: "invalid_subscription" });
-      const row = await upsertPushSubscription(pool, subscription, String(req.headers["user-agent"] || "").slice(0, 1000) || null);
+      const row = await upsertPushSubscription(pool, subscription, String(req.headers["user-agent"] || "").slice(0, 1000) || null,deviceId);
+      if(pushInput.previousEndpoint&&pushInput.previousEndpoint!==subscription.endpoint)await pool.query('UPDATE push_subscriptions SET disabled_at=now(),updated_at=now() WHERE user_id=$1 AND endpoint=$2',[SINGLE_USER_ID,pushInput.previousEndpoint]);
       return sendJson(req, res, 200, { ok: true, subscription: { id: row.id, createdAt: row.created_at, updatedAt: row.updated_at } });
     } catch (error) {
       console.error("[push:subscribe]", error);

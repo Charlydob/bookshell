@@ -7,9 +7,11 @@ const {createAuth,RESOURCE,SCOPES,body,json}=require('./auth');
 const uuid=z.string().uuid();
 const kind=z.enum(Object.keys(schemas));
 function safeError(e){return e.issues?e.issues.map(x=>`${x.path.join('.')}: ${x.message}`).join('; '):e.status?e.message:'Error interno; consulta el identificador de diagnóstico';}
-function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,pushConfigured=true,nowFn}){
-  const domain=createDomain(pool,{nowFn}),auth=createAuth(pool);
-  const notifications=require('./notifications').createNotifications({pool,domain,ownerId,legacyUid,pushConfigured,nowFn,sendDevice:sendDevice||((user,endpoint,payload)=>sendNotification(user,payload))});
+function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,pushConfigured=true,nowFn,jarvisEnabled=process.env.BOOKSHELL_JARVIS_V2_ENABLED==='1'}){
+  const domain=createDomain(pool,{nowFn}),auth=createAuth(pool,{jarvisEnabled});
+  const jarvis=jarvisEnabled?require('../jarvis/domain').createJarvis({pool,nowFn}):null;
+  const habitNotices=jarvisEnabled?require('../jarvis/notifications').createHabitNotices():null;
+  const notifications=require('./notifications').createNotifications({pool,domain,ownerId,legacyUid,pushConfigured,nowFn,enqueueAdditional:habitNotices?.enqueue,validateAdditional:habitNotices?.validate,sendDevice:sendDevice||((user,endpoint,payload)=>sendNotification(user,payload))});
   function tools(a){
     const pid={projectId:uuid};
     const definitions=[
@@ -31,13 +33,14 @@ function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,push
   }
   async function mcp(req,res){
     if(req.headers.origin&&!['https://chatgpt.com','https://bookshell.charlydob.com'].includes(req.headers.origin))fail('Origen no permitido',403);
-    const a=await auth.requireAuth(req,res,'projects:read',true);if(!a)return;
+    const a=await auth.requireAuth(req,res,null);if(!a)return;
     auth.rate(req,'mcp',600);
     const server=new McpServer({name:'bookshell-projects',version:'1.0.0'},{instructions:'Datos del espacio de Bookshell. Consulta antes de modificar; respeta versiones y confirmaciones. El porcentaje de tareas no es el progreso físico. No inventes avances ni fechas.'});
-    for(const[name,description,inputSchema,write,fn]of tools(a)){
-      const securitySchemes=[{type:'oauth2',scopes:[write?'projects:write':'projects:read']}];
-      server.registerTool(name,{description,inputSchema,annotations:{readOnlyHint:!write,destructiveHint:name==='delete_entry'||name==='update_project',idempotentHint:!write,openWorldHint:false},_meta:{securitySchemes}},async b=>{
-        if(!a.scopes.includes(write?'projects:write':'projects:read'))return {isError:true,content:[{type:'text',text:'Permisos insuficientes'}],_meta:{'mcp/www_authenticate':[`Bearer scope="projects:write", resource_metadata="https://mcp-bookshell.charlydob.com/.well-known/oauth-protected-resource"`]}};
+    for(const[name,description,inputSchema,write,fn,extraScopes]of [...tools(a),...(jarvis?require('../jarvis/tools').definitions(jarvis,a):[])]){
+      const requiredScopes=extraScopes||[write?'projects:write':'projects:read'];
+      const securitySchemes=[{type:'oauth2',scopes:requiredScopes}];
+      server.registerTool(name,{description,inputSchema,...(extraScopes?{outputSchema:{result:require('../jarvis/contracts').outputSchemas[name]}}:{}),annotations:{readOnlyHint:!write,destructiveHint:name==='delete_entry'||name==='update_project'||name==='habits_archive',idempotentHint:!write||!!extraScopes,openWorldHint:false},_meta:{securitySchemes}},async b=>{
+        if(requiredScopes.some(scope=>!a.scopes.includes(scope)))return {isError:true,content:[{type:'text',text:'Permisos insuficientes'}],_meta:{'mcp/www_authenticate':[`Bearer scope="${requiredScopes.join(' ')}", resource_metadata="https://mcp-bookshell.charlydob.com/.well-known/oauth-protected-resource"`]}};
         try{const result=await fn(b);return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:{result}};}catch(e){const diagnostic=require('crypto').randomUUID();if(!e.status&&!e.issues)console.error('[projects:mcp]',{diagnostic,tool:name,message:e.message});return {isError:true,content:[{type:'text',text:JSON.stringify({error:safeError(e),diagnostic,status:e.status||400})}]};}
       });
     }
@@ -92,7 +95,7 @@ function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,push
     return true;
   }
   async function tick(options={}){const result=await notifications.tick(options);await pool.query("DELETE FROM project_sessions WHERE expires_at<now(); DELETE FROM project_oauth_requests WHERE expires_at<now(); DELETE FROM project_oauth_codes WHERE expires_at<now()");return result;}
-  return {handle,domain,tools,notifications,tick,start(){
+  return {handle,domain,tools,jarvis,notifications,tick,start(){
     let ready=null;const ensureReady=()=>ready||(ready=require('./migrate-task-alerts').migrateLinks(pool,{apply:true}).then(r=>{console.info('[notifications:migration]',{linked:r.linked.length,review:r.review.length});return r;}).catch(error=>{ready=null;throw error;}));
     const run=()=>void ensureReady().then(()=>tick()).catch(e=>console.error('[notifications:scheduler]',{message:e.message}));
     const timer=setInterval(run,60000);timer.unref();run();return timer;

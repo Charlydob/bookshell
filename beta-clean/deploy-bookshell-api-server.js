@@ -2657,7 +2657,7 @@ function normalizeReminderAlert(alert = {}) {
     mode,
     minutesBefore,
     notifyAt: String(alert?.notifyAt || alert?.notify_at || "").trim(),
-    channel: "telegram",
+    channel: process.env.BOOKSHELL_TELEGRAM_RETIRED==='1'?"webpush":"telegram",
   };
 }
 
@@ -2674,7 +2674,7 @@ function normalizeReminderAlertSet(alerts = []) {
           mode: "relative",
           minutesBefore: 0,
           notifyAt: "",
-          channel: "telegram",
+          channel: process.env.BOOKSHELL_TELEGRAM_RETIRED==='1'?"webpush":"telegram",
         },
       ];
   const seen = new Set();
@@ -2910,7 +2910,7 @@ function serializeReminder(row, alerts = []) {
         alert.notify_at
           ? new Date(alert.notify_at).toISOString()
           : "",
-      channel: alert.channel || "telegram",
+      channel: alert.channel || (process.env.BOOKSHELL_TELEGRAM_RETIRED==='1'?"webpush":"telegram"),
       status: alert.status,
       sentAt:
         alert.sent_at
@@ -2990,7 +2990,7 @@ function reminderAlertRowToInput(alert = {}) {
     notifyAt: alert.notify_at
       ? new Date(alert.notify_at).toISOString()
       : "",
-    channel: alert.channel || "telegram",
+    channel: alert.channel || (process.env.BOOKSHELL_TELEGRAM_RETIRED==='1'?"webpush":"telegram"),
   };
 }
 
@@ -3164,7 +3164,7 @@ async function ensureReminderAlerts(client, reminderRow, options = {}) {
             $2,
             $3,
             $4,
-            'telegram',
+            $5,
             'pending',
             NOW(),
             NOW()
@@ -3176,6 +3176,7 @@ async function ensureReminderAlerts(client, reminderRow, options = {}) {
           expected.mode,
           expected.minutesBefore,
           expected.notifyAt,
+          process.env.BOOKSHELL_TELEGRAM_RETIRED==='1'?'webpush':'telegram',
         ]
       );
       created += 1;
@@ -4325,7 +4326,7 @@ function logReminderAlertDelivery(event = {}) {
   logger("[reminders:alert:delivery]", logPayload);
 }
 
-async function claimDueReminderAlerts(limit = 50, db = pool) {
+async function claimDueReminderAlerts(limit = 50, db = pool, channel = null) {
   const client = await db.connect();
   const workerId = `n8n-${crypto.randomUUID()}`;
   let staleReminderIds = [];
@@ -4351,13 +4352,14 @@ async function claimDueReminderAlerts(limit = 50, db = pool) {
           AND a.notify_at IS NOT NULL
           AND a.notify_at < NOW() - INTERVAL '30 minutes'
           AND r.firebase_uid = $1
+          AND ($2::text IS NULL OR a.channel=$2)
         RETURNING
           a.id AS alert_id,
           a.reminder_id,
           a.notify_at,
           a.failed_at
       `,
-      [LEGACY_FIREBASE_UID]
+      [LEGACY_FIREBASE_UID, channel]
     );
 
     staleReminderIds = Array.from(new Set(
@@ -4392,6 +4394,7 @@ async function claimDueReminderAlerts(limit = 50, db = pool) {
           AND a.notify_at <= NOW()
           AND r.status = 'pending'
           AND r.firebase_uid = $1
+          AND ($3::text IS NULL OR a.channel=$3)
           AND (
             a.locked_at IS NULL
             OR a.locked_at < NOW() - INTERVAL '5 minutes'
@@ -4403,6 +4406,7 @@ async function claimDueReminderAlerts(limit = 50, db = pool) {
       [
         LEGACY_FIREBASE_UID,
         clampInt(limit, 50, 1, 100),
+        channel,
       ]
     );
 
@@ -5302,7 +5306,7 @@ async function runDueReminderAlertPushCycle({
     };
   }
 
-  const claimed = await claimDueReminderAlerts(limit, db);
+  const claimed = await claimDueReminderAlerts(limit, db, process.env.BOOKSHELL_EXPLICIT_NOTIFICATION_CHANNELS==='1'?'webpush':null);
   const delivered = await deliverClaimedReminderAlerts({
     claimed,
     db,
@@ -6373,6 +6377,7 @@ const server = http.createServer(async (req, res) => {
   // ------------------------------------------------
 
   if (url.pathname.startsWith("/automation/")) {
+    if(process.env.BOOKSHELL_TELEGRAM_RETIRED==='1') return sendJson(req,res,410,{ok:false,error:'TELEGRAM_AUTOMATION_RETIRED'});
     if (!isAutomationAuthorized(req)) {
       return sendJson(req, res, 401, {
         ok: false,
@@ -6406,7 +6411,7 @@ const server = http.createServer(async (req, res) => {
   ) {
     try {
       const result = await claimDueReminderAlerts(
-        url.searchParams.get("limit") || 50
+        url.searchParams.get("limit") || 50, pool, process.env.BOOKSHELL_EXPLICIT_NOTIFICATION_CHANNELS==='1'?'telegram':null
       );
 
       return sendJson(req, res, 200, {
@@ -7286,6 +7291,7 @@ module.exports = {
     claimDailySummaryDelivery,
     runDailySummaryPushCycle,
     runDueReminderAlertPushCycle,
+    claimDueReminderAlerts,
     runReminderSchedulerTick,
     startReminderScheduler,
     stopReminderScheduler,

@@ -5845,6 +5845,7 @@ function gatherHabitPayload() {
   const params = Array.from(new Set(habitEditingParams.map(normalizeParamLabel).filter(Boolean)));
 
   return {
+    ...existing, // Preserve server-owned targets/reminder plans when editing from the web.
     id,
     name,
     emoji,

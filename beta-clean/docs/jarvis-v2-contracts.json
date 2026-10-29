@@ -1,0 +1,3332 @@
+{
+  "status": "candidate_not_deployed",
+  "existing": 23,
+  "added": 12,
+  "total": 35,
+  "tools": [
+    {
+      "name": "list_projects",
+      "description": "Lista proyectos, plantillas, tareas, bloqueos y estadísticas reales.",
+      "requiredScopes": [
+        "projects:read"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "get_project",
+      "description": "Consulta proyecto completo con notas, documentación, compras, inventario y dependencias.",
+      "requiredScopes": [
+        "projects:read"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "projectId"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "create_project",
+      "description": "Crea un proyecto; el progreso físico no se inventa. Puede usar una plantilla.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 12000,
+                "default": ""
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "paused",
+                  "archived"
+                ],
+                "default": "active"
+              },
+              "template": {
+                "type": "boolean",
+                "default": false
+              },
+              "physicalProgress": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "physicalEvidence": {
+                "type": "string",
+                "maxLength": 4000,
+                "default": ""
+              },
+              "color": {
+                "type": "string",
+                "enum": [
+                  "green",
+                  "blue",
+                  "amber",
+                  "violet"
+                ],
+                "default": "green"
+              },
+              "dueAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "dueAtType": {
+                "type": "string",
+                "enum": [
+                  "estimated",
+                  "confirmed"
+                ],
+                "default": "estimated"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "templateId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "update_project",
+      "description": "Modifica un proyecto con su versión actual. Archivar requiere confirmación explícita.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 12000,
+                "default": ""
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "paused",
+                  "archived"
+                ],
+                "default": "active"
+              },
+              "template": {
+                "type": "boolean",
+                "default": false
+              },
+              "physicalProgress": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "physicalEvidence": {
+                "type": "string",
+                "maxLength": 4000,
+                "default": ""
+              },
+              "color": {
+                "type": "string",
+                "enum": [
+                  "green",
+                  "blue",
+                  "amber",
+                  "violet"
+                ],
+                "default": "green"
+              },
+              "dueAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "dueAtType": {
+                "type": "string",
+                "enum": [
+                  "estimated",
+                  "confirmed"
+                ],
+                "default": "estimated"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              }
+            },
+            "additionalProperties": false
+          },
+          "confirmed": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "projectId",
+          "version",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "get_agenda",
+      "description": "Consulta pendientes y agenda. Fechas ISO; puede incluir vencidos. Usa Europe/Madrid para interpretar la semana.",
+      "requiredScopes": [
+        "projects:read"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pendingOnly": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "get_statistics",
+      "description": "Estadísticas de tareas, progreso, bloqueos, costes por moneda e inventario.",
+      "requiredScopes": [
+        "projects:read"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "projectId"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "get_activity",
+      "description": "Historial de cambios del proyecto.",
+      "requiredScopes": [
+        "projects:read"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "projectId"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "reschedule_dependencies",
+      "description": "Desplaza una tarea y todas sus dependientes pendientes el mismo número de días; no inventa fechas para tareas sin fecha.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "taskId": {
+            "$ref": "#/properties/projectId"
+          },
+          "days": {
+            "type": "integer",
+            "minimum": -3650,
+            "maximum": 3650
+          }
+        },
+        "required": [
+          "projectId",
+          "taskId",
+          "days"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "delete_entry",
+      "description": "Borrado recuperable de un registro. Requiere confirmación expresa del usuario y versión actual.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entryId": {
+            "$ref": "#/properties/projectId"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "task",
+              "note",
+              "document",
+              "event",
+              "reminder",
+              "purchase",
+              "inventory"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "confirmed": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "projectId",
+          "entryId",
+          "kind",
+          "version",
+          "confirmed"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "create_task",
+      "description": "Crea task dentro del proyecto. description acepta Markdown con tablas, imágenes, código y Mermaid.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "archived": {
+                "type": "boolean",
+                "default": false
+              },
+              "reminders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "offsetMinutes": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 525600
+                    },
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "default": true
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "maxItems": 20
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "todo",
+                  "doing",
+                  "done"
+                ],
+                "default": "todo"
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "urgent"
+                ],
+                "default": "medium"
+              },
+              "assignee": {
+                "$ref": "#/properties/data/properties/tags/items",
+                "default": ""
+              },
+              "startAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "dueAt": {
+                "$ref": "#/properties/data/properties/startAt"
+              },
+              "scheduleType": {
+                "type": "string",
+                "enum": [
+                  "estimated",
+                  "confirmed"
+                ],
+                "default": "estimated"
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "$ref": "#/properties/data/properties/reminders/items/properties/id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "dependsOn": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/properties/data/properties/reminders/items/properties/id"
+                },
+                "maxItems": 100,
+                "default": []
+              },
+              "milestone": {
+                "type": "boolean",
+                "default": false
+              },
+              "estimatedMinutes": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 525600
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "completedAt": {
+                "$ref": "#/properties/data/properties/startAt"
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "maxLength": 300,
+                      "minLength": 1
+                    },
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "url"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 20,
+                "default": []
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "data"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "update_task",
+      "description": "Edita task con la versión leída. Para completar tareas usa status=done; para reprogramar usa dueAt ISO.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entryId": {
+            "$ref": "#/properties/projectId"
+          },
+          "version": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "archived": {
+                "type": "boolean",
+                "default": false
+              },
+              "reminders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "offsetMinutes": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 525600
+                    },
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "default": true
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "maxItems": 20
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "todo",
+                  "doing",
+                  "done"
+                ],
+                "default": "todo"
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "urgent"
+                ],
+                "default": "medium"
+              },
+              "assignee": {
+                "$ref": "#/properties/patch/properties/tags/items",
+                "default": ""
+              },
+              "startAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "dueAt": {
+                "$ref": "#/properties/patch/properties/startAt"
+              },
+              "scheduleType": {
+                "type": "string",
+                "enum": [
+                  "estimated",
+                  "confirmed"
+                ],
+                "default": "estimated"
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "$ref": "#/properties/patch/properties/reminders/items/properties/id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "dependsOn": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/properties/patch/properties/reminders/items/properties/id"
+                },
+                "maxItems": 100,
+                "default": []
+              },
+              "milestone": {
+                "type": "boolean",
+                "default": false
+              },
+              "estimatedMinutes": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 525600
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "completedAt": {
+                "$ref": "#/properties/patch/properties/startAt"
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "maxLength": 300,
+                      "minLength": 1
+                    },
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "url"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 20,
+                "default": []
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "entryId",
+          "version",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "create_note",
+      "description": "Crea note dentro del proyecto. description acepta Markdown con tablas, imágenes, código y Mermaid.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "category": {
+                "$ref": "#/properties/data/properties/tags/items",
+                "default": "General"
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "data"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "update_note",
+      "description": "Edita note con la versión leída. Para completar tareas usa status=done; para reprogramar usa dueAt ISO.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entryId": {
+            "$ref": "#/properties/projectId"
+          },
+          "version": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "category": {
+                "$ref": "#/properties/patch/properties/tags/items",
+                "default": "General"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "entryId",
+          "version",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "create_document",
+      "description": "Crea document dentro del proyecto. description acepta Markdown con tablas, imágenes, código y Mermaid.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "category": {
+                "$ref": "#/properties/data/properties/tags/items",
+                "default": "Técnica"
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "data"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "update_document",
+      "description": "Edita document con la versión leída. Para completar tareas usa status=done; para reprogramar usa dueAt ISO.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entryId": {
+            "$ref": "#/properties/projectId"
+          },
+          "version": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "category": {
+                "$ref": "#/properties/patch/properties/tags/items",
+                "default": "Técnica"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "entryId",
+          "version",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "create_event",
+      "description": "Crea event dentro del proyecto. description acepta Markdown con tablas, imágenes, código y Mermaid.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "startAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "endAt": {
+                "$ref": "#/properties/data/properties/startAt"
+              },
+              "location": {
+                "$ref": "#/properties/data/properties/tags/items",
+                "default": ""
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "scheduled",
+                  "done",
+                  "cancelled"
+                ],
+                "default": "scheduled"
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "data"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "update_event",
+      "description": "Edita event con la versión leída. Para completar tareas usa status=done; para reprogramar usa dueAt ISO.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entryId": {
+            "$ref": "#/properties/projectId"
+          },
+          "version": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "startAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "endAt": {
+                "$ref": "#/properties/patch/properties/startAt"
+              },
+              "location": {
+                "$ref": "#/properties/patch/properties/tags/items",
+                "default": ""
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "scheduled",
+                  "done",
+                  "cancelled"
+                ],
+                "default": "scheduled"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "entryId",
+          "version",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "create_reminder",
+      "description": "Crea reminder dentro del proyecto. description acepta Markdown con tablas, imágenes, código y Mermaid.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "taskId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "offsetMinutes": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 525600
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "dueAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "done",
+                  "cancelled"
+                ],
+                "default": "pending"
+              },
+              "notify": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "data"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "update_reminder",
+      "description": "Edita reminder con la versión leída. Para completar tareas usa status=done; para reprogramar usa dueAt ISO.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entryId": {
+            "$ref": "#/properties/projectId"
+          },
+          "version": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "taskId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "offsetMinutes": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 525600
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "dueAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "done",
+                  "cancelled"
+                ],
+                "default": "pending"
+              },
+              "notify": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "entryId",
+          "version",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "create_purchase",
+      "description": "Crea purchase dentro del proyecto. description acepta Markdown con tablas, imágenes, código y Mermaid.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "quantity": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1000000000,
+                "default": 1
+              },
+              "unitCost": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1000000000,
+                "default": 0
+              },
+              "currency": {
+                "type": "string",
+                "enum": [
+                  "EUR",
+                  "CHF",
+                  "USD"
+                ],
+                "default": "EUR"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "planned",
+                  "ordered",
+                  "received"
+                ],
+                "default": "planned"
+              },
+              "supplier": {
+                "$ref": "#/properties/data/properties/tags/items",
+                "default": ""
+              },
+              "dueAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "data"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "update_purchase",
+      "description": "Edita purchase con la versión leída. Para completar tareas usa status=done; para reprogramar usa dueAt ISO.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entryId": {
+            "$ref": "#/properties/projectId"
+          },
+          "version": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "quantity": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1000000000,
+                "default": 1
+              },
+              "unitCost": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1000000000,
+                "default": 0
+              },
+              "currency": {
+                "type": "string",
+                "enum": [
+                  "EUR",
+                  "CHF",
+                  "USD"
+                ],
+                "default": "EUR"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "planned",
+                  "ordered",
+                  "received"
+                ],
+                "default": "planned"
+              },
+              "supplier": {
+                "$ref": "#/properties/patch/properties/tags/items",
+                "default": ""
+              },
+              "dueAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "entryId",
+          "version",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "create_inventory",
+      "description": "Crea inventory dentro del proyecto. description acepta Markdown con tablas, imágenes, código y Mermaid.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "quantity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1000000000,
+                "default": 0
+              },
+              "unit": {
+                "$ref": "#/properties/data/properties/tags/items",
+                "default": "uds"
+              },
+              "location": {
+                "$ref": "#/properties/data/properties/tags/items",
+                "default": ""
+              },
+              "minimum": {
+                "type": "number",
+                "minimum": 0,
+                "default": 0
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "data"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "update_inventory",
+      "description": "Edita inventory con la versión leída. Para completar tareas usa status=done; para reprogramar usa dueAt ISO.",
+      "requiredScopes": [
+        "projects:write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entryId": {
+            "$ref": "#/properties/projectId"
+          },
+          "version": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 300,
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 100000,
+                "default": ""
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 20,
+                "default": []
+              },
+              "quantity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1000000000,
+                "default": 0
+              },
+              "unit": {
+                "$ref": "#/properties/patch/properties/tags/items",
+                "default": "uds"
+              },
+              "location": {
+                "$ref": "#/properties/patch/properties/tags/items",
+                "default": ""
+              },
+              "minimum": {
+                "type": "number",
+                "minimum": 0,
+                "default": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "projectId",
+          "entryId",
+          "version",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "existing_projects"
+    },
+    {
+      "name": "habits_list",
+      "description": "Consulta hábitos existentes y revisiones. Busca antes de crear; no convierte ejemplos en datos.",
+      "requiredScopes": [
+        "habits:read"
+      ],
+      "conditionalScopes": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "includeArchived": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 150,
+                  "pattern": "^[A-Za-z0-9_-]+$"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "goal": {
+                  "type": "string",
+                  "enum": [
+                    "check",
+                    "count",
+                    "time"
+                  ]
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "goal",
+                "revision"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "habits_create",
+      "description": "Crea un hábito check/count/time en el modelo web canónico. Acepta reminderPlan explícito para crear hábito y avisos atómicamente con notifications:write. No elige horas implícitas.",
+      "requiredScopes": [
+        "habits:write"
+      ],
+      "conditionalScopes": "reminderPlan requires notifications:write",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "habit": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "goal": {
+                "type": "string",
+                "enum": [
+                  "check",
+                  "count",
+                  "time"
+                ]
+              },
+              "emoji": {
+                "type": "string",
+                "maxLength": 16
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^#[a-fA-F0-9]{6}$"
+              },
+              "schedule": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "daily",
+                      "days"
+                    ]
+                  },
+                  "days": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 6
+                    },
+                    "maxItems": 7
+                  }
+                },
+                "required": [
+                  "type",
+                  "days"
+                ],
+                "additionalProperties": false
+              },
+              "targetsByRange": {
+                "type": "object",
+                "properties": {
+                  "day": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "week": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "month": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "year": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "total": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "targetMinutes": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1440
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "goal",
+              "schedule"
+            ],
+            "additionalProperties": false
+          },
+          "reminderPlan": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "times": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                },
+                "maxItems": 6
+              },
+              "timezone": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "startDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "endDate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/properties/reminderPlan/properties/startDate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "enabled",
+              "times",
+              "timezone",
+              "startDate"
+            ],
+            "additionalProperties": false
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 180
+          }
+        },
+        "required": [
+          "habit",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "habit": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 150,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "goal": {
+                "type": "string",
+                "enum": [
+                  "check",
+                  "count",
+                  "time"
+                ]
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "goal",
+              "revision"
+            ],
+            "additionalProperties": true
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "habit"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "habits_update",
+      "description": "Edita configuración del hábito con revisión leída. No cambia el tipo ni sobrescribe registros.",
+      "requiredScopes": [
+        "habits:write"
+      ],
+      "conditionalScopes": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "habitId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "goal": {
+                "type": "string",
+                "enum": [
+                  "check",
+                  "count",
+                  "time"
+                ]
+              },
+              "emoji": {
+                "type": "string",
+                "maxLength": 16
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^#[a-fA-F0-9]{6}$"
+              },
+              "schedule": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "daily",
+                      "days"
+                    ]
+                  },
+                  "days": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 6
+                    },
+                    "maxItems": 7
+                  }
+                },
+                "required": [
+                  "type",
+                  "days"
+                ],
+                "additionalProperties": false
+              },
+              "targetsByRange": {
+                "type": "object",
+                "properties": {
+                  "day": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "week": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "month": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "year": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "total": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "targetMinutes": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1440
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 180
+          }
+        },
+        "required": [
+          "habitId",
+          "expectedRevision",
+          "patch",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "habit": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 150,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "goal": {
+                "type": "string",
+                "enum": [
+                  "check",
+                  "count",
+                  "time"
+                ]
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "goal",
+              "revision"
+            ],
+            "additionalProperties": true
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "habit"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "habits_archive",
+      "description": "Archiva recuperablemente un hábito; requiere confirmación humana explícita y revisión actual.",
+      "requiredScopes": [
+        "habits:write"
+      ],
+      "conditionalScopes": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "habitId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "const": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 180
+          }
+        },
+        "required": [
+          "habitId",
+          "expectedRevision",
+          "confirmed",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "habit": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 150,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "goal": {
+                "type": "string",
+                "enum": [
+                  "check",
+                  "count",
+                  "time"
+                ]
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "goal",
+              "revision"
+            ],
+            "additionalProperties": true
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "habit"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "habits_record",
+      "description": "Registra un incremento o fija un acumulado para una fecha explícita. Un set requiere revisión de habits_history; bajar un valor requiere confirmación. Check usa set 0/1.",
+      "requiredScopes": [
+        "habits:write"
+      ],
+      "conditionalScopes": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "habitId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "increment",
+              "set"
+            ]
+          },
+          "value": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10000000
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "check",
+              "count",
+              "minutes",
+              "seconds"
+            ]
+          },
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "confirmed": {
+            "type": "boolean"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 180
+          }
+        },
+        "required": [
+          "habitId",
+          "date",
+          "mode",
+          "value",
+          "unit",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "habitId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "value": {
+            "type": "number",
+            "minimum": 0
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "check",
+              "count",
+              "seconds"
+            ]
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "previousRevision": {
+            "$ref": "#/properties/revision"
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "habitId",
+          "date",
+          "value",
+          "unit",
+          "revision",
+          "previousRevision"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "habits_history",
+      "description": "Consulta agregados diarios, total e identificadores de revisión. No deduce horas de cumplimiento ni sueño.",
+      "requiredScopes": [
+        "habits:read"
+      ],
+      "conditionalScopes": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "habitId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "from": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "$ref": "#/properties/from"
+          }
+        },
+        "required": [
+          "habitId",
+          "from",
+          "to"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "habit": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 150,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "goal": {
+                "type": "string",
+                "enum": [
+                  "check",
+                  "count",
+                  "time"
+                ]
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "goal",
+              "revision"
+            ],
+            "additionalProperties": true
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "check",
+              "count",
+              "seconds"
+            ]
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "value": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "revision": {
+                  "$ref": "#/properties/habit/properties/revision"
+                }
+              },
+              "required": [
+                "date",
+                "value",
+                "revision"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "number",
+            "minimum": 0
+          },
+          "timingEvidence": {
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "habit",
+          "unit",
+          "days",
+          "total",
+          "timingEvidence"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "habits_reminders",
+      "description": "Configura hasta seis horas explícitas con zona y rango. Requiere permiso notifications:write. Evita horarios duplicados y no insiste tras completar objetivo diario.",
+      "requiredScopes": [
+        "habits:write",
+        "notifications:write"
+      ],
+      "conditionalScopes": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "habitId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "plan": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "times": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                },
+                "maxItems": 6
+              },
+              "timezone": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "startDate": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "endDate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/properties/plan/properties/startDate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "enabled",
+              "times",
+              "timezone",
+              "startDate"
+            ],
+            "additionalProperties": false
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 180
+          }
+        },
+        "required": [
+          "habitId",
+          "expectedRevision",
+          "plan",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "habit": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 150,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "goal": {
+                "type": "string",
+                "enum": [
+                  "check",
+                  "count",
+                  "time"
+                ]
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "goal",
+              "revision"
+            ],
+            "additionalProperties": true
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "habit"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "activity_start",
+      "description": "Inicia una actividad explícita, opcionalmente asociada a hábito de tiempo y proyecto propio. Permite actividades simultáneas.",
+      "requiredScopes": [
+        "time:write"
+      ],
+      "conditionalScopes": "habit link requires habits:write; project link requires projects:read when creating",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "habitId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "timezone": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 180
+          }
+        },
+        "required": [
+          "label",
+          "timezone",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "label": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "paused",
+                  "stopped"
+                ]
+              },
+              "timezone": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "openAt": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "intervals": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                }
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "status",
+              "timezone",
+              "openAt",
+              "intervals",
+              "revision"
+            ],
+            "additionalProperties": true
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "activity_change",
+      "description": "Pausa, reanuda o termina una sesión explícita usando su revisión. Al terminar acredita el hábito de forma atómica.",
+      "requiredScopes": [
+        "time:write"
+      ],
+      "conditionalScopes": "habit link requires habits:write; project link requires projects:read when creating",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "pause",
+              "resume",
+              "stop"
+            ]
+          },
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 180
+          }
+        },
+        "required": [
+          "sessionId",
+          "action",
+          "expectedRevision",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "label": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "paused",
+                  "stopped"
+                ]
+              },
+              "timezone": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "openAt": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "intervals": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                }
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "status",
+              "timezone",
+              "openAt",
+              "intervals",
+              "revision"
+            ],
+            "additionalProperties": true
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "activity_manual",
+      "description": "Registra intervalos declarados, sin inferir duración entre mensajes. Rechaza solapamiento dentro de la misma sesión; permite actividades simultáneas distintas.",
+      "requiredScopes": [
+        "time:write"
+      ],
+      "conditionalScopes": "habit link requires habits:write; project link requires projects:read when creating",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "habitId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "timezone": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "intervals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "end": {
+                  "$ref": "#/properties/intervals/items/properties/start"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 180
+          }
+        },
+        "required": [
+          "label",
+          "timezone",
+          "intervals",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "label": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "paused",
+                  "stopped"
+                ]
+              },
+              "timezone": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "openAt": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "intervals": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                }
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "status",
+              "timezone",
+              "openAt",
+              "intervals",
+              "revision"
+            ],
+            "additionalProperties": true
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "activity_query",
+      "description": "Consulta sesiones explícitas y tiempo de actividad, transcurrido por unión, exclusivo y solapado. Los totales legacy no acreditan intervalos.",
+      "requiredScopes": [
+        "time:read"
+      ],
+      "conditionalScopes": "habit link requires habits:write; project link requires projects:read when creating",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "$ref": "#/properties/from"
+          },
+          "timezone": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "habitId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "projectId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "timezone"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "running",
+                    "paused",
+                    "stopped"
+                  ]
+                },
+                "timezone": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "openAt": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "intervals": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "items": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  }
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "durationSec": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "status",
+                "timezone",
+                "openAt",
+                "intervals",
+                "revision",
+                "durationSec"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "elapsedSec": {
+                "type": "number",
+                "minimum": 0
+              },
+              "activitySec": {
+                "type": "number",
+                "minimum": 0
+              },
+              "exclusiveSec": {
+                "type": "number",
+                "minimum": 0
+              },
+              "overlapSec": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "elapsedSec",
+              "activitySec",
+              "exclusiveSec",
+              "overlapSec"
+            ],
+            "additionalProperties": false
+          },
+          "timezone": {
+            "$ref": "#/properties/sessions/items/properties/timezone"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "byDate": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/properties/totals"
+            }
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessions",
+          "totals",
+          "timezone",
+          "scope",
+          "byDate"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    },
+    {
+      "name": "jarvis_context",
+      "description": "Consulta preferencias de hábitos y horarios existentes, zona configurada y operaciones permitidas; no inventa preferencias.",
+      "requiredScopes": [
+        "habits:read"
+      ],
+      "conditionalScopes": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workSchedules": {},
+          "habitPrefs": {},
+          "availableOperations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "timezone",
+          "availableOperations"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "generation": "candidate_jarvis2"
+    }
+  ]
+}

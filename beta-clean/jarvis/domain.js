@@ -330,6 +330,8 @@ function createJarvis({ pool, nowFn = () => new Date() }) {
           root[key][h.id] ??= {};
           root[key][h.id][b.date] = h.goal === "check" ? !!next : next;
         }
+        const dailyTarget = h.goal === "check" ? 1 : h.goal === "time" ? h.goalsByRange?.day * 60 : h.jarvisTargets?.day;
+        if (dailyTarget && next >= dailyTarget) await c.query("UPDATE notification_runs SET status='cancelled',error='habit_goal_completed',updated_at=now() WHERE user_id=$1 AND kind='habit-reminder' AND payload->>'habitId'=$2 AND payload->>'date'=$3 AND status IN ('pending','retry','no_subscription')", [actor.userId, h.id, b.date]);
         result = {
           habitId: h.id,
           date: b.date,

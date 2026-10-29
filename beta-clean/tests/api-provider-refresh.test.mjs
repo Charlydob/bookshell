@@ -39,17 +39,19 @@ test("a confirmed descendant write refreshes an active parent listener immediate
   let currentPage = 12;
 
   globalThis.window = {
+    addEventListener() {},
     setTimeout,
     clearTimeout,
     requestIdleCallback() {
       return 1;
     },
   };
-  globalThis.document = { visibilityState: "visible" };
+  globalThis.document = { visibilityState: "visible",addEventListener() {} };
   globalThis.fetch = async (url, options = {}) => {
     const parsed = new URL(String(url));
     const method = String(options.method || "GET").toUpperCase();
     requests.push({ method, path: parsed.pathname });
+    if(parsed.pathname==='/auth/status')return jsonResponse({error:'not_found'},404);
 
     if (parsed.pathname === "/data/books" && method === "GET") {
       return jsonResponse({ ok: true, data: { bookA: { currentPage } } });

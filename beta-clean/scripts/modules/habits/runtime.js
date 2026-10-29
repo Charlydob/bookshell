@@ -3282,7 +3282,8 @@ function setHabitTimeSecLegacy(habitId, dateKey, totalSec, options = {}) {
   if (!habitSessions[habitId] || typeof habitSessions[habitId] !== "object") habitSessions[habitId] = {};
 
   const isWork = isWorkHabit(habit);
-  const existing = readDayMinutesAndShift(habitSessions[habitId][dateKey], isWork);
+  const previousDay = habitSessions[habitId][dateKey];
+  const existing = readDayMinutesAndShift(previousDay, isWork);
 
   // ✅ solo “override” si viene shift real (M/T o "")
   const shiftOpt = (options && options.shift != null)
@@ -3306,6 +3307,10 @@ function setHabitTimeSecLegacy(habitId, dateKey, totalSec, options = {}) {
     else delete habitSessions[habitId][dateKey];
   }
 
+  if (Array.isArray(previousDay?.sessions) && previousDay.sessions.some(entry => entry.source === "jarvis")) {
+    payloadToWrite = { ...(payloadToWrite && typeof payloadToWrite === "object" ? payloadToWrite : {}), totalSec: sec, sessions: previousDay.sessions };
+    habitSessions[habitId][dateKey] = payloadToWrite;
+  }
   queuePendingSessionWrite(habitId, dateKey, payloadToWrite);
   saveCache();
   try { set(ref(db, `${HABIT_SESSIONS_PATH}/${habitId}/${dateKey}`), payloadToWrite); } catch (_) {}
@@ -15629,7 +15634,8 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
   if (!habitSessions[habitId] || typeof habitSessions[habitId] !== "object") habitSessions[habitId] = {};
 
   const isWork = isWorkHabit(habit);
-  const existing = readDayMinutesAndShift(habitSessions[habitId][dateKey], isWork);
+  const previousDay = habitSessions[habitId][dateKey];
+  const existing = readDayMinutesAndShift(previousDay, isWork);
   const shiftOpt = (options && options.shift != null)
     ? normalizeShiftValue(options.shift)
     : existing.shift;
@@ -15655,6 +15661,10 @@ function setHabitTimeSec(habitId, dateKey, totalSec, options = {}) {
     if (payloadToWrite != null) habitSessions[habitId][dateKey] = payloadToWrite;
   }
 
+  if (Array.isArray(previousDay?.sessions) && previousDay.sessions.some(entry => entry.source === "jarvis")) {
+    payloadToWrite = { ...(payloadToWrite && typeof payloadToWrite === "object" ? payloadToWrite : {}), totalSec: sec, sessions: previousDay.sessions };
+    habitSessions[habitId][dateKey] = payloadToWrite;
+  }
   queuePendingSessionWrite(habitId, dateKey, payloadToWrite);
   saveCache();
   void writeBackendWithOfflineQueue({
@@ -15707,6 +15717,7 @@ function persistHabitCount(habitId, dateKey, value) {
 
 function persistHabit(habit) {
   if (!habit?.id) return;
+  if(habit.system&&habit.id===UNKNOWN_HABIT_ID){void import('../../shared/data/versioned-web.js').then(m=>m.ensureSystemHabit(habit)).catch(e=>console.warn('[habits:system]',e.message));return;}
   void writeBackendWithOfflineQueue({
     uid: currentUid,
     module: "habits",

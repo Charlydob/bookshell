@@ -1,3 +1,4 @@
+import {rememberObserved,webMode,prepareVersionedWrite,applyVersionedWrite} from './versioned-web.js';
 import { API_BASE_URL } from "./config.js";
 import { logDataUsage } from "./data-usage.js";
 import {
@@ -19,6 +20,7 @@ const RTDB_INFO_CONNECTED_PATH = [".info", "connected"].join("/");
 let lastPushTime = 0;
 let lastRandChars = [];
 const activeDataListeners = new Set();
+if(typeof window!=='undefined'){window.addEventListener('focus',()=>refreshDataListeners(''));document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refreshDataListeners('');});}
 
 console.info("[data-provider] api");
 
@@ -338,6 +340,7 @@ export async function readOnce(pathOrQuery) {
   }
   logUsage("READ", target);
   const payload = await requestJson("GET", target.path || target, { debugMethod: "GET" });
+  rememberObserved(target.path || target,unwrapApiValue(payload));
   const value = applyQuery(unwrapApiValue(payload), target);
   return createSnapshot(value ?? null, target.path || target);
 }
@@ -433,6 +436,7 @@ export function onValue(pathOrQuery, callback, onError) {
 export async function writeValue(pathOrRef, payload) {
   const target = resolveTarget(pathOrRef);
   logUsage("WRITE", target);
+  if(await webMode()!=='legacy'){await applyVersionedWrite(await prepareVersionedWrite('PUT',normalizeDataPath(target),payload));refreshDataListeners(target.path||target);return;}
   await requestJson("PUT", target.path || target, { body: payload ?? null, debugMethod: "PUT" });
   refreshDataListeners(target.path || target);
 }
@@ -458,6 +462,7 @@ export async function patchValue(pathOrRef, patch = {}) {
   const basePath = normalizeDataPath(target);
   const normalizedPatch = normalizePatchKeys(basePath, patch || {});
   logUsage("UPDATE", target);
+  if(await webMode()!=='legacy'){await applyVersionedWrite(await prepareVersionedWrite('PATCH',basePath,normalizedPatch));refreshDataListeners(basePath);return;}
   await requestJson("PATCH", basePath, { body: normalizedPatch, debugMethod: "PATCH" });
   refreshDataListeners(basePath);
 }
@@ -467,6 +472,7 @@ export const update = patchValue;
 export async function deleteValue(pathOrRef) {
   const target = resolveTarget(pathOrRef);
   logUsage("DELETE", target);
+  if(await webMode()!=='legacy'){await applyVersionedWrite(await prepareVersionedWrite('DELETE',normalizeDataPath(target),null));refreshDataListeners(target.path||target);return;}
   await requestJson("DELETE", target.path || target, { debugMethod: "DELETE" });
   refreshDataListeners(target.path || target);
 }
@@ -480,6 +486,7 @@ export function createKey() {
 export async function createRecord(path = "", payload = {}) {
   const safePath = normalizeDataPath(path);
   logUsage("CREATE", safePath);
+  if(await webMode()!=='legacy'){const key=makePushId();await applyVersionedWrite(await prepareVersionedWrite('PUT',joinPath(safePath,key),payload,{createOnly:true}));refreshDataListeners(safePath);return key;}
   const response = await requestJson("POST", safePath, {
     endpoint: "data/push",
     body: payload ?? {},
@@ -514,6 +521,9 @@ export async function runTransaction(pathOrRef, updater) {
   const target = resolveTarget(pathOrRef);
   const path = normalizeDataPath(target);
   logUsage("TRANSACTION", target);
+  if(await webMode()!=='legacy'){
+    for(let attempt=0;attempt<3;attempt++){const snapshot=await readOnce(target),before=snapshot.val(),after=updater(before);if(after===undefined)return {committed:false,snapshot};try{const mutation={method:'PUT',path,body:after,expected:{[path]:await (await import('./versioned-web.js')).digest(before)},idempotencyKey:crypto.randomUUID()};await applyVersionedWrite(mutation);refreshDataListeners(path);return {committed:true,snapshot:createSnapshot(after,path)};}catch(e){if(e.status!==409||attempt===2)throw e;}}
+  }
   const currentSnap = await readOnce(target);
   let currentValue = currentSnap.val();
   let nextValue = typeof updater === "function" ? updater(currentValue) : currentValue;

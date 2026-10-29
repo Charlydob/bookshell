@@ -1,8 +1,8 @@
 (function publishBookshellRelease(root) {
   const release = Object.freeze({
-    version: "2026-10-28-task-alerts-digest-v8",
-    build: "task-alerts-digest-v8",
-    releasedAt: "2026-10-28",
+    version: "2026-10-29-jarvis2-secure-candidate",
+    build: "jarvis2-secure-candidate",
+    releasedAt: "2026-10-29",
     cachePrefix: "bookshell-",
   });
 

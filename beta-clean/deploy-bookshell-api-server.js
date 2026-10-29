@@ -886,7 +886,7 @@ async function authenticateJarvisRequest(req, db = pool) {
   const result = await db.query(`
     SELECT id, token_hash, scopes
     FROM jarvis_api_tokens
-    WHERE user_id = $1 AND revoked_at IS NULL
+    WHERE user_id = $1 AND revoked_at IS NULL AND user_id IN (SELECT id FROM users WHERE disabled=false)
     ORDER BY created_at DESC
   `, [SINGLE_USER_ID]);
   const match = result.rows.find((row) => safeTimingEqualHex(row.token_hash, suppliedHash));
@@ -5519,12 +5519,28 @@ const projectsModule = require("./projects/server").createProjects({
     : Promise.resolve({ accepted: false, attemptedCount: 0, reason: "no_subscription" }),
 });
 
+const webSecurity=require('./jarvis/web-security').createWebSecurity({pool,ownerId:SINGLE_USER_ID,mode:process.env.BOOKSHELL_WEB_AUTH_MODE||'legacy',origins:isAllowedOrigin});
+const webData=require('./jarvis/web-data').createWebData({pool});
 const server = http.createServer(async (req, res) => {
   const url = new URL(
     req.url,
     `http://${req.headers.host || "localhost"}`
   );
 
+  for(const [key,value] of Object.entries(corsHeaders(req)))res.setHeader(key,value);
+  if(req.method==='OPTIONS'){if(req.headers.origin&&!isAllowedOrigin(req.headers.origin))return sendJson(req,res,403,{error:'ORIGIN_DENIED'});res.writeHead(204);res.end();return;}
+  if(await webSecurity.handle(req,res,url))return;
+  try {
+    const machine=url.pathname==='/projects/notifications/receipts'||/^\/(mcp(?:$|\/)|oauth\/|\.well-known\/|jarvis(?:$|\/)|automation\/|shortcuts\/(finance|world)\/|shortcuts\/reminders\/today$)/.test(url.pathname);
+    if(url.pathname.startsWith('/web/')||webSecurity.mode==='required'&&!machine&&url.pathname!=='/health'){
+      req.webActor=await webSecurity.requireUser(req);
+      if(!['GET','HEAD'].includes(req.method))webSecurity.origin(req);
+    }
+    if(webSecurity.mode==='required'&&!['GET','HEAD'].includes(req.method)&&(/^\/data(?:$|\/)/.test(url.pathname)||/^\/jarvis(?:$|\/)/.test(url.pathname)))return sendJson(req,res,428,{error:'REFRESH_CLIENT_USE_VERSIONED_WRITES'});
+    if(url.pathname==='/web/data'&&req.method==='POST')return sendJson(req,res,200,await webData.write(req.webActor,await readJson(req)));
+    const operation=/^\/web\/jarvis\/([a-z_]+)$/.exec(url.pathname);
+    if(operation&&req.method==='POST'){if(!projectsModule.jarvis)return sendJson(req,res,503,{error:'JARVIS_NOT_ENABLED'});return sendJson(req,res,200,await projectsModule.jarvis.run(req.webActor,operation[1],await readJson(req)));}
+  }catch(error){return sendJson(req,res,error.status||(error.issues?400:500),{error:error.status?error.message:error.issues?'INVALID_INPUT':'REQUEST_FAILED'});}
   if (await projectsModule.handle(req, res, url)) return;
 
   // ------------------------------------------------
@@ -5562,8 +5578,7 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         service: "bookshell-api",
         database: "connected",
-        auth: "disabled-single-user",
-        userId: SINGLE_USER_ID,
+        auth: webSecurity.mode,
         time: result.rows[0].now,
       });
     } catch (error) {
@@ -7184,6 +7199,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
+  if(process.env.BOOKSHELL_JARVIS_V2_ENABLED==='1'&&webSecurity.mode!=='required')throw new Error('Secure web authentication must be required before enabling JARVIS v2');
   if (!Pool) {
     throw new Error("pg_dependency_missing");
   }
@@ -7214,7 +7230,10 @@ if (require.main === module) {
 }
 
 module.exports = {
+  server,
   __test: {
+    webSecurity,
+    pool,
     buildAutomationReminderSearchQuery,
     matchesAutomationReminderSearch,
     normalizeAutomationReminderSearchParams,

@@ -1,3 +1,4 @@
+import {clearObserved} from '../data/versioned-web.js';
 import { AUTH_PROVIDER, SIGNUP_ENABLED } from "./config.js";
 import * as apiAuth from "./api-auth.js";
 
@@ -56,6 +57,7 @@ function setCurrentUser(user = null) {
   const nextKey = `${state.currentUser?.provider || ""}:${state.currentUser?.id || ""}:${state.currentUser?.uid || ""}`;
   emitAuthDebug();
   if (previousKey === nextKey) return;
+  clearObserved();
   listeners.forEach((callback) => {
     try {
       callback(state.currentUser);

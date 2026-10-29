@@ -59,7 +59,8 @@ function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,push
       const write=!['GET','HEAD'].includes(req.method);if(write)auth.origin(req);
       if(!ownerId){json(res,503,{error:'workspace_owner_unavailable'});return true;}
       auth.rate(req,'project-web',1200);
-      const user=ownerId;
+      if(process.env.BOOKSHELL_WEB_AUTH_MODE==='required'&&!req.webActor&&url.pathname!=='/projects/notifications/receipts')fail('AUTH_REQUIRED',401);
+      const user=req.webActor?.userId||ownerId;
       if(url.pathname==='/projects/access-code'&&req.method==='POST'){auth.rate(req,'pair-code',30);json(res,201,{ticket:await auth.issueTicket(user,'oauth'),expiresIn:600});return true;}
       if(url.pathname==='/projects/access'&&req.method==='GET'){const tokens=(await pool.query('SELECT client_id,scope,expires_at,revoked_at FROM project_oauth_tokens WHERE user_id=$1 AND revoked_at IS NULL',[user])).rows;json(res,200,{tokens});return true;}
       if(url.pathname==='/projects/access'&&req.method==='DELETE'){const b=await body(req);if(b.confirmed!==true)fail('Requiere confirmación');await pool.query('UPDATE project_oauth_tokens SET revoked_at=now() WHERE user_id=$1',[user]);json(res,200,{ok:true});return true;}

@@ -2,7 +2,8 @@ import {localInput, instantFromInput, dayKey, onDay, monthCells} from './schedul
 import {marked} from '../../../assets/vendors/projects/marked.js';
 import DOMPurify from '../../../assets/vendors/projects/purify.js';
 
-const API='/projects-api';
+import {API_BASE_URL} from '../../shared/data/config.js';
+const API=API_BASE_URL;
 const S={projects:[],selected:null,tab:'overview',focus:'0',search:'',filter:'all',month:new Date(),timer:null,ready:false,todayAgenda:null,pendingTasks:new Set()};
 const labels={task:'Tarea',note:'Nota',document:'Documento',event:'Evento',reminder:'Recordatorio',purchase:'Compra',inventory:'Material'};
 const statuses={todo:'Pendiente',doing:'En curso',done:'Completada',pending:'Pendiente',cancelled:'Cancelado',scheduled:'Programado',planned:'Prevista',ordered:'Pedida',received:'Recibida'};
@@ -15,7 +16,7 @@ const current=()=>S.projects.find(p=>p.id===S.selected);
 const projects=()=>current()?[current()]:S.projects.filter(p=>!p.template&&p.status!=='archived');
 const entries=()=>projects().flatMap(p=>p.entries.map(e=>({...e,projectId:p.id,projectTitle:p.title})));
 const empty=text=>`<div class="pr-empty">${text}</div>`;
-async function api(path,method='GET',data){const r=await fetch(API+path,{method,credentials:'same-origin',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,cache:'no-store'});let b;try{b=await r.json();}catch{throw new Error('No se pudo contactar con Bookshell');}if(!r.ok)throw new Error(b.error||'No se pudo guardar');return b;}
+async function api(path,method='GET',data){const r=await fetch(API+path,{method,credentials:'include',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,cache:'no-store'});let b;try{b=await r.json();}catch{throw new Error('No se pudo contactar con Bookshell');}if(!r.ok)throw new Error(b.error||'No se pudo guardar');return b;}
 function notice(message){let e=document.querySelector('#projects-message');if(!e)return;e.textContent=message;e.className='pr-error';e.hidden=false;}
 async function refresh(){if(S.pendingTasks.size)return;try{const b=await api('/projects');S.projects=b.projects;S.ready=true;if(S.tab==='today')S.todayAgenda=(await api('/projects/notifications/agenda')).agenda;if(S.selected&&!current())S.selected=null;render();}catch(e){if(S.ready)notice(e.message);}}
 function progress(p){return `<div class="pr-progress" role="progressbar" aria-label="Tareas completadas" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p.stats.taskProgress}"><span style="width:${p.stats.taskProgress}%"></span></div><div class="pr-card-meta"><span>${p.stats.done} / ${p.stats.total} tareas</span><span>${p.stats.taskProgress}%</span></div>`;}

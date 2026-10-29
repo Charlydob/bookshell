@@ -10,6 +10,7 @@ export const OFFLINE_OPERATION_STATUS = Object.freeze({
   SYNCING: "syncing",
   SYNCED: "synced",
   FAILED: "failed",
+  CONFLICT: "conflict",
 });
 
 const ACTIVE_STATUSES = new Set([
@@ -413,7 +414,7 @@ export async function getOfflineQueueSummary(uid = "") {
   return operations.reduce((summary, operation) => {
     summary.total += 1;
     if (operation.status === OFFLINE_OPERATION_STATUS.SYNCING) summary.syncing += 1;
-    else if (operation.status === OFFLINE_OPERATION_STATUS.FAILED) summary.failed += 1;
+    else if ([OFFLINE_OPERATION_STATUS.FAILED,OFFLINE_OPERATION_STATUS.CONFLICT].includes(operation.status)) summary.failed += 1;
     else summary.pending += 1;
     return summary;
   }, {

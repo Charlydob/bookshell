@@ -1,3 +1,4 @@
+import {showActivities,hideActivities} from './activities.js';
 let runtimeModule = null;
 
 function logHabitsModule(phase, extra = {}, level = "info") {
@@ -43,6 +44,7 @@ export async function onShow() {
   console.debug("[view:onShow]", "view-habits");
   try {
     await runtimeModule?.onShow?.();
+    await showActivities();
     try {
       window.dispatchEvent(new Event("resize"));
     } catch (_) {}
@@ -53,6 +55,7 @@ export async function onShow() {
 }
 
 export async function onHide() {
+  hideActivities();
   await runtimeModule?.onHide?.();
 }
 

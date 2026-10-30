@@ -168,6 +168,7 @@ test('people use native note identities, notesEntries, birthdays and linkRefs wi
  const noted=await call(a,'people_add_note',{id:p.item.id,text:'Le gusta el pollo',expectedRevision:linked.item.revision,idempotencyKey:key()});assert.equal(noted.item.data.person.notesEntries[0].text,'Le gusta el pollo');
  const changed=await call(a,'people_update',{id:p.item.id,patch:{phone:'+41 123'},expectedRevision:noted.item.revision,idempotencyKey:key()});assert.equal(changed.item.data.person.birthday,'1990-10-01');assert.equal(changed.item.data.person.notesEntries.length,1);
  const all=await call(a,'people_query',{query:'pollo'});assert.equal(all.items[0].id,p.item.id);
+ await assert.rejects(call(a,'notes_delete',{id:p.item.id,expectedRevision:changed.item.revision,confirmed:true,idempotencyKey:key()}),/PERSON_DELETE_REQUIRES_REMINDER_RECONCILIATION/);
  const native=(await pool.query('SELECT data FROM firebase_import_raw WHERE user_id=$1',[a.userId])).rows[0].data;assert.equal(Object.keys(native.notes.notes).length,2);assert.equal(native.people,undefined);
 });
 

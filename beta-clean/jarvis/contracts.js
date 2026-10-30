@@ -156,6 +156,10 @@ const schemas = {
     .strict(),
   activity_query: z
     .object({
+      sessionId: z.string().uuid().optional(),
+      includeDeleted:z.boolean().optional(),
+      minDurationSec:z.number().nonnegative().optional(),
+      maxDurationSec:z.number().nonnegative().optional(),
       from: instant,
       to: instant,
       timezone: zone,
@@ -163,6 +167,12 @@ const schemas = {
       projectId: z.string().uuid().optional(),
     })
     .strict(),
+  activity_update: z.object({sessionId:z.string().uuid(),expectedRevision:revision,idempotencyKey:key,patch:z.object({label:z.string().trim().min(1).max(200).optional(),timezone:zone.optional(),projectId:z.string().uuid().nullable().optional(),intervals:z.array(z.object({start:instant,end:instant}).strict()).min(1).max(100).optional(),durationSec:z.number().positive().max(31622400).optional()}).strict()}).strict(),
+  activity_reassign: z.object({sessionId:z.string().uuid(),habitId:id,expectedRevision:revision,idempotencyKey:key}).strict(),
+  activity_delete: z.object({sessionId:z.string().uuid(),expectedRevision:revision,idempotencyKey:key,confirmed:z.literal(true)}).strict(),
+  activity_restore: z.object({sessionId:z.string().uuid(),expectedRevision:revision,idempotencyKey:key}).strict(),
+  activity_split: z.object({sessionId:z.string().uuid(),expectedRevision:revision,idempotencyKey:key,parts:z.array(z.object({habitId:id,label:z.string().trim().min(1).max(200).optional(),intervals:z.array(z.object({start:instant,end:instant}).strict()).min(1).max(100)}).strict()).min(2).max(20)}).strict(),
+  jarvis_capabilities: z.object({}).strict(),
   jarvis_context: z.object({}).strict(),
 };
 const scopes = {
@@ -177,6 +187,8 @@ const scopes = {
   activity_change: ["time:write"],
   activity_manual: ["time:write"],
   activity_query: ["time:read"],
+  activity_update:["time:write"],activity_reassign:["time:write","habits:write"],activity_delete:["time:write"],activity_restore:["time:write"],activity_split:["time:write","habits:write"],
+  jarvis_capabilities:["projects:read"],
   jarvis_context: ["habits:read"],
 };
 const habitResult = z
@@ -236,6 +248,12 @@ const outputSchemas = {
   activity_start: z.object({ session: sessionResult }).strict(),
   activity_change: z.object({ session: sessionResult }).strict(),
   activity_manual: z.object({ session: sessionResult }).strict(),
+  activity_update:z.object({session:sessionResult}).strict(),
+  activity_reassign:z.object({session:sessionResult}).strict(),
+  activity_delete:z.object({session:sessionResult}).strict(),
+  activity_restore:z.object({session:sessionResult}).strict(),
+  activity_split:z.object({session:sessionResult,sessions:z.array(sessionResult)}).strict(),
+  jarvis_capabilities:z.object({version:z.string(),operations:z.array(z.object({name:z.string(),scopes:z.array(z.string()),authorized:z.boolean()})),modules:z.array(z.string()),limitations:z.array(z.string())}).strict(),
   activity_query: z
     .object({
       sessions: z.array(

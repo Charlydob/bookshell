@@ -102,6 +102,46 @@ const record = (a, id, extra = {}) =>
     ...extra,
   });
 
+test('YouTube correction preserves 18–20 Zurich, legacy credit, other sessions, and idempotency',async()=>{
+ const a=await fixture();clock=new Date('2026-10-31T10:00:00Z');
+ const source=(await habit(a,'time','YouTube')).habit,target=(await habit(a,'time','Ver YouTube')).habit;
+ await call(a,'habits_record',{habitId:source.id,date:'2026-10-30',mode:'increment',unit:'seconds',value:600,idempotencyKey:key()});
+ const intervals=[{start:'2026-10-30T18:00:00+01:00',end:'2026-10-30T20:00:00+01:00'}];
+ const session=(await call(a,'activity_manual',{label:'Ver YouTube',habitId:source.id,timezone:'Europe/Zurich',intervals,idempotencyKey:key()})).session;
+ const other=(await call(a,'activity_manual',{label:'Simultaneous',habitId:source.id,timezone:'Europe/Zurich',intervals:[{start:'2026-10-30T18:00:00+01:00',end:'2026-10-30T18:30:00+01:00'}],idempotencyKey:key()})).session;
+ const input={sessionId:session.id,habitId:target.id,expectedRevision:session.revision,idempotencyKey:key()};
+ const changed=await call(a,'activity_reassign',input);
+ assert.equal(changed.session.habitId,target.id);assert.deepEqual(changed.session.intervals,session.intervals);
+ assert.equal((await call(a,'activity_reassign',input)).replayed,true);
+ const history=h=>call(a,'habits_history',{habitId:h.id,from:'2026-10-30',to:'2026-10-30'});
+ assert.equal((await history(source)).total,2400);assert.equal((await history(target)).total,7200);
+ const q={from:'2026-10-30T00:00:00+01:00',to:'2026-10-31T00:00:00+01:00',timezone:'Europe/Zurich'};
+ let result=await call(a,'activity_query',q);assert.equal(result.totals.elapsedSec,7200);assert.equal(result.totals.activitySec,9000);
+ assert.equal(result.sessions.find(s=>s.id===other.id).revision,other.revision);
+ await assert.rejects(call({...a,scopes:['time:write']},'activity_update',{sessionId:session.id,expectedRevision:changed.session.revision,patch:{durationSec:3600},idempotencyKey:key()}),/INSUFFICIENT_SCOPE/);
+ await assert.rejects(call(a,'activity_reassign',{...input,idempotencyKey:key()}),/REVISION_CONFLICT/);
+ const short=(await call(a,'activity_update',{sessionId:session.id,expectedRevision:changed.session.revision,patch:{durationSec:3600},idempotencyKey:key()})).session;
+ assert.equal((await history(target)).total,3600);
+ const del=(await call(a,'activity_delete',{sessionId:session.id,expectedRevision:short.revision,confirmed:true,idempotencyKey:key()})).session;
+ assert.equal((await history(target)).total,0);assert.equal((await call(a,'activity_query',q)).sessions.length,1);
+ const restored=(await call(a,'activity_restore',{sessionId:session.id,expectedRevision:del.revision,idempotencyKey:key()})).session;
+ assert.equal((await history(target)).total,3600);assert.equal(restored.corrections.length,4);
+ await assert.rejects(call(a,'activity_restore',{sessionId:session.id,expectedRevision:restored.revision,idempotencyKey:key()}),/NOT_DELETED/);
+ const parts=[{habitId:source.id,intervals:[{start:intervals[0].start,end:'2026-10-30T18:30:00+01:00'}]},{habitId:target.id,intervals:[{start:'2026-10-30T18:30:00+01:00',end:'2026-10-30T19:00:00+01:00'}]}];
+ const split=await call(a,'activity_split',{sessionId:session.id,expectedRevision:restored.revision,idempotencyKey:key(),parts});
+ assert.equal(split.sessions.length,2);assert.equal((await history(source)).total,4200);assert.equal((await history(target)).total,1800);
+ assert.equal((await call(a,'activity_query',{...q,sessionId:other.id})).sessions.length,1);
+ assert.equal((await call(a,'activity_query',{...q,from:'2025-10-30T00:00:00Z',to:'2025-10-31T00:00:00Z'})).sessions.length,0);
+ const foreign=await fixture();await assert.rejects(call(foreign,'activity_reassign',{sessionId:other.id,habitId:target.id,expectedRevision:other.revision,idempotencyKey:key()}),/NOT_FOUND/);
+});
+
+test('failed split rolls back aggregate subtraction and original revision',async()=>{
+ const a=await fixture(),h=(await habit(a,'time','Modelado')).habit;
+ const s=(await call(a,'activity_manual',{label:'Modelado',habitId:h.id,timezone:'Europe/Zurich',intervals:[{start:'2026-10-28T18:00:00+01:00',end:'2026-10-28T20:00:00+01:00'}],idempotencyKey:key()})).session;
+ await assert.rejects(call(a,'activity_split',{sessionId:s.id,expectedRevision:s.revision,idempotencyKey:key(),parts:[{habitId:h.id,intervals:[{start:'2026-10-28T18:00:00+01:00',end:'2026-10-28T19:00:00+01:00'}]},{habitId:h.id,intervals:[{start:'2026-10-28T18:30:00+01:00',end:'2026-10-28T20:00:00+01:00'}]}]}),/SPLIT_OVERLAP/);
+ assert.equal((await call(a,'habits_history',{habitId:h.id,from:'2026-10-28',to:'2026-10-28'})).total,7200);
+});
+
 test("strict contracts, real dates, independent scopes and disabled users", async () => {
   const a = await fixture();
   await assert.rejects(
@@ -467,7 +507,7 @@ test("HTTP MCP: actual SDK discovers both generations; old token cannot write ha
       }),
     );
     const list = await client.listTools();
-    assert.equal(list.tools.length, 35);
+    assert.equal(list.tools.length, 23 + Object.keys(require('../jarvis/contracts').schemas).length);
     assert.ok(list.tools.find((t) => t.name === "update_task"));
     const created = await client.callTool({
       name: "habits_create",

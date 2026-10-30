@@ -1,6 +1,12 @@
 "use strict";
 const { schemas, scopes } = require("./contracts");
 const descriptions = {
+  activity_update:"Corrige una sesión terminada con revisión e idempotencia; intervalos ISO o duración en segundos para un solo intervalo. Recalcula aportaciones atómicamente, conserva históricos y simultaneidad.",
+  activity_reassign:"Traslada una sesión terminada a otro hábito de tiempo existente. Resta su aportación original y suma la nueva atómicamente sin cambiar los intervalos.",
+  activity_delete:"Elimina recuperablemente una sesión terminada y retira su aportación, con confirmación humana expresa, revisión e idempotencia.",
+  activity_restore:"Recupera una sesión eliminada usando su revisión actual y restaura su aportación una sola vez.",
+  activity_split:"Reparte una sesión terminada entre hábitos existentes mediante intervalos ISO contiguos o separados que cubran exactamente la sesión original, sin perder ni duplicar tiempo.",
+  jarvis_capabilities:"Descubre versión, operaciones, scopes y módulos reales. authorized indica los permisos de esta conexión; consulta antes de asumir capacidades.",
   habits_list:
     "Consulta hábitos existentes y revisiones. Busca antes de crear; no convierte ejemplos en datos.",
   habits_create:

@@ -199,6 +199,12 @@ function createJarvis({ pool, nowFn = () => new Date() }) {
         now = nowFn(),
         write = !!b.idempotencyKey;
       let result;
+      if (name === "jarvis_capabilities") result={version:"2.1.0",operations:Object.keys(schemas).map(name=>({name,scopes:scopes[name],authorized:scopes[name].every(s=>actor.scopes.includes(s))})),modules:["projects","habits","activities"],limitations:["Daily legacy totals do not establish recoverable intervals."]};
+      if (["activity_update","activity_reassign","activity_delete","activity_restore","activity_split"].includes(name)) {
+        if(b.patch?.projectId && !(await c.query("SELECT id FROM project_workspaces WHERE id=$1 AND user_id=$2",[b.patch.projectId,actor.userId])).rowCount) fail("PROJECT_NOT_FOUND",404);
+        if(b.patch?.projectId&&!actor.scopes.includes("projects:read"))fail("INSUFFICIENT_SCOPE",403);
+        result=require('./activity-corrections').correct({root,b,name,now,actor,revision,splitInterval,credit});
+      }
       if (name === "jarvis_context")
         result = {
           timezone:
@@ -381,7 +387,7 @@ function createJarvis({ pool, nowFn = () => new Date() }) {
           name === "activity_start" &&
           Object.values(root.activitySessions).some(
             (s) =>
-              s.status !== "stopped" &&
+              !s.deletedAt && s.status !== "stopped" &&
               fold(s.label) === fold(b.label) &&
               s.habitId === (b.habitId || null) &&
               s.projectId === (b.projectId || null),
@@ -422,7 +428,7 @@ function createJarvis({ pool, nowFn = () => new Date() }) {
       }
       if (name === "activity_change") {
         const s = root.activitySessions?.[b.sessionId];
-        if (!s) fail("SESSION_NOT_FOUND", 404);
+        if (!s || s.deletedAt) fail("SESSION_NOT_FOUND", 404);
         checkRevision(s, b.expectedRevision);
         if (s.habitId && !actor.scopes.includes("habits:write"))
           fail("INSUFFICIENT_SCOPE", 403);
@@ -450,6 +456,8 @@ function createJarvis({ pool, nowFn = () => new Date() }) {
         if (to <= from || to - from > 366 * 86400000) fail("INVALID_RANGE");
         const all = Object.values(root.activitySessions || {}).filter(
           (s) =>
+            (b.includeDeleted || !s.deletedAt) &&
+            (!b.sessionId || s.id === b.sessionId) &&
             (!b.habitId || s.habitId === b.habitId) &&
             (!b.projectId || s.projectId === b.projectId),
         );
@@ -463,8 +471,9 @@ function createJarvis({ pool, nowFn = () => new Date() }) {
               Math.min(z, to, now.getTime()),
             ])
             .filter(([a, z]) => z > a);
+        const selected=all.filter(s=>{const d=intervals(s).reduce((n,[a,z])=>n+(z-a)/1000,0);return d>0&&(b.minDurationSec===undefined||d>=b.minDurationSec)&&(b.maxDurationSec===undefined||d<=b.maxDurationSec);});
         result = {
-          sessions: all.map((s) => ({
+          sessions: selected.map((s) => ({
             ...s,
             revision: revision(s),
             durationSec: intervals(s).reduce(
@@ -472,13 +481,13 @@ function createJarvis({ pool, nowFn = () => new Date() }) {
               0,
             ),
           })),
-          totals: totals(all.flatMap(intervals)),
+          totals: totals(selected.filter(s=>!s.deletedAt).flatMap(intervals)),
           timezone: b.timezone,
           scope:
             "Explicit JARVIS sessions only; legacy daily totals have no recoverable overlap.",
           byDate: {},
         };
-        for (const s of all)
+        for (const s of selected.filter(s=>!s.deletedAt))
           for (const [a, z] of intervals(s))
             for (const chunk of splitInterval(a, z, b.timezone)) {
               result.byDate[chunk.date] ??= [];

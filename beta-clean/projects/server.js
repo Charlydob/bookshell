@@ -9,7 +9,7 @@ const kind=z.enum(Object.keys(schemas));
 function safeError(e){return e.issues?e.issues.map(x=>`${x.path.join('.')}: ${x.message}`).join('; '):e.status?e.message:'Error interno; consulta el identificador de diagnóstico';}
 function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,pushConfigured=true,nowFn,jarvisEnabled=process.env.BOOKSHELL_JARVIS_V2_ENABLED==='1'}){
   const domain=createDomain(pool,{nowFn}),auth=createAuth(pool,{jarvisEnabled});
-  const jarvis=jarvisEnabled?require('../jarvis/domain').createJarvis({pool,nowFn}):null;
+  const jarvis=jarvisEnabled?require('../jarvis/domain').createJarvis({pool,nowFn,additionalCapabilities:actor=>tools(actor).map(([name,description,input,write])=>({name,scopes:[write?'projects:write':'projects:read'],authorized:actor.scopes.includes(write?'projects:write':'projects:read')}))}):null;
   const habitNotices=jarvisEnabled?require('../jarvis/notifications').createHabitNotices():null;
   const notifications=require('./notifications').createNotifications({pool,domain,ownerId,legacyUid,pushConfigured,nowFn,enqueueAdditional:habitNotices?.enqueue,validateAdditional:habitNotices?.validate,sendDevice:sendDevice||((user,endpoint,payload)=>sendNotification(user,payload))});
   function tools(a){
@@ -39,7 +39,7 @@ function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,push
     for(const[name,description,inputSchema,write,fn,extraScopes]of [...tools(a),...(jarvis?require('../jarvis/tools').definitions(jarvis,a):[])]){
       const requiredScopes=extraScopes||[write?'projects:write':'projects:read'];
       const securitySchemes=[{type:'oauth2',scopes:requiredScopes}];
-      server.registerTool(name,{description,inputSchema,securitySchemes,...(extraScopes?{outputSchema:{result:require('../jarvis/contracts').outputSchemas[name]}}:{}),annotations:{readOnlyHint:!write,destructiveHint:name==='delete_entry'||name==='update_project'||name==='habits_archive'||name==='activity_delete',idempotentHint:!write||!!extraScopes,openWorldHint:false},_meta:{securitySchemes}},async b=>{
+      server.registerTool(name,{description,inputSchema,securitySchemes,...(extraScopes?{outputSchema:{result:require('../jarvis/contracts').outputSchemas[name]}}:{}),annotations:{readOnlyHint:!write,destructiveHint:name==='delete_entry'||name==='update_project'||name==='habits_archive'||name==='activity_delete'||name==='recipes_delete'||name==='notes_delete',idempotentHint:!write||!!extraScopes,openWorldHint:false},_meta:{securitySchemes}},async b=>{
         const requestedScopes=[...requiredScopes];
         if(extraScopes){if(b.reminderPlan)requestedScopes.push('notifications:write');if(name.startsWith('activity_')&&b.habitId)requestedScopes.push('habits:write');if(name.startsWith('activity_')&&b.projectId)requestedScopes.push('projects:read');}
         if(requestedScopes.some(scope=>!a.scopes.includes(scope)))return {isError:true,content:[{type:'text',text:'Autoriza los permisos necesarios para esta operación.'}],_meta:{'mcp/www_authenticate':[`Bearer error="insufficient_scope", error_description="Authorize the requested Bookshell permissions", scope="${[...new Set(requestedScopes)].join(' ')}", resource_metadata="https://mcp-bookshell.charlydob.com/.well-known/oauth-protected-resource"`]}};
@@ -63,7 +63,7 @@ function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,push
       auth.rate(req,'project-web',1200);
       if(process.env.BOOKSHELL_WEB_AUTH_MODE==='required'&&!req.webActor&&url.pathname!=='/projects/notifications/receipts')fail('AUTH_REQUIRED',401);
       const user=req.webActor?.userId||ownerId;
-      if(url.pathname==='/projects/access-code'&&req.method==='POST'){auth.rate(req,'pair-code',30);json(res,201,{ticket:await auth.issueTicket(user,'oauth'),expiresIn:600});return true;}
+      if(url.pathname==='/projects/access-code'&&req.method==='POST'){auth.rate(req,'pair-code',30);json(res,201,{ticket:await auth.issueTicket(user,'oauth',jarvisEnabled&&req.webActor?auth.supportedScopes:SCOPES),expiresIn:600});return true;}
       if(url.pathname==='/projects/access'&&req.method==='GET'){const tokens=(await pool.query('SELECT client_id,scope,expires_at,revoked_at FROM project_oauth_tokens WHERE user_id=$1 AND revoked_at IS NULL',[user])).rows;json(res,200,{tokens});return true;}
       if(url.pathname==='/projects/access'&&req.method==='DELETE'){const b=await body(req);if(b.confirmed!==true)fail('Requiere confirmación');await pool.query('UPDATE project_oauth_tokens SET revoked_at=now() WHERE user_id=$1',[user]);json(res,200,{ok:true});return true;}
       if(url.pathname.startsWith('/projects/notifications/')){

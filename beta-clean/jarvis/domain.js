@@ -146,7 +146,7 @@ function writeTime(root, h, date, amount, entry) {
   if (entry) payload.sessions = [...(payload.sessions || []), entry];
   root.habitSessions[h.id][date] = payload;
 }
-function createJarvis({ pool, nowFn = () => new Date() }) {
+function createJarvis({ pool, nowFn = () => new Date(), additionalCapabilities = () => [] }) {
   async function run(actor, name, input) {
     if (!schemas[name]) fail("UNKNOWN_OPERATION");
     const b = schemas[name].parse(input);
@@ -199,7 +199,8 @@ function createJarvis({ pool, nowFn = () => new Date() }) {
         now = nowFn(),
         write = !!b.idempotencyKey;
       let result;
-      if (name === "jarvis_capabilities") result={version:"2.1.0",operations:Object.keys(schemas).map(name=>({name,scopes:scopes[name],authorized:scopes[name].every(s=>actor.scopes.includes(s))})),modules:["projects","habits","activities"],limitations:["Daily legacy totals do not establish recoverable intervals."]};
+      if (require('./module-contracts').schemas[name]) result=await require('./modules').run({data:row.data,b,name,c,actor,now,revision});
+      if (name === "jarvis_capabilities") result={version:"2.1.0",operations:[...additionalCapabilities(actor),...Object.keys(schemas).map(name=>({name,scopes:scopes[name],authorized:scopes[name].every(s=>actor.scopes.includes(s))}))],modules:["projects","habits","activities",...Object.keys(require('./module-contracts').collections)],limitations:["Daily legacy totals do not establish recoverable intervals.","Nutrition, gym, finance and world currently expose queries only.","Person birthdays are saved in native cards; automatic reminder synchronization remains pending.","Global reminder/checklist CRUD remains pending; project reminders keep their existing tools."]};
       if (["activity_update","activity_reassign","activity_delete","activity_restore","activity_split"].includes(name)) {
         if(b.patch?.projectId && !(await c.query("SELECT id FROM project_workspaces WHERE id=$1 AND user_id=$2",[b.patch.projectId,actor.userId])).rowCount) fail("PROJECT_NOT_FOUND",404);
         if(b.patch?.projectId&&!actor.scopes.includes("projects:read"))fail("INSUFFICIENT_SCOPE",403);
@@ -515,7 +516,7 @@ function createJarvis({ pool, nowFn = () => new Date() }) {
           [
             actor.userId,
             name,
-            result.habit?.id || result.habitId || result.session?.id || null,
+            result.habit?.id || result.habitId || result.session?.id || result.item?.id || null,
           ],
         );
       }

@@ -38,6 +38,7 @@ const allScopes = [
   "notifications:write",
 ];
 const key = () => crypto.randomUUID();
+const moduleScopes=[...new Set(Object.values(require('../jarvis/module-contracts').scopes).flat())];
 test.before(async () => {
   assert.equal(
     (await admin.query("SELECT current_database() AS db")).rows[0].db,
@@ -140,6 +141,66 @@ test('failed split rolls back aggregate subtraction and original revision',async
  const s=(await call(a,'activity_manual',{label:'Modelado',habitId:h.id,timezone:'Europe/Zurich',intervals:[{start:'2026-10-28T18:00:00+01:00',end:'2026-10-28T20:00:00+01:00'}],idempotencyKey:key()})).session;
  await assert.rejects(call(a,'activity_split',{sessionId:s.id,expectedRevision:s.revision,idempotencyKey:key(),parts:[{habitId:h.id,intervals:[{start:'2026-10-28T18:00:00+01:00',end:'2026-10-28T19:00:00+01:00'}]},{habitId:h.id,intervals:[{start:'2026-10-28T18:30:00+01:00',end:'2026-10-28T20:00:00+01:00'}]}]}),/SPLIT_OVERLAP/);
  assert.equal((await call(a,'habits_history',{habitId:h.id,from:'2026-10-28',to:'2026-10-28'})).total,7200);
+});
+
+test('native recipes CRUD, scaling, duplicate prevention, revisions, recoverability and ownership',async()=>{
+ const a=await fixture();a.scopes=[...a.scopes,...moduleScopes];
+ const input={data:{title:'Pollo QA',servings:2,ingredients:[{name:'Pollo',qty:200,unit:'g'}],steps:[{description:'Cocinar'}],tags:['pollo']},idempotencyKey:key()};
+ const created=await call(a,'recipes_create',input);assert.equal((await call(a,'recipes_create',input)).replayed,true);
+ await assert.rejects(call(a,'recipes_create',{...input,idempotencyKey:key()}),/ALREADY_EXISTS/);
+ const scaled=await call(a,'recipes_scale',{id:created.item.id,servings:4});assert.equal(scaled.item.data.ingredients[0].qty,400);
+ const q=await call(a,'recipes_query',{query:'pollo'});assert.equal(q.items.length,1);assert.equal(q.items[0].data.servings,2);
+ const changed=await call(a,'recipes_update',{id:created.item.id,expectedRevision:created.item.revision,patch:{title:'Pollo corregido'},idempotencyKey:key()});
+ await assert.rejects(call(a,'recipes_update',{id:created.item.id,expectedRevision:created.item.revision,patch:{title:'Obsoleto'},idempotencyKey:key()}),/REVISION_CONFLICT/);
+ await assert.rejects(call({...a,scopes:['recipes:read']},'recipes_delete',{id:changed.item.id,expectedRevision:changed.item.revision,confirmed:true,idempotencyKey:key()}),/INSUFFICIENT_SCOPE/);
+ const deleted=await call(a,'recipes_delete',{id:changed.item.id,expectedRevision:changed.item.revision,confirmed:true,idempotencyKey:key()});assert.equal((await call(a,'recipes_query',{})).total,0);
+ const other=await fixture();other.scopes=[...other.scopes,...moduleScopes];await assert.rejects(call(other,'recipes_restore',{deletionKey:deleted.deletionKey,idempotencyKey:key()}),/NOT_FOUND/);
+ const restored=await call(a,'recipes_restore',{deletionKey:deleted.deletionKey,idempotencyKey:key()});assert.equal(restored.item.data.title,'Pollo corregido');
+ await assert.rejects(call(a,'recipes_restore',{deletionKey:deleted.deletionKey,idempotencyKey:key()}),/TARGET_EXISTS/);
+});
+
+test('people use native note identities, notesEntries, birthdays and linkRefs without duplicate entities',async()=>{
+ const a=await fixture();a.scopes=[...a.scopes,...moduleScopes];
+ const p=await call(a,'people_create',{data:{firstName:'Laura',lastName:'QA',birthday:'1990-10-01'},idempotencyKey:key()});assert.equal(p.item.data.noteKind,'persona');assert.ok(p.warnings.length);
+ await assert.rejects(call(a,'people_create',{data:{firstName:'LAURA',lastName:'QA'},idempotencyKey:key()}),/ALREADY_EXISTS/);
+ const friend=await call(a,'people_create',{data:{firstName:'Amiga'},idempotencyKey:key()});
+ const linked=await call(a,'people_link',{id:p.item.id,targetId:friend.item.id,label:'Amiga',expectedRevision:p.item.revision,idempotencyKey:key()});assert.equal(linked.item.data.linkRefs[0].targetId,friend.item.id);
+ const noted=await call(a,'people_add_note',{id:p.item.id,text:'Le gusta el pollo',expectedRevision:linked.item.revision,idempotencyKey:key()});assert.equal(noted.item.data.person.notesEntries[0].text,'Le gusta el pollo');
+ const changed=await call(a,'people_update',{id:p.item.id,patch:{phone:'+41 123'},expectedRevision:noted.item.revision,idempotencyKey:key()});assert.equal(changed.item.data.person.birthday,'1990-10-01');assert.equal(changed.item.data.person.notesEntries.length,1);
+ const all=await call(a,'people_query',{query:'pollo'});assert.equal(all.items[0].id,p.item.id);
+ const native=(await pool.query('SELECT data FROM firebase_import_raw WHERE user_id=$1',[a.userId])).rows[0].data;assert.equal(Object.keys(native.notes.notes).length,2);assert.equal(native.people,undefined);
+});
+
+test('notes preserve titles/folders and native writes, folder cycles rejected, delete/restore works',async()=>{
+ const a=await fixture();a.scopes=[...a.scopes,...moduleScopes];
+ const folder=await call(a,'folders_create',{data:{name:'Carpeta QA'},idempotencyKey:key()});
+ const note=await call(a,'notes_create',{data:{title:'Título QA',content:'Contenido',folderId:folder.item.id},idempotencyKey:key()});
+ const changed=await call(a,'notes_update',{id:note.item.id,expectedRevision:note.item.revision,patch:{title:'Título corregido',folderId:''},idempotencyKey:key()});
+ assert.equal(changed.item.data.name,'Título corregido');assert.equal(changed.item.data.content,'Contenido');
+ await assert.rejects(call(a,'folders_update',{id:folder.item.id,expectedRevision:folder.item.revision,patch:{parentId:folder.item.id},idempotencyKey:key()}),/FOLDER_CYCLE/);
+ const deleted=await call(a,'notes_delete',{id:note.item.id,expectedRevision:changed.item.revision,confirmed:true,idempotencyKey:key()});assert.equal((await call(a,'notes_query',{})).total,0);
+ assert.equal((await call(a,'notes_restore',{deletionKey:deleted.deletionKey,idempotencyKey:key()})).item.data.title,'Título corregido');
+});
+
+test('books progress and daily reading log update atomically; query-only modules expose stored values',async()=>{
+ const a=await fixture();a.scopes=[...a.scopes,...moduleScopes];
+ const book=await call(a,'books_create',{data:{title:'Libro QA',pages:100},idempotencyKey:key()});assert.equal(book.item.data.status,'planned');
+ const progress=await call(a,'books_progress',{id:book.item.id,expectedRevision:book.item.revision,currentPage:100,date:'2026-10-29',timezone:'Europe/Zurich',idempotencyKey:key()});assert.equal(progress.item.data.status,'finished');
+ const corrected=await call(a,'books_progress',{id:book.item.id,expectedRevision:progress.item.revision,currentPage:90,date:'2026-10-29',timezone:'Europe/Zurich',idempotencyKey:key()});assert.equal(corrected.item.data.status,'reading');
+ const native=(await pool.query('SELECT data FROM firebase_import_raw WHERE user_id=$1',[a.userId])).rows[0].data;assert.equal(native.books.readingLog['2026-10-29'][book.item.id],90);
+ for(const module of ['nutrition','gym','finance','world'])assert.equal((await call(a,module+'_query',{})).total,0);
+ const caps=await call(a,'jarvis_capabilities',{});assert.ok(caps.operations.some(x=>x.name==='recipes_create'&&x.authorized));assert.ok(caps.limitations.some(x=>x.includes('queries only')));
+ await assert.rejects(call({...a,scopes:['projects:read']},'finance_query',{}),/INSUFFICIENT_SCOPE/);
+});
+
+test('read adapters preserve nutrition unknowns and native currencies and deduplicate legacy finance ids',async()=>{
+ const a=await fixture();a.scopes=[...a.scopes,...moduleScopes];
+ await pool.query("UPDATE firebase_import_raw SET data=data || $1::jsonb WHERE user_id=$2",[JSON.stringify({recipes:{nutrition:{macroTargets:{protein:120},dailyLogsByDate:{'2026-10-28':{meals:{breakfast:{entries:[{macrosSnapshot:{protein:12,kcal:140}},{nameSnapshot:'Sin macros'}]}}}}}},finance:{finance:{transactions:{one:{amount:12,currency:'CHF',date:'2026-10-28'}},tx:{one:{amount:100,currency:'EUR'}},catalog:{categories:{food:{name:'Comida'}}}}},gym:{gym:{workouts:{'2026-10-28':{workout:{name:'Entreno',exercises:{}}}}}}}),a.userId]);
+ const nutrition=await call(a,'nutrition_query',{collection:'dailyLogsByDate',from:'2026-10-28',to:'2026-10-28'});assert.equal(nutrition.summary.knownMacros.protein,12);assert.equal(nutrition.summary.complete,false);
+ assert.equal((await call(a,'nutrition_query',{collection:'macroTargets'})).summary.protein,120);
+ const finance=await call(a,'finance_query',{collection:'transactions'});assert.equal(finance.items.length,1);assert.equal(finance.items[0].data.currency,'CHF');assert.equal(finance.items[0].data.amount,12);
+ assert.equal((await call(a,'finance_query',{collection:'categories'})).items[0].data.name,'Comida');
+ assert.equal((await call(a,'gym_query',{collection:'workouts'})).items[0].data.date,'2026-10-28');
 });
 
 test("strict contracts, real dates, independent scopes and disabled users", async () => {

@@ -4,7 +4,7 @@ const {fail}=require('./domain');
 const ISSUER='https://mcp-bookshell.charlydob.com';
 const RESOURCE=ISSUER+'/mcp';
 const SCOPES=['projects:read','projects:write'];
-const JARVIS_SCOPES=['habits:read','habits:write','time:read','time:write','notifications:write'];
+const JARVIS_SCOPES=['habits:read','habits:write','time:read','time:write','notifications:write','recipes:read','people:read','notes:read','books:read','nutrition:read','gym:read','finance:read','world:read','recipes:write','people:write','notes:write','books:write'];
 const hash=v=>crypto.createHash('sha256').update(v).digest('hex');
 const random=()=>crypto.randomBytes(32).toString('base64url');
 const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -17,7 +17,7 @@ function createAuth(pool,{jarvisEnabled=false}={}){
   const attempts=new Map();
   function rate(req,label,max=15){const key=label+':'+(req.headers['x-real-ip']||req.socket.remoteAddress);const now=Date.now();const prev=attempts.get(key);const item=prev&&prev.until>now?prev:{count:0,until:now+600000};if(++item.count>max)fail('Demasiados intentos. Espera unos minutos.',429);attempts.set(key,item);if(attempts.size>5000)for(const[k,v]of attempts)if(v.until<now)attempts.delete(k);}
   function origin(req){const o=req.headers.origin;if(!['https://bookshell.charlydob.com',ISSUER].includes(o))fail('Origen no permitido',403);}
-  async function issueTicket(user,purpose='oauth'){const ticket=random();await pool.query("INSERT INTO project_access_tickets(token_hash,user_id,purpose,expires_at) VALUES($1,$2,$3,now()+interval '10 minutes')",[hash(ticket),user,purpose]);return ticket;}
+  async function issueTicket(user,purpose='oauth',approvedScopes=SCOPES){const ticket=random();if(approvedScopes.some(s=>!supportedScopes.includes(s)))fail('invalid_scope');if(jarvisEnabled)await pool.query("INSERT INTO project_access_tickets(token_hash,user_id,purpose,expires_at,allowed_scopes) VALUES($1,$2,$3,now()+interval '10 minutes',$4)",[hash(ticket),user,purpose,approvedScopes]);else await pool.query("INSERT INTO project_access_tickets(token_hash,user_id,purpose,expires_at) VALUES($1,$2,$3,now()+interval '10 minutes')",[hash(ticket),user,purpose]);return ticket;}
   async function consumeTicket(ticket,purpose){const r=await pool.query('UPDATE project_access_tickets SET used_at=now() WHERE token_hash=$1 AND purpose=$2 AND used_at IS NULL AND expires_at>now() AND user_id IN (SELECT id FROM users WHERE disabled=false) RETURNING user_id'+(jarvisEnabled?',allowed_scopes':''),[hash(String(ticket||'')),purpose]);if(!r.rows[0])fail('El enlace o código ha caducado o ya se ha utilizado',401);return {userId:r.rows[0].user_id,allowedScopes:r.rows[0].allowed_scopes||SCOPES};}
   async function bearer(req){const m=/^Bearer ([A-Za-z0-9_-]{30,200})$/.exec(req.headers.authorization||'');if(!m)return null;const r=await pool.query('SELECT t.* FROM project_oauth_tokens t JOIN users u ON u.id=t.user_id WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now() AND u.disabled=false',[hash(m[1])]);const t=r.rows[0];if(!t||t.resource!==RESOURCE)return null;return {userId:t.user_id,scopes:t.scope.split(' '),clientId:t.client_id};}
   async function requireAuth(req,res,scope){const a=await bearer(req);if(!a){json(res,401,{error:'authentication_required'},{'WWW-Authenticate':`Bearer resource_metadata="${ISSUER}/.well-known/oauth-protected-resource", scope="${scope||SCOPES[0]}"`});return null;}if(scope&&!a.scopes.includes(scope)){json(res,403,{error:'insufficient_scope'});return null;}return a;}
@@ -53,6 +53,6 @@ function createAuth(pool,{jarvisEnabled=false}={}){
     }
     fail('Ruta no encontrada',404);
   }
-  return {oauth,requireAuth,origin,rate,hash,issueTicket};
+  return {oauth,requireAuth,origin,rate,hash,issueTicket,supportedScopes};
 }
 module.exports={createAuth,ISSUER,RESOURCE,SCOPES,body,json,html,escape,hash};

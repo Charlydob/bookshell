@@ -10,6 +10,19 @@ const allowed = new Set([
   "time:read",
   "time:write",
   "notifications:write",
+  "recipes:read",
+  "people:read",
+  "notes:read",
+  "books:read",
+  "nutrition:read",
+  "gym:read",
+  "finance:read",
+  "world:read",
+  "recipes:write",
+  "people:write",
+  "notes:write",
+  "books:write",
+
 ]);
 async function main() {
   if (process.argv[2] !== "--issue-approved-grant")

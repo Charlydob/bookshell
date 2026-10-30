@@ -42,4 +42,5 @@ function definitions(service, actor) {
     scopes[name],
   ]);
 }
+Object.assign(descriptions, require('./module-contracts').descriptions);
 module.exports = { definitions, descriptions };

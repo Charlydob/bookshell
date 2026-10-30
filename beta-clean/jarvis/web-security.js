@@ -11,6 +11,19 @@ const webScopes = [
   "time:read",
   "time:write",
   "notifications:write",
+  "recipes:read",
+  "people:read",
+  "notes:read",
+  "books:read",
+  "nutrition:read",
+  "gym:read",
+  "finance:read",
+  "world:read",
+  "recipes:write",
+  "people:write",
+  "notes:write",
+  "books:write",
+
 ];
 function createWebSecurity({
   pool,

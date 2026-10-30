@@ -274,6 +274,10 @@ const outputSchemas = {
     })
     .strict(),
 };
+const moduleContracts = require('./module-contracts');
+Object.assign(schemas,moduleContracts.schemas);
+Object.assign(scopes,moduleContracts.scopes);
+Object.assign(outputSchemas,moduleContracts.outputSchemas);
 for (const name of Object.keys(outputSchemas))
   outputSchemas[name] = outputSchemas[name].extend({
     replayed: z.boolean().optional(),

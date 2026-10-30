@@ -38,6 +38,14 @@ async function tool(name, args) {
   return r.structuredContent.result;
 }
 const key = () => crypto.randomUUID();
+
+test('authenticated native pairing can grant current module scopes; anonymous callers cannot',async()=>{
+ const issued=await web('/projects/access-code',{});assert.equal(issued.status,201);
+ const hash=require('node:crypto').createHash('sha256').update(issued.body.ticket).digest('hex');
+ const grant=(await f.pool.query('SELECT user_id,allowed_scopes FROM project_access_tickets WHERE token_hash=$1',[hash])).rows[0];
+ assert.equal(grant.user_id,f.owner);assert.ok(grant.allowed_scopes.includes('recipes:write'));assert.ok(grant.allowed_scopes.includes('finance:read'));
+ assert.equal((await web('/projects/access-code',{}, {auth:false})).status,401);
+});
 test("real web boundary: data/export/projects/pairing settings reject anonymous and forged origin; health/MCP discovery remain available", async () => {
   for (const p of [
     "/data/habits",
@@ -332,7 +340,7 @@ test("E: project-only/read-only tokens cannot write habits; separate identities 
     body: "{}",
   });
   assert.equal(r.status, 401);
-  assert.equal((await mcp.listTools()).tools.length, 35);
+  assert.equal((await mcp.listTools()).tools.length, 23 + Object.keys(require('../jarvis/contracts').schemas).length);
 });
 test("web CAS rejects missing bases, overlapping patches, prototype paths and cross-system session manipulation", async () => {
   assert.equal(
@@ -475,7 +483,7 @@ test('native web invariants: active sessions block archive; completing a check c
 
 test('Published MCP metadata and permission challenges support ChatGPT reauthorization',async()=>{
  const {client}=await f.mcp(['projects:read','projects:write']);
- const catalog=await client.listTools();assert.equal(catalog.tools.length,35);
+ const catalog=await client.listTools();assert.equal(catalog.tools.length,23 + Object.keys(require('../jarvis/contracts').schemas).length);
  assert.deepEqual(catalog.tools.find(t=>t.name==='habits_create')._meta.securitySchemes,[{type:'oauth2',scopes:['habits:write']}]);
  const denied=await client.callTool({name:'habits_create',arguments:{habit:{name:'Denied without grant',goal:'check',schedule:{type:'daily',days:[]}},idempotencyKey:key()}});
  assert.equal(denied.isError,true);const challenge=denied._meta['mcp/www_authenticate'][0];assert.match(challenge,/error="insufficient_scope"/);assert.match(challenge,/error_description=/);assert.match(challenge,/habits:write/);

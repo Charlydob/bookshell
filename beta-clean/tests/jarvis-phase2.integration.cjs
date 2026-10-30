@@ -472,3 +472,14 @@ test('native web invariants: active sessions block archive; completing a check c
  assert.equal((await web('/web/data',{method:'PUT',path:daily,body:true,expected:{[daily]:revision(null)},idempotencyKey:key()})).status,200);
  assert.equal((await f.pool.query('SELECT status FROM notification_runs WHERE schedule_key=$1',[schedule])).rows[0].status,'cancelled');
 });
+
+test('Published MCP metadata and permission challenges support ChatGPT reauthorization',async()=>{
+ const {client}=await f.mcp(['projects:read','projects:write']);
+ const catalog=await client.listTools();assert.equal(catalog.tools.length,35);
+ assert.deepEqual(catalog.tools.find(t=>t.name==='habits_create')._meta.securitySchemes,[{type:'oauth2',scopes:['habits:write']}]);
+ const denied=await client.callTool({name:'habits_create',arguments:{habit:{name:'Denied without grant',goal:'check',schedule:{type:'daily',days:[]}},idempotencyKey:key()}});
+ assert.equal(denied.isError,true);const challenge=denied._meta['mcp/www_authenticate'][0];assert.match(challenge,/error="insufficient_scope"/);assert.match(challenge,/error_description=/);assert.match(challenge,/habits:write/);
+ const partial=(await f.mcp(['habits:write'])).client;
+ const reminder=await partial.callTool({name:'habits_create',arguments:{habit:{name:'Denied reminder grant',goal:'check',schedule:{type:'daily',days:[]}},reminderPlan:{enabled:true,times:['21:00'],timezone:'Europe/Madrid',startDate:'2026-10-30'},idempotencyKey:key()}});
+ assert.equal(reminder.isError,true);assert.match(reminder._meta['mcp/www_authenticate'][0],/notifications:write/);
+});

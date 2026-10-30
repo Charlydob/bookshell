@@ -1,3 +1,4 @@
+import '../shared/data/conflicts-ui.js';
 import {
   db,
   firebasePaths,
@@ -4177,6 +4178,7 @@ function ensureLoginUI() {
         style="padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.15);
         background:rgba(255,255,255,.06);color:#fff;">
 
+      <label>Código de acceso del dispositivo (alternativo a la contraseña)<input id="devicePairCode" type="password" autocomplete="off"><button id="devicePairSubmit" type="button">Autorizar este dispositivo</button></label>
       <div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
         <button id="btnSignup" type="button" ${SIGNUP_ENABLED ? "" : "disabled"}
           title="${SIGNUP_ENABLED ? "Crear cuenta" : "Registro deshabilitado durante la migracion"}"
@@ -4194,17 +4196,13 @@ function ensureLoginUI() {
   document.body.appendChild(box);
 
   const err = box.querySelector("#loginErr");
+  box.querySelector('#devicePairSubmit').onclick=async()=>{try{await (await import('../shared/auth/api-auth.js')).pairDevice(box.querySelector('#devicePairCode').value.trim());await location.reload();}catch(e){err.textContent=e.message;}};
   box.querySelector("#btnLogout")?.setAttribute("type", "button");
   const readLoginCredentials = (reason = "login") => {
     const emailInput = box.querySelector("#loginEmail");
     const passwordInput = box.querySelector("#loginPass");
     const email = String(emailInput?.value || "").trim();
     const password = String(passwordInput?.value || "");
-    console.log("[auth:login-form]", {
-      reason,
-      email,
-      passwordLength: password.length,
-    });
     return { email, password };
   };
 
@@ -4398,6 +4396,19 @@ function bindAuthGate() {
 
     void notifySyncUserChanged();
     document.getElementById("loginBox")?.remove();
+    void import('../shared/data/config.js').then(async ({API_BASE_URL}) => {
+      const response = await fetch(API_BASE_URL + '/auth/status', {credentials:'include',cache:'no-store'});
+      if (!response.ok) return;
+      const status = await response.json();
+      if (status.mode !== 'observe' || status.paired || document.getElementById('deviceTransitionNotice')) return;
+      const notice = document.createElement('button');
+      notice.id = 'deviceTransitionNotice';
+      notice.textContent = 'Vincular este dispositivo para el nuevo acceso seguro';
+      notice.style.cssText = 'position:fixed;bottom:90px;left:16px;right:16px;z-index:9998;padding:12px;border-radius:12px;background:#173955;color:white;border:1px solid #75c8dd';
+      notice.onclick = () => ensureLoginUI();
+      document.body.appendChild(notice);
+    }).catch(() => {});
+    void import("../shared/data/conflicts-ui.js").then(m=>m.showConflicts());
     const authUid = getUserDataRootKey(user);
     window.bootDebug?.ok?.("userKey calculado", {
       authUid,

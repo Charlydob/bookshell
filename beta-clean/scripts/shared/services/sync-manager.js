@@ -1,3 +1,4 @@
+import {webMode,applyVersionedWrite} from '../data/versioned-web.js';
 import {
   DATA_PROVIDER,
   onValue,
@@ -11,6 +12,7 @@ import {
   getOfflineQueueSummary,
   listRetryableOfflineOperations,
   markOfflineOperationFailed,
+  updateOfflineOperation,
   markOfflineOperationSynced,
   markOfflineOperationSyncing,
   OFFLINE_OPERATION_STATUS,
@@ -124,6 +126,7 @@ async function refreshQueueSummary() {
 }
 
 async function applyRemoteOperation(operation) {
+  if(await webMode()!=='legacy'){if(!operation.metadata?.versionedMutation)throw Object.assign(new Error('Cambio antiguo sin versión. Revisión manual necesaria.'),{status:428});await applyVersionedWrite(operation.metadata.versionedMutation);return;}
   if (!syncManagerDb) {
     throw new Error("[sync-manager] missing database instance");
   }
@@ -201,7 +204,7 @@ async function runSyncCycle(reason = "manual") {
     } catch (error) {
       state.lastError = describeSyncError(error);
       console.warn("[offline:sync:error]", { opId: operation.opId, path: operation.backendPath || operation.firebasePath, error: state.lastError });
-      await markOfflineOperationFailed(operation.opId, state.lastError);
+      if([409,428].includes(error.status))await updateOfflineOperation(operation.opId,{status:"conflict",lastError:state.lastError});else await markOfflineOperationFailed(operation.opId, state.lastError);
       if (isConnectivityError(error)) {
         break;
       }

@@ -15,7 +15,7 @@ function api(path, options = {}) {
 function pushDeviceId(){let id=localStorage.getItem('bookshell:push-device:v1');if(!id){id=crypto.randomUUID();localStorage.setItem('bookshell:push-device:v1',id);}return id;}
 async function endpointHash(endpoint){const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(endpoint));return Array.from(new Uint8Array(bytes),v=>v.toString(16).padStart(2,'0')).join('').slice(0,16);}
 async function currentSubscription(registration,status){let subscription=await registration.pushManager.getSubscription();if(subscription&&(status.expiredEndpointHashes||[]).includes(await endpointHash(subscription.endpoint))){await subscription.unsubscribe();subscription=null;}return subscription;}
-async function projectsApi(path,method='GET',data){const r=await fetch('/projects-api/projects/notifications/'+path,{method,credentials:'same-origin',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,cache:'no-store'});const b=await r.json();if(!r.ok)throw new Error(b.error||'No se pudo consultar notificaciones');return b;}
+async function projectsApi(path,method='GET',data){const r=await fetch(API_BASE_URL+'/projects/notifications/'+path,{method,credentials:'include',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,cache:'no-store'});const b=await r.json();if(!r.ok)throw new Error(b.error||'No se pudo consultar notificaciones');return b;}
 export const getNotificationStatus=()=>projectsApi('status');
 export const saveDailySummarySettings=settings=>projectsApi('settings','PATCH',settings);
 export const previewDailySummary=()=>projectsApi('preview','POST',{});

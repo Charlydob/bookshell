@@ -104,3 +104,5 @@ export async function getSession() {
 }
 
 export const getCurrentUser = getSession;
+
+export async function pairDevice(code){await requestJson('/auth/device',{method:'POST',body:JSON.stringify({code,label:navigator.userAgent.includes('iPhone')?'iPhone PWA':'Navegador Bookshell'})});return getSession();}

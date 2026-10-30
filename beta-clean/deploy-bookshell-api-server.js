@@ -886,7 +886,7 @@ async function authenticateJarvisRequest(req, db = pool) {
   const result = await db.query(`
     SELECT id, token_hash, scopes
     FROM jarvis_api_tokens
-    WHERE user_id = $1 AND revoked_at IS NULL
+    WHERE user_id = $1 AND revoked_at IS NULL AND user_id IN (SELECT id FROM users WHERE disabled=false)
     ORDER BY created_at DESC
   `, [SINGLE_USER_ID]);
   const match = result.rows.find((row) => safeTimingEqualHex(row.token_hash, suppliedHash));
@@ -2657,7 +2657,7 @@ function normalizeReminderAlert(alert = {}) {
     mode,
     minutesBefore,
     notifyAt: String(alert?.notifyAt || alert?.notify_at || "").trim(),
-    channel: "telegram",
+    channel: process.env.BOOKSHELL_TELEGRAM_RETIRED==='1'?"webpush":"telegram",
   };
 }
 
@@ -2674,7 +2674,7 @@ function normalizeReminderAlertSet(alerts = []) {
           mode: "relative",
           minutesBefore: 0,
           notifyAt: "",
-          channel: "telegram",
+          channel: process.env.BOOKSHELL_TELEGRAM_RETIRED==='1'?"webpush":"telegram",
         },
       ];
   const seen = new Set();
@@ -2910,7 +2910,7 @@ function serializeReminder(row, alerts = []) {
         alert.notify_at
           ? new Date(alert.notify_at).toISOString()
           : "",
-      channel: alert.channel || "telegram",
+      channel: alert.channel || (process.env.BOOKSHELL_TELEGRAM_RETIRED==='1'?"webpush":"telegram"),
       status: alert.status,
       sentAt:
         alert.sent_at
@@ -2990,7 +2990,7 @@ function reminderAlertRowToInput(alert = {}) {
     notifyAt: alert.notify_at
       ? new Date(alert.notify_at).toISOString()
       : "",
-    channel: alert.channel || "telegram",
+    channel: alert.channel || (process.env.BOOKSHELL_TELEGRAM_RETIRED==='1'?"webpush":"telegram"),
   };
 }
 
@@ -3164,7 +3164,7 @@ async function ensureReminderAlerts(client, reminderRow, options = {}) {
             $2,
             $3,
             $4,
-            'telegram',
+            $5,
             'pending',
             NOW(),
             NOW()
@@ -3176,6 +3176,7 @@ async function ensureReminderAlerts(client, reminderRow, options = {}) {
           expected.mode,
           expected.minutesBefore,
           expected.notifyAt,
+          process.env.BOOKSHELL_TELEGRAM_RETIRED==='1'?'webpush':'telegram',
         ]
       );
       created += 1;
@@ -4325,7 +4326,7 @@ function logReminderAlertDelivery(event = {}) {
   logger("[reminders:alert:delivery]", logPayload);
 }
 
-async function claimDueReminderAlerts(limit = 50, db = pool) {
+async function claimDueReminderAlerts(limit = 50, db = pool, channel = null) {
   const client = await db.connect();
   const workerId = `n8n-${crypto.randomUUID()}`;
   let staleReminderIds = [];
@@ -4351,13 +4352,14 @@ async function claimDueReminderAlerts(limit = 50, db = pool) {
           AND a.notify_at IS NOT NULL
           AND a.notify_at < NOW() - INTERVAL '30 minutes'
           AND r.firebase_uid = $1
+          AND ($2::text IS NULL OR a.channel=$2)
         RETURNING
           a.id AS alert_id,
           a.reminder_id,
           a.notify_at,
           a.failed_at
       `,
-      [LEGACY_FIREBASE_UID]
+      [LEGACY_FIREBASE_UID, channel]
     );
 
     staleReminderIds = Array.from(new Set(
@@ -4392,6 +4394,7 @@ async function claimDueReminderAlerts(limit = 50, db = pool) {
           AND a.notify_at <= NOW()
           AND r.status = 'pending'
           AND r.firebase_uid = $1
+          AND ($3::text IS NULL OR a.channel=$3)
           AND (
             a.locked_at IS NULL
             OR a.locked_at < NOW() - INTERVAL '5 minutes'
@@ -4403,6 +4406,7 @@ async function claimDueReminderAlerts(limit = 50, db = pool) {
       [
         LEGACY_FIREBASE_UID,
         clampInt(limit, 50, 1, 100),
+        channel,
       ]
     );
 
@@ -5302,7 +5306,7 @@ async function runDueReminderAlertPushCycle({
     };
   }
 
-  const claimed = await claimDueReminderAlerts(limit, db);
+  const claimed = await claimDueReminderAlerts(limit, db, process.env.BOOKSHELL_EXPLICIT_NOTIFICATION_CHANNELS==='1'?'webpush':null);
   const delivered = await deliverClaimedReminderAlerts({
     claimed,
     db,
@@ -5515,12 +5519,28 @@ const projectsModule = require("./projects/server").createProjects({
     : Promise.resolve({ accepted: false, attemptedCount: 0, reason: "no_subscription" }),
 });
 
+const webSecurity=require('./jarvis/web-security').createWebSecurity({pool,ownerId:SINGLE_USER_ID,mode:process.env.BOOKSHELL_WEB_AUTH_MODE||'legacy',origins:isAllowedOrigin});
+const webData=require('./jarvis/web-data').createWebData({pool});
 const server = http.createServer(async (req, res) => {
   const url = new URL(
     req.url,
     `http://${req.headers.host || "localhost"}`
   );
 
+  for(const [key,value] of Object.entries(corsHeaders(req)))res.setHeader(key,value);
+  if(req.method==='OPTIONS'){if(req.headers.origin&&!isAllowedOrigin(req.headers.origin))return sendJson(req,res,403,{error:'ORIGIN_DENIED'});res.writeHead(204);res.end();return;}
+  if(await webSecurity.handle(req,res,url))return;
+  try {
+    const machine=url.pathname==='/projects/notifications/receipts'||/^\/(mcp(?:$|\/)|oauth\/|\.well-known\/|jarvis(?:$|\/)|automation\/|shortcuts\/(finance|world)\/|shortcuts\/reminders\/today$)/.test(url.pathname);
+    if(url.pathname.startsWith('/web/')||webSecurity.mode==='required'&&!machine&&url.pathname!=='/health'){
+      req.webActor=await webSecurity.requireUser(req);
+      if(!['GET','HEAD'].includes(req.method))webSecurity.origin(req);
+    }
+    if(webSecurity.mode==='required'&&!['GET','HEAD'].includes(req.method)&&(/^\/data(?:$|\/)/.test(url.pathname)||/^\/jarvis(?:$|\/)/.test(url.pathname)))return sendJson(req,res,428,{error:'REFRESH_CLIENT_USE_VERSIONED_WRITES'});
+    if(url.pathname==='/web/data'&&req.method==='POST')return sendJson(req,res,200,await webData.write(req.webActor,await readJson(req)));
+    const operation=/^\/web\/jarvis\/([a-z_]+)$/.exec(url.pathname);
+    if(operation&&req.method==='POST'){if(!projectsModule.jarvis)return sendJson(req,res,503,{error:'JARVIS_NOT_ENABLED'});return sendJson(req,res,200,await projectsModule.jarvis.run(req.webActor,operation[1],await readJson(req)));}
+  }catch(error){return sendJson(req,res,error.status||(error.issues?400:500),{error:error.status?error.message:error.issues?'INVALID_INPUT':'REQUEST_FAILED'});}
   if (await projectsModule.handle(req, res, url)) return;
 
   // ------------------------------------------------
@@ -5558,8 +5578,7 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         service: "bookshell-api",
         database: "connected",
-        auth: "disabled-single-user",
-        userId: SINGLE_USER_ID,
+        auth: webSecurity.mode,
         time: result.rows[0].now,
       });
     } catch (error) {
@@ -6373,6 +6392,7 @@ const server = http.createServer(async (req, res) => {
   // ------------------------------------------------
 
   if (url.pathname.startsWith("/automation/")) {
+    if(process.env.BOOKSHELL_TELEGRAM_RETIRED==='1') return sendJson(req,res,410,{ok:false,error:'TELEGRAM_AUTOMATION_RETIRED'});
     if (!isAutomationAuthorized(req)) {
       return sendJson(req, res, 401, {
         ok: false,
@@ -6406,7 +6426,7 @@ const server = http.createServer(async (req, res) => {
   ) {
     try {
       const result = await claimDueReminderAlerts(
-        url.searchParams.get("limit") || 50
+        url.searchParams.get("limit") || 50, pool, process.env.BOOKSHELL_EXPLICIT_NOTIFICATION_CHANNELS==='1'?'telegram':null
       );
 
       return sendJson(req, res, 200, {
@@ -7179,6 +7199,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
+  if(process.env.BOOKSHELL_JARVIS_V2_ENABLED==='1'&&webSecurity.mode!=='required')throw new Error('Secure web authentication must be required before enabling JARVIS v2');
   if (!Pool) {
     throw new Error("pg_dependency_missing");
   }
@@ -7209,7 +7230,10 @@ if (require.main === module) {
 }
 
 module.exports = {
+  server,
   __test: {
+    webSecurity,
+    pool,
     buildAutomationReminderSearchQuery,
     matchesAutomationReminderSearch,
     normalizeAutomationReminderSearchParams,
@@ -7286,6 +7310,7 @@ module.exports = {
     claimDailySummaryDelivery,
     runDailySummaryPushCycle,
     runDueReminderAlertPushCycle,
+    claimDueReminderAlerts,
     runReminderSchedulerTick,
     startReminderScheduler,
     stopReminderScheduler,

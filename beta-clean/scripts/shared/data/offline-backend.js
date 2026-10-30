@@ -1,3 +1,4 @@
+import {webMode,prepareVersionedWrite,applyVersionedWrite} from './versioned-web.js';
 import {
   db,
   push,
@@ -7,7 +8,7 @@ import {
   update,
 } from "../data/index.js";
 import { auth } from "../auth/index.js";
-import { enqueueOfflineOperation } from "../storage/offline-queue.js";
+import { enqueueOfflineOperation, updateOfflineOperation } from "../storage/offline-queue.js";
 import {
   canWriteDirectly,
   notifyOfflineQueueChanged,
@@ -65,12 +66,17 @@ export async function writeBackendWithOfflineQueue(input = {}) {
   const metadata = { ...(input.metadata && typeof input.metadata === "object" ? cloneValue(input.metadata) : {}), clientMutationId };
 
   console.info("[backend:write:start]", { writeType: safeWriteType, path: safePath, clientMutationId });
-  if (canWriteDirectly()) {
+  let versionedMutation=null,conflict=null;
+  try{if(await webMode()!=='legacy')versionedMutation=await prepareVersionedWrite(safeWriteType==='update'?'PATCH':payload==null?'DELETE':'PUT',safePath,payload);}
+  catch(error){conflict=error;}
+  if(versionedMutation)metadata.versionedMutation=versionedMutation;
+  if (canWriteDirectly()&&!conflict) {
     try {
-      await performDirectWrite(safeWriteType, safePath, payload);
+      if(versionedMutation)await applyVersionedWrite(versionedMutation);else await performDirectWrite(safeWriteType, safePath, payload);
       console.info("[backend:write:done]", { writeType: safeWriteType, path: safePath, clientMutationId });
       return { ok: true, queued: false, mode: "direct", clientMutationId, path: safePath };
     } catch (error) {
+      if([409,428].includes(error.status))conflict=error;
       console.warn("[backend:write:queued]", { path: safePath, error: String(error?.message || error || "") });
     }
   }
@@ -86,9 +92,10 @@ export async function writeBackendWithOfflineQueue(input = {}) {
     dedupeKey,
     metadata,
   });
+  if(conflict){await updateOfflineOperation(operation.opId,{status:"conflict",lastError:conflict.message});globalThis.dispatchEvent?.(new Event("bookshell:offline-conflicts"));}
   console.info("[offline:queue:add]", { opId: operation?.opId, replaced, path: safePath, clientMutationId });
   await notifyOfflineQueueChanged();
-  return { ok: true, queued: true, mode: "queued", operation, clientMutationId, path: safePath };
+  return { ok: !conflict, conflict:!!conflict, error:conflict, queued: true, mode: conflict?"conflict":"queued", operation, clientMutationId, path: safePath };
 }
 
 export const writeRtdbWithOfflineQueue = writeBackendWithOfflineQueue;

@@ -1,4 +1,4 @@
-importScripts("./scripts/shared/config/release.js?v=2026-10-28-task-alerts-digest-v8");
+importScripts("./scripts/shared/config/release.js?v=2026-10-30-jarvis21");
 
 const BOOKSHELL_RELEASE = self.__BOOKSHELL_RELEASE__ || {};
 const APP_VERSION = String(BOOKSHELL_RELEASE.version || "dev");
@@ -54,6 +54,9 @@ const LOCAL_PRECACHE_ASSETS = [
   
   "./scripts/modules/gym/index.js",
   "./scripts/modules/gym/runtime.js",
+  "./scripts/modules/habits/activities.js",
+  "./scripts/shared/data/versioned-web.js",
+  "./scripts/shared/data/conflicts-ui.js",
   "./scripts/modules/habits/index.js",
   "./scripts/modules/habits/runtime.js",
   "./scripts/modules/habits/time-by-habit.js",
@@ -340,7 +343,7 @@ self.addEventListener("message", (event) => {
 async function reportNotificationReceipt(data,event){
  if(!data?.notificationId||!data?.receiptToken||!data?.subscriptionId)return;
  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),4000);
- try{await fetch(new URL('./projects-api/projects/notifications/receipts',self.location.href),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notificationId:data.notificationId,subscriptionId:data.subscriptionId,receiptToken:data.receiptToken,event}),signal:controller.signal});}catch{}finally{clearTimeout(timeout);}
+ try{await fetch('https://api-bookshell.charlydob.com/projects/notifications/receipts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notificationId:data.notificationId,subscriptionId:data.subscriptionId,receiptToken:data.receiptToken,event}),signal:controller.signal});}catch{}finally{clearTimeout(timeout);}
 }
 self.addEventListener("push", (event) => {
  let payload={};try{payload=event.data?.json?.()||{};}catch{payload={body:event.data?.text?.()||''};}
@@ -357,7 +360,7 @@ self.addEventListener("notificationclick", (event) => {
   await Promise.all([receipt,navigate]);
  })());
 });
-self.addEventListener('pushsubscriptionchange',event=>{event.waitUntil((async()=>{try{const options=event.oldSubscription?.options;if(!options)return;const subscription=event.newSubscription||await self.registration.pushManager.subscribe(options);await fetch('https://api-bookshell.charlydob.com/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...subscription.toJSON(),previousEndpoint:event.oldSubscription?.endpoint})});}catch(error){console.warn('[push:renew-worker]',error.message);}})());});
+self.addEventListener('pushsubscriptionchange',event=>{event.waitUntil((async()=>{try{const options=event.oldSubscription?.options;if(!options)return;const subscription=event.newSubscription||await self.registration.pushManager.subscribe(options);await fetch('https://api-bookshell.charlydob.com/push/subscribe',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({...subscription.toJSON(),previousEndpoint:event.oldSubscription?.endpoint})});}catch(error){console.warn('[push:renew-worker]',error.message);}})());});
 
 self.addEventListener("fetch", (event) => {
   const { request } = event;

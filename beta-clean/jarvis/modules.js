@@ -10,6 +10,10 @@ function container(data,module){
  return data[module]||{};
 }
 function runQuery(data,module,b,revision){
+ if(b.from||b.to){
+  if(!['books:readingLog','nutrition:dailyLogsByDate','gym:workouts','finance:transactions'].includes(module+':'+b.collection))fail('DATE_FILTER_UNSUPPORTED_FOR_COLLECTION',400);
+  if(b.from&&b.to&&b.from>b.to)fail('INVALID_RANGE',400);
+ }
  let raw=container(data,module)[b.collection];
  if(module==='people')raw=container(data,module).notes;
  if(module==='recipes'&&b.collection==='items')raw={...Object.fromEntries(Object.entries(container(data,module)).filter(([id,v])=>v?.title&&id!=='items')),...(raw||{})};
@@ -26,7 +30,8 @@ function runQuery(data,module,b,revision){
  let rows=objectRows(raw);
  if(module==='people')rows=rows.filter(([,v])=>v?.noteKind==='persona');
  if(module==='gym'&&b.collection==='workouts')rows=rows.flatMap(([date,day])=>objectRows(day).map(([id,v])=>[id,{...v,date:v.date||date}]));
- rows=rows.filter(([id,v])=>v&&typeof v==='object'&&(!b.id||id===b.id)&&(!b.query||fold(JSON.stringify(v)).includes(fold(b.query)))&&(!b.from||(v.date||v.dateISO?.slice(0,10)||id)>=b.from)&&(!b.to||(v.date||v.dateISO?.slice(0,10)||id)<=b.to));
+ const calendarDate=(id,v)=>[v?.date,v?.dateISO,id].find(d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(d))?.slice(0,10);
+ rows=rows.filter(([id,v])=>v&&typeof v==='object'&&(!b.id||id===b.id)&&(!b.query||fold(JSON.stringify(v)).includes(fold(b.query)))&&(!(b.from||b.to)||!!calendarDate(id,v))&&(!b.from||calendarDate(id,v)>=b.from)&&(!b.to||calendarDate(id,v)<=b.to));
  rows.sort(([a],[b])=>a.localeCompare(b));
  const items=rows.slice(b.offset,b.offset+b.limit).map(([id,v])=>({id,data:v,revision:revision(v)}));
  const result={items,total:rows.length,nextOffset:b.offset+b.limit<rows.length?b.offset+b.limit:null};

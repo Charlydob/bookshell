@@ -35,7 +35,7 @@ function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,push
     if(req.headers.origin&&!['https://chatgpt.com','https://bookshell.charlydob.com'].includes(req.headers.origin))fail('Origen no permitido',403);
     const a=await auth.requireAuth(req,res,null);if(!a)return;
     auth.rate(req,'mcp',600);
-    const server=new McpServer({name:'bookshell-projects',version:'2.1.0'},{instructions:'Datos del espacio de Bookshell. Consulta antes de modificar; respeta versiones y confirmaciones. El porcentaje de tareas no es el progreso físico. No inventes avances ni fechas.'});
+    const server=new McpServer({name:'bookshell-projects',version:'2.2.0'},{instructions:'Datos del espacio de Bookshell. Consulta antes de modificar; respeta versiones y confirmaciones. El porcentaje de tareas no es el progreso físico. No inventes avances ni fechas.'});
     for(const[name,description,inputSchema,write,fn,extraScopes]of [...tools(a),...(jarvis?require('../jarvis/tools').definitions(jarvis,a):[])]){
       const requiredScopes=extraScopes||[write?'projects:write':'projects:read'];
       const securitySchemes=[{type:'oauth2',scopes:requiredScopes}];
@@ -43,7 +43,7 @@ function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,push
         const requestedScopes=[...requiredScopes];
         if(extraScopes){if(b.reminderPlan)requestedScopes.push('notifications:write');if(name.startsWith('activity_')&&b.habitId)requestedScopes.push('habits:write');if(name.startsWith('activity_')&&b.projectId)requestedScopes.push('projects:read');}
         if(requestedScopes.some(scope=>!a.scopes.includes(scope)))return {isError:true,content:[{type:'text',text:'Autoriza los permisos necesarios para esta operación.'}],_meta:{'mcp/www_authenticate':[`Bearer error="insufficient_scope", error_description="Authorize the requested Bookshell permissions", scope="${[...new Set(requestedScopes)].join(' ')}", resource_metadata="https://mcp-bookshell.charlydob.com/.well-known/oauth-protected-resource"`]}};
-        try{const result=await fn(b);return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:{result}};}catch(e){const diagnostic=require('crypto').randomUUID();if(!e.status&&!e.issues)console.error('[projects:mcp]',{diagnostic,tool:name,message:e.message});return {isError:true,content:[{type:'text',text:JSON.stringify({error:safeError(e),code:e.issues?'INVALID_ARGUMENT':e.status?e.message:'INTERNAL_ERROR',diagnostic,status:e.status||400,retryable:e.status===409,recovery:e.status===409?'Read the current entity and revision; resolve the conflict before retrying.':undefined})}]};}
+        try{const result=await fn(b);return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:{result}};}catch(e){const diagnostic=require('crypto').randomUUID();if(!e.status&&!e.issues)console.error('[projects:mcp]',{diagnostic,tool:name,message:e.message});return {isError:true,content:[{type:'text',text:JSON.stringify({error:safeError(e),code:e.issues?'INVALID_ARGUMENT':e.status?e.message:'INTERNAL_ERROR',diagnostic,status:e.status||(e.issues?400:500),retryable:e.status===409,recovery:e.status===409?'Read the current entity and revision; resolve the conflict before retrying.':undefined})}]};}
       });
     }
     const transport=new StreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});

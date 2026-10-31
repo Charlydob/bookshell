@@ -200,7 +200,7 @@ function createJarvis({ pool, nowFn = () => new Date(), additionalCapabilities =
         write = !!b.idempotencyKey;
       let result;
       if (require('./module-contracts').schemas[name]) result=await require('./modules').run({data:row.data,b,name,c,actor,now,revision});
-      if (name === "jarvis_capabilities") result={version:"2.1.0",operations:[...additionalCapabilities(actor),...Object.keys(schemas).map(name=>({name,scopes:scopes[name],authorized:scopes[name].every(s=>actor.scopes.includes(s))}))],modules:["projects","habits","activities",...Object.keys(require('./module-contracts').collections)],limitations:["Daily legacy totals do not establish recoverable intervals.","Nutrition, gym, finance and world currently expose queries only.","Person birthdays are saved in native cards; automatic reminder synchronization remains pending.","Global reminder/checklist CRUD remains pending; project reminders keep their existing tools."]};
+      if (name === "jarvis_capabilities") result={version:"2.2.0",operations:[...additionalCapabilities(actor),...Object.keys(schemas).map(name=>({name,scopes:scopes[name],authorized:scopes[name].every(s=>actor.scopes.includes(s))}))],modules:["projects","habits","activities",...Object.keys(require('./module-contracts').collections)],limitations:["Daily legacy totals do not establish recoverable intervals.","Nutrition, gym, finance and world currently expose queries only.","Person birthdays are saved in native cards; automatic reminder synchronization remains pending.","Global reminder/checklist CRUD remains pending; project reminders keep their existing tools."]};
       if (["activity_update","activity_reassign","activity_delete","activity_restore","activity_split"].includes(name)) {
         if(b.patch?.projectId && !(await c.query("SELECT id FROM project_workspaces WHERE id=$1 AND user_id=$2",[b.patch.projectId,actor.userId])).rowCount) fail("PROJECT_NOT_FOUND",404);
         if(b.patch?.projectId&&!actor.scopes.includes("projects:read"))fail("INSUFFICIENT_SCOPE",403);
@@ -403,7 +403,7 @@ function createJarvis({ pool, nowFn = () => new Date(), additionalCapabilities =
             projectId: b.projectId || null,
             timezone: b.timezone,
             status: name === "activity_start" ? "running" : "stopped",
-            openAt: name === "activity_start" ? now.getTime() : null,
+            openAt: name === "activity_start" ? (b.startedAt === undefined ? now.getTime() : Date.parse(b.startedAt)) : null,
             intervals:
               name === "activity_manual"
                 ? b.intervals.map((i) => [
@@ -413,6 +413,8 @@ function createJarvis({ pool, nowFn = () => new Date(), additionalCapabilities =
                 : [],
             createdAt: now.getTime(),
           };
+        if (s.status === 'running' && (!Number.isFinite(s.openAt) || s.openAt > now.getTime() || now.getTime() - s.openAt > 366 * 86400000))
+          fail('INVALID_STARTED_AT');
         if (
           s.intervals.some(
             ([start, end]) => end <= start || end > now.getTime(),
@@ -434,9 +436,11 @@ function createJarvis({ pool, nowFn = () => new Date(), additionalCapabilities =
         if (s.habitId && !actor.scopes.includes("habits:write"))
           fail("INSUFFICIENT_SCOPE", 403);
         if (s.status === "stopped") fail("SESSION_ALREADY_STOPPED", 409);
+        const end = b.endedAt === undefined ? now : new Date(b.endedAt);
+        if (b.endedAt !== undefined && (b.action === 'resume' || s.status !== 'running' || end.getTime() > now.getTime())) fail('INVALID_ENDED_AT');
         if (b.action === "pause") {
           if (s.status !== "running") fail("SESSION_NOT_RUNNING", 409);
-          close(s, now);
+          close(s, end);
           s.status = "paused";
         }
         if (b.action === "resume") {
@@ -445,7 +449,7 @@ function createJarvis({ pool, nowFn = () => new Date(), additionalCapabilities =
           s.status = "running";
         }
         if (b.action === "stop") {
-          if (s.status === "running") close(s, now);
+          if (s.status === "running") close(s, end);
           s.status = "stopped";
           credit(root, s);
         }

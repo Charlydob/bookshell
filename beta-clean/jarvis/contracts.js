@@ -126,6 +126,7 @@ const schemas = {
     .strict(),
   activity_start: z
     .object({
+      startedAt: instant.optional(),
       label: z.string().trim().min(1).max(200),
       habitId: id.optional(),
       projectId: z.string().uuid().optional(),
@@ -137,6 +138,7 @@ const schemas = {
     .object({
       sessionId: z.string().uuid(),
       action: z.enum(["pause", "resume", "stop"]),
+      endedAt: instant.optional(),
       expectedRevision: revision,
       idempotencyKey: key,
     })
@@ -167,7 +169,7 @@ const schemas = {
       projectId: z.string().uuid().optional(),
     })
     .strict(),
-  activity_update: z.object({sessionId:z.string().uuid(),expectedRevision:revision,idempotencyKey:key,patch:z.object({label:z.string().trim().min(1).max(200).optional(),timezone:zone.optional(),projectId:z.string().uuid().nullable().optional(),intervals:z.array(z.object({start:instant,end:instant}).strict()).min(1).max(100).optional(),durationSec:z.number().positive().max(31622400).optional()}).strict()}).strict(),
+  activity_update: z.object({sessionId:z.string().uuid(),expectedRevision:revision,idempotencyKey:key,patch:z.object({startedAt:instant.optional(),label:z.string().trim().min(1).max(200).optional(),timezone:zone.optional(),projectId:z.string().uuid().nullable().optional(),intervals:z.array(z.object({start:instant,end:instant}).strict()).min(1).max(100).optional(),durationSec:z.number().positive().max(31622400).optional()}).strict()}).strict(),
   activity_reassign: z.object({sessionId:z.string().uuid(),habitId:id,expectedRevision:revision,idempotencyKey:key}).strict(),
   activity_delete: z.object({sessionId:z.string().uuid(),expectedRevision:revision,idempotencyKey:key,confirmed:z.literal(true)}).strict(),
   activity_restore: z.object({sessionId:z.string().uuid(),expectedRevision:revision,idempotencyKey:key}).strict(),

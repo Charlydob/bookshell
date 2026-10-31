@@ -1,7 +1,7 @@
 "use strict";
 const { schemas, scopes } = require("./contracts");
 const descriptions = {
-  activity_update:"Corrige una sesión terminada con revisión e idempotencia; intervalos ISO o duración en segundos para un solo intervalo. Recalcula aportaciones atómicamente, conserva históricos y simultaneidad.",
+  activity_update:"Corrige startedAt (ISO con zona explícita) y metadatos de sesiones activas, pausadas o terminadas con revisión e idempotencia. Intervalos y duración requieren sesión terminada. Conserva pausas, hábito, históricos y simultaneidad; recalcula aportaciones al cerrar o corregir una sesión terminada.",
   activity_reassign:"Traslada una sesión terminada a otro hábito de tiempo existente. Resta su aportación original y suma la nueva atómicamente sin cambiar los intervalos.",
   activity_delete:"Elimina recuperablemente una sesión terminada y retira su aportación, con confirmación humana expresa, revisión e idempotencia.",
   activity_restore:"Recupera una sesión eliminada usando su revisión actual y restaura su aportación una sola vez.",
@@ -22,9 +22,9 @@ const descriptions = {
   habits_reminders:
     "Configura hasta seis horas explícitas con zona y rango. Requiere permiso notifications:write. Evita horarios duplicados y no insiste tras completar objetivo diario.",
   activity_start:
-    "Inicia una actividad explícita, opcionalmente asociada a hábito de tiempo y proyecto propio. Permite actividades simultáneas.",
+    "Inicia una actividad abierta, opcionalmente con startedAt retroactivo ISO con zona explícita; sin startedAt usa la hora del servidor. Conserva hábito y proyecto propio; permite actividades simultáneas. Rechaza inicio futuro o anterior a 366 días. Usa idempotencyKey para reintentos.",
   activity_change:
-    "Pausa, reanuda o termina una sesión explícita usando su revisión. Al terminar acredita el hábito de forma atómica.",
+    "Pausa, reanuda o termina una sesión explícita usando revisión e idempotencia. Para pausar o terminar una sesión running acepta endedAt ISO con zona explícita entre el inicio abierto y ahora. Sin endedAt usa hora del servidor. Al terminar acredita el hábito de forma atómica.",
   activity_manual:
     "Registra intervalos declarados, sin inferir duración entre mensajes. Rechaza solapamiento dentro de la misma sesión; permite actividades simultáneas distintas.",
   activity_query:

@@ -71,7 +71,7 @@ function createDomain(pool,{nowFn=()=>new Date()}={}){
       const clean=old?Object.fromEntries(Object.entries(old).filter(([k])=>!['id','version','createdAt','updatedAt','kind','projectId','blockedBy','reminders','suspensionReason','delivery','linkReview'].includes(k))):{};
       const parsed=remove?clean:schemas[kind].parse({...clean,...input});
       const {reminders,taskId=null,offsetMinutes=null,...data}=parsed;
-      if(kind==='task'){data.completedAt=data.status==='done'?(old?.status==='done'&&old.completedAt?old.completedAt:nowFn().toISOString()):null;}
+      if(kind==='task'){data.completedAt=data.status==='done'?(input.completedAt|| (old?.status==='done'&&old.completedAt?old.completedAt:nowFn().toISOString())):null;if(data.completedAt&&Date.parse(data.completedAt)>nowFn().getTime())fail('La finalización no puede ser futura');}
       if(kind==='reminder'&&taskId){const task=es.find(t=>t.id===taskId&&t.kind==='task');if(!task)fail('La tarea vinculada debe pertenecer al mismo proyecto');if(offsetMinutes!==null)data.dueAt=task.dueAt?new Date(new Date(task.dueAt).getTime()-offsetMinutes*60000).toISOString():null;}
       if(kind==='event'&&data.startAt&&data.endAt&&data.startAt>data.endAt)fail('Fin anterior al inicio');
       if(['note','document'].includes(kind)&&data.description.includes('\u0000'))fail('Contenido inválido');

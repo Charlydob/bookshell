@@ -40,7 +40,7 @@ function createProjects({pool,sendNotification,sendDevice,ownerId,legacyUid,push
     if(req.headers.origin&&!['https://chatgpt.com','https://bookshell.charlydob.com'].includes(req.headers.origin))fail('Origen no permitido',403);
     const a=await auth.requireAuth(req,res,null);if(!a)return;
     auth.rate(req,'mcp',600);
-    const server=new McpServer({name:'bookshell-projects',version:'2.4.0'},{instructions:'Datos del espacio de Bookshell. Consulta antes de modificar; respeta versiones y confirmaciones. El porcentaje de tareas no es el progreso físico. No inventes avances ni fechas.'});
+    const server=new McpServer({name:'bookshell-projects',version:'2.5.0'},{instructions:'Datos del espacio de Bookshell. Consulta antes de modificar; respeta versiones y confirmaciones. El porcentaje de tareas no es el progreso físico. No inventes avances ni fechas.'});
     for(const[name,description,inputSchema,write,fn,extraScopes]of [...tools(a),...(jarvis?require('../jarvis/tools').definitions(jarvis,a):[])]){
       const requiredScopes=extraScopes||[write?'projects:write':'projects:read'];
       const securitySchemes=[{type:'oauth2',scopes:requiredScopes}];

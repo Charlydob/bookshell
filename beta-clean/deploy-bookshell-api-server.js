@@ -1065,18 +1065,8 @@ async function markJarvisHabit({ habitId = "", name = "", date = "", value = tru
 }
 
 function jarvisWorkoutTotals(exercises = {}) {
-  let totalReps = 0;
-  let totalVolumeKg = 0;
-  Object.values(exercises || {}).forEach((exercise) => {
-    (exercise?.sets || []).forEach((set) => {
-      if (set?.done === false) return;
-      const reps = Math.max(0, Number(set?.reps) || 0);
-      const kg = Math.max(0, Number(set?.kg ?? set?.weightKg) || 0);
-      totalReps += reps;
-      totalVolumeKg += reps * kg;
-    });
-  });
-  return { totalReps, totalVolumeKg };
+  const normalized=Object.fromEntries(Object.entries(exercises||{}).map(([id,e])=>[id,{...e,sets:(e.sets||[]).map(s=>({...s,done:s.done!==false}))}]));
+  return require('./scripts/shared/services/gym-business').context().totals({exercises:normalized});
 }
 
 async function createJarvisGymSession(input = {}, db = pool, now = new Date()) {

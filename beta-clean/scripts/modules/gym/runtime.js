@@ -1,3 +1,4 @@
+import '../../shared/services/gym-business.js';
 import {
   db,
   PUBLIC_PATHS,
@@ -2332,17 +2333,7 @@ function bindEvents() {
       const exerciseType = kind === "cardio" ? "cardio" : strengthType;
       const unilateral = Boolean(exercise.unilateral);
       const sets = buildSetsFromHistory(exerciseId, null, { exerciseType, unilateral });
-      exercisesData[exerciseId] = {
-        nameSnapshot: exercise.name,
-        muscleGroupsSnapshot: muscleGroups,
-        unilateralSnapshot: unilateral,
-        typeSnapshot: kind,
-        strengthTypeSnapshot: kind === "strength" ? strengthType : null,
-        metCategoryIdSnapshot: String(exercise.metCategoryId || "").trim(),
-        originalIndex: index,
-        useBodyweight: getExerciseUseBodyweight(exercise, exerciseId),
-        sets
-      };
+      exercisesData[exerciseId] = globalThis.BookshellGym.context(exercises,bodyweightByDate).snapshot(exerciseId,sets,index);
     });
     const workout = {
       id: workoutId,
@@ -3273,47 +3264,14 @@ function bindEvents() {
 
   function getCurrentDuration() {
     if (!currentWorkout?.startedAt) return 0;
-    if (currentWorkout.finishedAt) {
+    if (currentWorkout.finishedAt || !currentWorkout.startedAt || currentWorkout.recorded) {
       return currentWorkout.durationSec || 0;
     }
     return Math.floor((Date.now() - currentWorkout.startedAt) / 1000);
   }
 
   function computeWorkoutTotals(workout) {
-    let totalReps = 0;
-    let totalVolumeKg = 0;
-    Object.entries(workout.exercises || {}).forEach(([exerciseId, exercise]) => {
-      const unilateral = getExerciseUnilateral(exercise, exerciseId);
-      const exerciseType = getExerciseType(exercise, exerciseId);
-      const useBodyweight = getExerciseUseBodyweight(exercise, exerciseId);
-      (exercise.sets || []).forEach((set) => {
-        if (!set.done) return;
-        if (exerciseType === "cardio") {
-          return;
-        }
-        if (exerciseType === "time") {
-          const timeSec = Number(set.timeSec) || 0;
-          const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight) || 0;
-          totalVolumeKg += timeSec * kgEff;
-        } else if (unilateral) {
-          const { repsR, repsL } = getUnilateralReps(set);
-          const repsRight = repsR || 0;
-          const repsLeft = repsL || 0;
-          const { kgR, kgL } = getUnilateralKg(set);
-          const kgEffR = getSetEffectiveKg(set, workout.date, useBodyweight, kgR);
-          const kgEffL = getSetEffectiveKg(set, workout.date, useBodyweight, kgL);
-          totalReps += repsRight + repsLeft;
-          if (kgEffR != null) totalVolumeKg += repsRight * kgEffR;
-          if (kgEffL != null) totalVolumeKg += repsLeft * kgEffL;
-        } else {
-          const reps = Number(set.reps) || 0;
-          const kgEff = getSetEffectiveKg(set, workout.date, useBodyweight) || 0;
-          totalReps += reps;
-          totalVolumeKg += reps * kgEff;
-        }
-      });
-    });
-    return { totalReps, totalVolumeKg };
+    return globalThis.BookshellGym.context(exercises,bodyweightByDate).totals(workout);
   }
 
   function areAllSetsDone(exercise) {
@@ -3903,7 +3861,7 @@ function bindEvents() {
     if (!workout || workout.finishedAt) return;
     const finishedAt = Date.now();
     workout.finishedAt = finishedAt;
-    workout.durationSec = Math.floor((finishedAt - workout.startedAt) / 1000);
+    workout.durationSec = workout.startedAt ? Math.floor((finishedAt - workout.startedAt) / 1000) : 0;
     const { totalReps, totalVolumeKg } = computeWorkoutTotals(workout);
     workout.totalReps = totalReps;
     workout.totalVolumeKg = totalVolumeKg;

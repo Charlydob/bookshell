@@ -47,6 +47,7 @@ function runQuery(data,module,b,revision){
  return result;
 }
 async function run({data,b,name,c,actor,now,revision}){
+ if(name.startsWith('gym_')&&name!=='gym_query')return require('./gym').run({data,b,name,now,revision});
  if(name.startsWith('finance_')&&name!=='finance_query')return require('./finance').run({data,b,name,now,revision});
  const [module,action]=name.split('_');
  const item=(id,v)=>({id,data:v,revision:revision(v)});

@@ -16,6 +16,7 @@ const webScopes = [
   "notes:read",
   "books:read",
   "nutrition:read",
+  "nutrition:write",
   "gym:read",
   "gym:write",
   "finance:read",

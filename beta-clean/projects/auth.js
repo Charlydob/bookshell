@@ -4,7 +4,7 @@ const {fail}=require('./domain');
 const ISSUER='https://mcp-bookshell.charlydob.com';
 const RESOURCE=ISSUER+'/mcp';
 const SCOPES=['projects:read','projects:write'];
-const JARVIS_SCOPES=['habits:read','habits:write','time:read','time:write','notifications:write','recipes:read','people:read','notes:read','books:read','nutrition:read','gym:read','gym:write','finance:read','finance:write','world:read','recipes:write','people:write','notes:write','books:write'];
+const JARVIS_SCOPES=['habits:read','habits:write','time:read','time:write','notifications:write','recipes:read','people:read','notes:read','books:read','nutrition:read','nutrition:write','gym:read','gym:write','finance:read','finance:write','world:read','recipes:write','people:write','notes:write','books:write'];
 const hash=v=>crypto.createHash('sha256').update(v).digest('hex');
 const random=()=>crypto.randomBytes(32).toString('base64url');
 const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

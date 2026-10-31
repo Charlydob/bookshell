@@ -41,12 +41,13 @@ function runQuery(data,module,b,revision){
  }
  if(module==='nutrition'&&b.collection==='dailyLogsByDate'){
    const macros={kcal:0,protein:0,carbs:0,fat:0};let missing=0,entries=0;
-   for(const [,day] of rows)for(const meal of Object.values(day.meals||{}))for(const e of meal.entries||[]){entries++;for(const k of Object.keys(macros)){if(typeof e.macrosSnapshot?.[k]==='number')macros[k]+=e.macrosSnapshot[k];else missing++;}}
+   for(const [,day] of rows)for(const meal of Object.values(day.meals||{}))for(const e of meal.entries||[]){entries++;for(const k of Object.keys(macros)){if(!e.missingMacros?.includes(k)&&typeof e.macrosSnapshot?.[k]==='number')macros[k]+=e.macrosSnapshot[k]*Number(e.servingsCount||1);else missing++;}}
    result.summary={entries,knownMacros:macros,complete:missing===0,missingValues:missing};
  }
  return result;
 }
 async function run({data,b,name,c,actor,now,revision}){
+ if(name.startsWith('nutrition_')&&name!=='nutrition_query')return require('./nutrition').run({data,b,name,c,actor,now,revision});
  if(name.startsWith('gym_')&&name!=='gym_query')return require('./gym').run({data,b,name,now,revision});
  if(name.startsWith('finance_')&&name!=='finance_query')return require('./finance').run({data,b,name,now,revision});
  const [module,action]=name.split('_');

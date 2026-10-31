@@ -53,3 +53,17 @@ test('MCP history and pending counts preserve late duties and suppress linked re
  assert.deepEqual((await f.pool.query('SELECT id,data,version FROM project_entries WHERE project_id=$1 ORDER BY id',[p.id])).rows,before.rows);
  assert.equal((await f.pool.query('SELECT count(*)::int n FROM notification_runs')).rows[0].n,0);
 });
+test('native legacy reminders are classified through MCP and daily summary without changing stored status or notifying',async()=>{
+ const source=require('node:fs').readFileSync(require('node:path').join(__dirname,'../deploy-bookshell-api-server.js'),'utf8');
+ const legacyUid=/const LEGACY_FIREBASE_UID = "([^"]+)"/.exec(source)[1];
+ await f.pool.query("ALTER TABLE reminders ADD COLUMN source_metadata jsonb DEFAULT '{}', ADD COLUMN recurrence_type text DEFAULT 'none'");
+ const oldEvent=key(),oldDuty=key();
+ await f.pool.query("INSERT INTO reminders(id,firebase_uid,title,status,target_date,timezone,source_metadata) VALUES($1,$2,'Synthetic past appointment','pending','2020-09-02','Europe/Zurich',$3),($4,$2,'Synthetic overdue purchase','pending','2020-09-02','Europe/Zurich','{}')",[oldEvent,legacyUid,JSON.stringify({eventType:'guardia'}),oldDuty]);
+ const pending=await call('get_reminder_overview',{view:'pending'}),history=await call('get_reminder_overview',{view:'history'});
+ assert.ok(!pending.items.some(e=>e.id===oldEvent));assert.ok(pending.items.some(e=>e.id===oldDuty&&e.attention.overdue));assert.ok(history.items.some(e=>e.id===oldEvent));
+ const other=(await f.mcp(f.scopes,f.other)).client;assert.equal((await call('get_reminder_overview',{view:'all'},other)).items.length,0);
+ const cookie=await f.login();const summary=await (await fetch(f.base+'/projects/notifications/agenda',{headers:{Cookie:cookie}})).json();
+ assert.ok(summary.agenda.reminders.some(e=>e.id===oldDuty));assert.ok(!summary.agenda.reminders.some(e=>e.id===oldEvent));
+ assert.deepEqual((await f.pool.query('SELECT status FROM reminders ORDER BY id')).rows.map(r=>r.status),['pending','pending']);
+ assert.equal((await f.pool.query('SELECT count(*)::int n FROM notification_runs')).rows[0].n,0);
+});

@@ -569,7 +569,7 @@ test("HTTP MCP: actual SDK discovers both generations; old token cannot write ha
       }),
     );
     const list = await client.listTools();
-    assert.equal(list.tools.length, 23 + Object.keys(require('../jarvis/contracts').schemas).length);
+    assert.equal(list.tools.length, 24 + Object.keys(require('../jarvis/contracts').schemas).length);
     assert.ok(list.tools.find((t) => t.name === "update_task"));
     const created = await client.callTool({
       name: "habits_create",

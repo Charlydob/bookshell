@@ -1065,18 +1065,8 @@ async function markJarvisHabit({ habitId = "", name = "", date = "", value = tru
 }
 
 function jarvisWorkoutTotals(exercises = {}) {
-  let totalReps = 0;
-  let totalVolumeKg = 0;
-  Object.values(exercises || {}).forEach((exercise) => {
-    (exercise?.sets || []).forEach((set) => {
-      if (set?.done === false) return;
-      const reps = Math.max(0, Number(set?.reps) || 0);
-      const kg = Math.max(0, Number(set?.kg ?? set?.weightKg) || 0);
-      totalReps += reps;
-      totalVolumeKg += reps * kg;
-    });
-  });
-  return { totalReps, totalVolumeKg };
+  const normalized=Object.fromEntries(Object.entries(exercises||{}).map(([id,e])=>[id,{...e,sets:(e.sets||[]).map(s=>({...s,done:s.done!==false}))}]));
+  return require('./scripts/shared/services/gym-business').context().totals({exercises:normalized});
 }
 
 async function createJarvisGymSession(input = {}, db = pool, now = new Date()) {
@@ -2516,60 +2506,7 @@ function addYearsClamped(dateString, yearsToAdd) {
   );
 }
 
-function getNextRecurrenceDate(reminder) {
-  const currentDate = normalizeDateOnly(reminder.target_date);
-  const recurrenceType = normalizeRecurrenceType(reminder.recurrence_type);
-  const rule =
-    reminder.recurrence_rule &&
-    typeof reminder.recurrence_rule === "object"
-      ? reminder.recurrence_rule
-      : {};
-
-  if (!currentDate || recurrenceType === "none") return "";
-
-  let nextDate = "";
-
-  if (recurrenceType === "daily") {
-    nextDate = addDaysToDateString(
-      currentDate,
-      clampInt(rule.intervalDays || rule.interval, 1, 1, 3650)
-    );
-  } else if (recurrenceType === "weekly") {
-    nextDate = addDaysToDateString(
-      currentDate,
-      7 * clampInt(rule.intervalWeeks || rule.interval, 1, 1, 520)
-    );
-  } else if (recurrenceType === "monthly") {
-    nextDate = addMonthsClamped(
-      currentDate,
-      clampInt(rule.intervalMonths || rule.interval, 1, 1, 120)
-    );
-  } else if (recurrenceType === "yearly") {
-    nextDate = addYearsClamped(
-      currentDate,
-      clampInt(rule.intervalYears || rule.interval, 1, 1, 20)
-    );
-  } else if (recurrenceType === "custom") {
-    const customDays = clampInt(
-      rule.intervalDays || rule.days,
-      0,
-      0,
-      3650
-    );
-
-    if (customDays > 0) {
-      nextDate = addDaysToDateString(currentDate, customDays);
-    }
-  }
-
-  const recurrenceEnd = normalizeDateOnly(reminder.recurrence_end_date);
-
-  if (nextDate && recurrenceEnd && nextDate > recurrenceEnd) {
-    return "";
-  }
-
-  return nextDate;
-}
+function getNextRecurrenceDate(reminder) { return require('./projects/recurrence').getNextRecurrenceDate(reminder); }
 
 function resolveAlertNotifyAt(alert, reminder) {
   const mode = String(alert?.mode || "").trim().toLowerCase();
@@ -2884,6 +2821,7 @@ async function getReminderAlerts(client, reminderId) {
 
 function serializeReminder(row, alerts = []) {
   return {
+    attention: require('./projects/reminder-policy').classify(row),
     id: row.id,
     userId: LEGACY_FIREBASE_UID,
     title: row.title,
@@ -3816,7 +3754,7 @@ async function listReminderRecords({
   }
 
   const safeLimit = clampInt(limit, 50, 1, 100);
-  values.push(safeLimit);
+  if(statusFilter!=='pending')values.push(safeLimit);
 
   const result = await pool.query(
     `
@@ -3827,14 +3765,14 @@ async function listReminderRecords({
         target_date ASC,
         target_time ASC NULLS FIRST,
         created_at ASC
-      LIMIT $${values.length}
+      ${statusFilter==='pending'?'':'LIMIT $'+values.length}
     `,
     values
   );
 
   const reminders = [];
 
-  for (const row of result.rows) {
+  for (const row of (statusFilter==='pending'?require('./projects/reminder-policy').view(result.rows).items:result.rows).slice(0,safeLimit)) {
     reminders.push(
       serializeReminder(
         row,

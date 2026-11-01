@@ -1,3 +1,4 @@
+import '../../shared/services/nutrition-business.js';
 ﻿// recipes.js
 // Pestaña de recetas con estética de estantería y gráficos adaptados
 
@@ -1543,17 +1544,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     };
   }
 
-  function calcProductMacros(product, grams = 0) {
-    const p = product || {};
-    const base = Math.max(1, Number(p.servingBaseGrams) || 100);
-    const ratio = Math.max(0, Number(grams) || 0) / base;
-    return {
-      carbs: (Number(p.macros?.carbs) || 0) * ratio,
-      protein: (Number(p.macros?.protein) || 0) * ratio,
-      fat: (Number(p.macros?.fat) || 0) * ratio,
-      kcal: (Number(p.macros?.kcal) || 0) * ratio,
-    };
-  }
+  function calcProductMacros(product,amount=0) { return globalThis.BookshellNutrition.calcProductMacros(product,amount); }
 
   function roundMacro(value) {
     return Math.round((Number(value) || 0) * 10) / 10;
@@ -1821,9 +1812,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     return null;
   }
 
-  function convertAmountWithProduct(product, value, fromUnit, toUnit) {
-    return convertQtyByUnitWithUnitWeight(value, fromUnit, toUnit, resolveUnitWeightSpec(product));
-  }
+  function convertAmountWithProduct(product,value,fromUnit,toUnit) { return globalThis.BookshellNutrition.convertAmountWithProduct(product,value,fromUnit,toUnit); }
 
   function findLinkedFinanceProduct(product) {
     const financeProductId = String(product?.financeProductId || "").trim();
@@ -2428,53 +2417,7 @@ const $recipeImportStatus = document.getElementById("recipe-import-status");
     };
   }
 
-  function buildConsumptionEntryFromEditor({ product, amount, unit, meal }) {
-    const safeAmount = Math.max(0, Number(amount) || 0);
-    const safeUnit = normalizeUnit(unit || product?.baseUnit || "g") || "g";
-    const safeMeal = mealOrder.includes(meal) ? meal : "breakfast";
-    const baseUnit = normalizeUnit(product?.baseUnit || product?.servingBaseUnit || "g") || "g";
-    const normalizedAmount = convertAmountWithProduct(product, safeAmount, safeUnit, baseUnit);
-    const macrosSnapshot = normalizedAmount == null
-      ? normalizeMacros({})
-      : normalizeMacros(calcProductMacros({ ...product, servingBaseGrams: Number(product?.baseQuantity || product?.servingBaseGrams) || 100 }, normalizedAmount));
-    const cost = computeConsumptionEntryCost(product, safeAmount, safeUnit);
-    const linkedHabitId = String(product?.linkedHabitId || "").trim();
-    return {
-      entryId: generateId(),
-      type: "product",
-      mealSlot: safeMeal,
-      refId: String(product?.id || "").trim(),
-      productId: String(product?.id || "").trim(),
-      productName: String(product?.name || "").trim(),
-      nameSnapshot: String(product?.name || "").trim(),
-      emoji: String(product?.emoji || "").trim().substring(0, 2),
-      grams: convertAmountWithProduct(product, safeAmount, safeUnit, "g") ?? 0,
-      amount: safeAmount,
-      unit: safeUnit,
-      amountUnit: safeUnit,
-      detectedUnitType: product?.detectedUnitType || (["ml", "l"].includes(baseUnit) ? "volume" : "mass"),
-      linkedFinanceProductId: String(product?.financeProductId || "").trim(),
-      linkedHabitId,
-      habitSync: {
-        habitId: linkedHabitId,
-        amount: linkedHabitId ? 1 : 0,
-      },
-      nutritionSnapshot: buildNutritionSnapshot(product) || null,
-      pricingSnapshot: cost.pricingSnapshot,
-      priceSource: getEffectiveProductPriceSource(product) || null,
-      costSource: cost.costSource,
-      computedCost: Number.isFinite(Number(cost.computedCost)) ? Number(cost.computedCost) : null,
-      macrosSnapshot,
-      servingsCount: 1,
-      sideEffects: {
-        habits: linkedHabitId ? [{ habitId: linkedHabitId, amount: 1 }] : [],
-        financeCost: Number.isFinite(Number(cost.computedCost)) ? Number(cost.computedCost) : 0,
-        productsResolved: 1,
-        productsTotal: 1,
-      },
-      createdAt: Date.now(),
-    };
-  }
+  function buildConsumptionEntryFromEditor(args) { return globalThis.BookshellNutrition.context(nutritionProducts,financeProducts,generateId,Date.now()).productEntry(args); }
 
   function persistConsumptionEntry(entry, { meal, entryTarget = null, date = selectedMacroDate } = {}) {
     const log = getDailyLog(date);
@@ -5070,6 +5013,7 @@ $recipeImportBtn?.addEventListener("click", () => {
         const entries = Array.isArray(log?.meals?.[meal]?.entries) ? log.meals[meal].entries : [];
         meals[meal] = {
           entries: entries.map((entry) => ({
+            ...entry,
             entryId: ensureMacroEntryId(entry),
             type: entry?.type === "recipe" ? "recipe" : "product",
             mealSlot: meal,
@@ -5084,13 +5028,14 @@ $recipeImportBtn?.addEventListener("click", () => {
             amountUnit: normalizeUnit(entry?.amountUnit || entry?.unit || "g") || "g",
             servings: Math.max(0, Number(entry?.servings) || 0),
             servingsCount: normalizeEntryServingsCount(entry?.servingsCount),
-            macrosSnapshot: normalizeMacros(entry?.macrosSnapshot || entry?.macros || entry?.macroSnapshot || {}),
+            macrosSnapshot: globalThis.BookshellNutrition.preserveEntryMacros(entry),
             nutritionSnapshot: entry?.nutritionSnapshot && typeof entry.nutritionSnapshot === "object"
               ? {
+                ...entry.nutritionSnapshot,
                 productId: String(entry.nutritionSnapshot.productId || entry?.refId || entry?.productId || "").trim(),
                 servingBaseQty: Math.max(1, Number(entry.nutritionSnapshot.servingBaseQty) || 100),
                 servingBaseUnit: normalizeUnit(entry.nutritionSnapshot.servingBaseUnit || "g") || "g",
-                macrosPerBase: normalizeMacros(entry.nutritionSnapshot.macrosPerBase || {}),
+                macrosPerBase: entry?.missingMacros?.length ? globalThis.BookshellNutrition.knownMacros(entry.nutritionSnapshot.macrosPerBase) : normalizeMacros(entry.nutritionSnapshot.macrosPerBase || {}),
               }
               : null,
             pricingSnapshot: entry?.pricingSnapshot && typeof entry.pricingSnapshot === "object"
@@ -5115,10 +5060,10 @@ $recipeImportBtn?.addEventListener("click", () => {
               amount: Math.max(0, Number(entry?.habitSync?.amount) || 0),
             },
             recipeSnapshot: entry?.recipeSnapshot && typeof entry.recipeSnapshot === "object"
-              ? normalizeRecipeFields(entry.recipeSnapshot)
+              ? (entry.source?.kind === "jarvis" ? structuredClone(entry.recipeSnapshot) : normalizeRecipeFields(entry.recipeSnapshot))
               : null,
             ingredientsSnapshot: Array.isArray(entry?.ingredientsSnapshot)
-              ? entry.ingredientsSnapshot.map((ing) => buildRecipeIngredientFromProduct(getIngredientLinkedProduct(ing), ing))
+              ? (entry.source?.kind === "jarvis" ? structuredClone(entry.ingredientsSnapshot) : entry.ingredientsSnapshot.map((ing) => buildRecipeIngredientFromProduct(getIngredientLinkedProduct(ing), ing)))
               : [],
             expanded: !!entry?.expanded,
             sideEffects: {
@@ -6918,7 +6863,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       <button class="macro-entry-open" data-macro-open="${meal}:${idx}" data-macro-entry-id="${entryId}" type="button" aria-label="Abrir ficha de ${escapeHtml(entry.nameSnapshot)}">
       <div class="contenido-comida-lista">
       <strong id="nombre-alimento-lista">${entry.emoji ? `<span class="macro-entry-emoji">${entry.emoji}</span>` : ""} ${escapeHtml(entry.nameSnapshot)}</strong>
-      <div class="hint" id="cantidad-comida">${quantityLabel}</div>
+      <div class="hint" id="cantidad-comida">${quantityLabel}${entry.missingMacros?.length ? " · Nutrientes incompletos" : ""}</div>
       <div class="hint macro-recipe-inline-kpis">C ${roundMacro(entryMacros.carbs)} · P ${roundMacro(entryMacros.protein)} · G ${roundMacro(entryMacros.fat)} · ${entryCost.cost == null ? "Coste n/d" : formatCurrency(entryCost.cost)}</div>
       </div>
       </button>
@@ -7891,33 +7836,13 @@ $recipeImportBtn?.addEventListener("click", () => {
     return { habits, financeCost };
   }
 
-  function buildRecipeSideEffects(recipe, servings = 1) {
-    const safeServings = Math.max(0, Number(servings) || 0);
-    const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
-    const summary = { habits: [], financeCost: 0, productsResolved: 0, productsTotal: ingredients.length };
-    ingredients.forEach((ing) => {
-      const linked = nutritionProducts.find((p) => p.id === ing?.productId);
-      const ingredientLinkedHabitId = String(ing?.linkedHabitId || "").trim();
-      if (!linked) {
-        if (ingredientLinkedHabitId) summary.habits.push({ habitId: ingredientLinkedHabitId, amount: safeServings });
-        return;
-      }
-      summary.productsResolved += 1;
-      const productFx = buildProductSideEffects(linked, safeServings);
-      summary.financeCost += Number(productFx.financeCost) || 0;
-      productFx.habits.forEach((h) => summary.habits.push({ ...h }));
-      if (!productFx.habits.length && ingredientLinkedHabitId) {
-        summary.habits.push({ habitId: ingredientLinkedHabitId, amount: safeServings });
-      }
-    });
-    return summary;
-  }
+  function buildRecipeSideEffects(recipe,servings=1) { return globalThis.BookshellNutrition.context(nutritionProducts,financeProducts,generateId,Date.now()).recipeEffects(recipe,servings); }
 
   function applyRecipeSideEffects(sideEffects, dateKey, direction = 1, context = "recipe") {
     const sign = direction >= 0 ? 1 : -1;
     const habits = Array.isArray(sideEffects?.habits) ? sideEffects.habits : [];
     habits.forEach((h) => {
-      const delta = Math.round((Number(h?.amount) || 0) * sign);
+      const delta = sign * Math.round(Number(h?.amount) || 0);
       if (!delta || !h?.habitId) return;
       logMacroEvent(["recipe", "habit"], "aplicando impacto de hábito", { context, habitId: h.habitId, delta, dateKey }, "info");
       adjustHabitCountForDate(String(h.habitId || "").trim(), dateKey, delta);
@@ -7961,30 +7886,9 @@ $recipeImportBtn?.addEventListener("click", () => {
     const computedCost = Number.isFinite(Number(recipeCost?.total)) && Number(recipeCost.total) >= 0
       ? Number(recipeCost.total)
       : null;
-    const base = normalizeMacros(recipe.nutritionPerServing || recipe.nutritionTotals || {});
-    const macrosSnapshot = {
-      carbs: base.carbs * servings,
-      protein: base.protein * servings,
-      fat: base.fat * servings,
-      kcal: base.kcal * servings,
-    };
     const sideEffects = buildRecipeSideEffects(recipe, servings);
-    const entry = {
-      entryId: generateId(),
-      type: "recipe",
-      mealSlot: meal,
-      refId: recipe.id,
-      nameSnapshot: recipe.title,
-      servings,
-      servingsCount: 1,
-      macrosSnapshot,
-      computedCost,
-      sideEffects,
-      recipeSnapshot: recipe,
-      ingredientsSnapshot: Array.isArray(recipe.ingredients) ? recipe.ingredients : [],
-      expanded: false,
-      createdAt: Date.now(),
-    };
+    const entry = globalThis.BookshellNutrition.recipeEntry(recipe,servings,meal,{id:generateId(),now:Date.now(),computedCost,sideEffects});
+
     getDailyLog(selectedMacroDate).meals[meal].entries.unshift(entry);
     updateRecipe(recipe.id, {
       usageCount: (Number(recipe.usageCount) || 0) + 1,
@@ -8167,7 +8071,7 @@ $recipeImportBtn?.addEventListener("click", () => {
       const habitId = String(row?.habitId || "").trim();
       if (!habitId) return;
       const amount = Math.max(0, Number(row?.amount) || 0);
-      const delta = Math.round(amount * direction);
+      const delta = direction * Math.round(amount);
       if (!delta) return;
       await adjustHabitCountForDate(habitId, dateKey, delta);
     }));

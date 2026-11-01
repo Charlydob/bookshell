@@ -80,7 +80,7 @@ async function run({data,b,name,now,revision}){
   const a=accounts[aid];if(!a)fail('ACCOUNT_NOT_FOUND',404);
   for(const r of rows(root).filter(r=>[r.accountId,r.fromAccountId,r.toAccountId].includes(aid))){
    if(!['income','expense','transfer'].includes(r.type)||!Number.isFinite(Number(r.amount))||!/^\d{4}-\d{2}-\d{2}$/.test(r.date))fail('UNSUPPORTED_LEGACY_MOVEMENT_REQUIRES_NATIVE_WORKFLOW');
-   if(!r.source&&r.accountAmount!==undefined&&Number(r.accountAmount)!==Number(r.amount))fail('IMPORTED_MOVEMENT_REQUIRES_NATIVE_WORKFLOW');
+   if(r.date>=from&&!r.source&&r.accountAmount!==undefined&&Number(r.accountAmount)!==Number(r.amount))fail('IMPORTED_MOVEMENT_REQUIRES_NATIVE_WORKFLOW');
   }
   const changes=business.buildEntries(root,aid,from,{rows:rows(root),now:now.getTime(),deltaAmount:r=>Number(r.amount??0)});
   a.entries??={};for(const [path,value] of Object.entries(changes)){if(path.startsWith('entries/'))a.entries[path.slice(8)]=value;else a[path]=value;}

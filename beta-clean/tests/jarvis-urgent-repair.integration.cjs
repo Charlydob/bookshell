@@ -23,7 +23,7 @@ test('create missing strawberry yogurt, consume exact 90g, retain unknown carbs 
 });
 test('synthetic Migros CHF with legacy accounts and snapshots creates once and preserves balances',async()=>{
  const d=(await f.pool.query('SELECT data FROM firebase_import_raw WHERE user_id=$1',[f.owner])).rows[0].data;
- d.finance={finance:{accounts:{post:{name:'QA PostFinance',currency:'CHF',entries:{'2026-02-01':{value:6773.25,source:'snapshot'}},snapshots:{'2026-02-01':{value:6773.25,updatedAt:1}}}},catalog:{categories:{Comida:{name:'Comida'}}},balance:{movements:{'2026-01':{legacy:{type:'gasto',amount:2,accountId:'post',date:'2026-01-31'}}}}}};
+ d.finance={finance:{accounts:{post:{name:'QA PostFinance',currency:'CHF',entries:{'2026-02-01':{value:6773.25,source:'snapshot'}},snapshots:{'2026-02-01':{value:6773.25,updatedAt:1}}}},catalog:{categories:{Comida:{name:'Comida'}}},balance:{movements:{'2026-01':{legacy:{type:'gasto',amount:2,accountAmount:2.1,accountId:'post',date:'2026-01-31'}}}}}};
  await f.pool.query('UPDATE firebase_import_raw SET data=$1 WHERE user_id=$2',[d,f.owner]);
  assert.equal((await call('finance_preferences',{})).accounts[0].currency,'CHF');
  const input={data:{type:'expense',amount:11.35,currency:'CHF',date:'2026-02-02',accountId:'post',categoryId:'Comida',title:'QA compra en Migros',note:'Coca-Cola 1,5 L, Monster, pizza y mandarinas',exchangeRateToEUR:1.05,exchangeRateSource:'synthetic QA'},idempotencyKey:key()};

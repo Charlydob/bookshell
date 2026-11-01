@@ -1,29 +1,10 @@
 "use strict";
-// Operator-only offline pairing. No web endpoint can mint additional scopes.
+// Operator-only pairing; requested scopes still require explicit operator approval.
 const { Pool } = require("pg"),
   crypto = require("node:crypto");
-const allowed = new Set([
-  "projects:read",
-  "projects:write",
-  "habits:read",
-  "habits:write",
-  "time:read",
-  "time:write",
-  "notifications:write",
-  "recipes:read",
-  "people:read",
-  "notes:read",
-  "books:read",
-  "nutrition:read",
-  "gym:read",
-  "finance:read",
-  "world:read",
-  "recipes:write",
-  "people:write",
-  "notes:write",
-  "books:write",
-
-]);
+const { createAuth } = require("../projects/auth");
+// Share the issuer's vocabulary, without granting any scope automatically.
+const allowed = new Set(createAuth({}, { jarvisEnabled: true }).supportedScopes);
 async function main() {
   if (process.argv[2] !== "--issue-approved-grant")
     throw new Error("Requires --issue-approved-grant after operator approval");

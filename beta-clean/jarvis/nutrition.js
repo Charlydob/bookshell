@@ -47,6 +47,22 @@ async function applyEffects({data,old,next,actor,c}){
 }
 async function run({data,b,name,now,revision,c,actor}){
  data.recipes??={};data.recipes.nutrition??={};const root=data.recipes.nutrition;
+ if(name==='nutrition_product_create'||name==='nutrition_product_update'){
+  const entries=root.products??={};
+  const old=b.id?rows(entries).find(p=>p.id===b.id):null;
+  if(b.id&&!old)fail('PRODUCT_NOT_FOUND',404);
+  // Queries expose the stored record revision, including object-keyed legacy products.
+  const stored=Array.isArray(entries)?entries.find(p=>p?.id===b.id):entries[b.id];
+  if(old&&revision(stored)!==b.expectedRevision)fail('REVISION_CONFLICT');
+  const input=b.data||b.patch,id=b.id||crypto.randomUUID();
+  const fold=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+  const v={...(old||{}),...input,id,macros:business.knownMacros({...old?.macros,...input.macros}),source:old?.source||'manual',createdAt:old?.createdAt||now.getTime(),updatedAt:now.getTime()};
+  if(rows(entries).some(p=>p.id!==id&&fold(p.name)===fold(v.name)&&fold(p.brand)===fold(v.brand)))fail('PRODUCT_ALREADY_EXISTS');
+  if(!!v.unitWeightQty!==!!v.unitWeightUnit)fail('UNIT_WEIGHT_PAIR_REQUIRED',400);
+  v.servingBaseGrams=v.baseQuantity;v.servingBaseUnit=v.baseUnit;
+  if(Array.isArray(entries)){const index=entries.findIndex(p=>p?.id===id);if(index<0)entries.push(v);else entries[index]=v;}else entries[id]=v;
+  return {item:item(id,v,revision),warnings:Object.values(v.macros).includes(null)?['NUTRIENTS_INCOMPLETE: no se han inventado nutrientes ausentes.']:[]};
+ }
  if(name==='nutrition_entries_query'){
   if(b.from&&b.to&&b.from>b.to)fail('INVALID_RANGE',400);
   const list=enumerate(root).filter(v=>(!b.id||v.entry.entryId===b.id)&&(!b.from||v.date>=b.from)&&(!b.to||v.date<=b.to)&&(!b.query||JSON.stringify(v).toLocaleLowerCase().includes(b.query.toLocaleLowerCase()))).sort((a,b)=>b.date.localeCompare(a.date)||String(a.entry.entryId).localeCompare(String(b.entry.entryId)));

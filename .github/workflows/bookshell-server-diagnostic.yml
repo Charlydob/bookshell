@@ -1,0 +1,48 @@
+name: Bookshell server divergence diagnostic
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/bookshell-server-diagnostic.yml"
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Inspect production repository without changing deployment
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+            'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/bookshell
+          git fetch origin main --quiet
+          echo '=== REFS ==='
+          printf 'head='; git rev-parse HEAD
+          printf 'origin-main='; git rev-parse origin/main
+          printf 'branch='; git symbolic-ref --short HEAD || true
+          printf 'merge-base='; git merge-base HEAD origin/main || true
+          echo '=== WORKTREE ==='
+          git status --short
+          echo '=== AHEAD BEHIND (production vs origin/main) ==='
+          git rev-list --left-right --count HEAD...origin/main
+          echo '=== PRODUCTION-ONLY COMMITS ==='
+          git log --format='%h %s' --max-count=15 HEAD --not origin/main
+          echo '=== MAIN-ONLY COMMITS ==='
+          git log --format='%h %s' --max-count=8 origin/main --not HEAD
+          echo '=== PRODUCTION-ONLY FILES SINCE COMMON BASE ==='
+          BASE=$(git merge-base HEAD origin/main)
+          git diff --name-status "$BASE" HEAD | head -n 100
+          echo '=== MAIN-ONLY FILES SINCE COMMON BASE ==='
+          git diff --name-status "$BASE" origin/main | head -n 100
+          REMOTE

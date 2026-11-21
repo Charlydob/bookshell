@@ -1,3 +1,4 @@
+import '../../shared/services/finance-business.js';
 ﻿let get;
 let onValue;
 let auth;
@@ -1048,15 +1049,8 @@ function compareTxNewestFirst(left = {}, right = {}) {
     || (Number(right?.createdAt || 0) - Number(left?.createdAt || 0))
     || String(right?.id || '').localeCompare(String(left?.id || ''));
 }
-function normalizeTxType(type = '') {
-  const safe = String(type || '').trim().toLowerCase();
-  if (safe === 'ingreso' || safe === 'ingresos') return 'income';
-  if (safe === 'gasto' || safe === 'gastos' || safe === 'egreso' || safe === 'egresos') return 'expense';
-  if (safe === 'transferencia' || safe === 'traspaso') return 'transfer';
-  if (safe === 'income' || safe === 'expense' || safe === 'transfer') return safe;
-  if (safe === 'invest') return 'expense';
-  return 'expense';
-}
+function normalizeTxType(type = '') { return globalThis.BookshellFinance.normalizeType(type); }
+
 function normalizeTxRow(raw = {}, id = '') {
   const row = raw && typeof raw === 'object' ? raw : {};
   const type = normalizeTxType(row.type ?? row?.extras?.type);
@@ -9282,84 +9276,11 @@ function movementRowsByAccount(accountId) {
   return balanceTxList().filter((row) => row.accountId === accountId);
 }
 function buildFinanceAccountEntriesUpdates(root = {}, accountId = '', fromDay = '') {
-  if (!accountId) return {};
-  const account = root.accounts?.[accountId] || state.accounts.find((item) => item.id === accountId);
-  if (!account) return {};
-  const snapshots = normalizeSnapshots(account.snapshots || {});
-  const txRows = collectBalanceRowsFromRoot(root, state.financePath).filter((row) => (
-    row.accountId === accountId || row.fromAccountId === accountId || row.toAccountId === accountId
-  ));
-  const movements = txRows.sort((a, b) => txSortTs(a) - txSortTs(b));
-  const daySet = new Set([
-    ...snapshots.map((row) => row.day),
-    ...movements.map((row) => String(row.date || isoToDay(row.dateISO || '')))
-  ].filter(Boolean));
-  if (fromDay) daySet.add(fromDay);
-  const allDays = [...daySet].sort();
-  if (!allDays.length) return {};
-  const normalizedFromDay = toIsoDay(fromDay || '') || fromDay;
-  const startDay = normalizedFromDay || allDays[0];
-  financeDebug('recompute account entries', { accountId, startDay, txCount: movements.length });
-
-  const dayEvents = {};
-  movements.forEach((row) => {
-    const day = String(row.date || isoToDay(row.dateISO || ''));
-    if (!day) return;
-    let delta = 0;
-    const accountDeltaAmount = resolveShortcutAccountDeltaAmount(row, accountId, state.shortcutIntegrationStartAt || DEFAULT_SHORTCUT_INTEGRATION_START_AT);
-    if (row.type === 'income' && row.accountId === accountId) delta = accountDeltaAmount;
-    else if (row.type === 'expense' && row.accountId === accountId) delta = -accountDeltaAmount;
-    else if (row.type === 'transfer') {
-      if (row.fromAccountId === accountId) delta = -Number(row.amount || 0);
-      if (row.toAccountId === accountId) delta += Number(row.amount || 0);
-    }
-    if (!delta) return;
-    if (!dayEvents[day]) dayEvents[day] = [];
-    const ts = Number(row.ts || row.timestamp || row.createdAt || row.updatedAt || 0);
-    dayEvents[day].push({ kind: 'tx', ts: Number.isFinite(ts) ? ts : 0, delta });
+  const changes = globalThis.BookshellFinance.buildEntries(root, accountId, fromDay, {
+    rows: collectBalanceRowsFromRoot(root, state.financePath), now: nowTs(),
+    deltaAmount: (row,id) => resolveShortcutAccountDeltaAmount(row,id,state.shortcutIntegrationStartAt || DEFAULT_SHORTCUT_INTEGRATION_START_AT)
   });
-  snapshots.forEach((row) => {
-    if (!dayEvents[row.day]) dayEvents[row.day] = [];
-    const ts = Number(row.updatedAt || 0);
-    dayEvents[row.day].push({ kind: 'snapshot', ts: Number.isFinite(ts) && ts > 0 ? ts : Number.MAX_SAFE_INTEGER, value: row.value });
-  });
-
-  const existingEntries = account.entries || account.daily || {};
-  let carry = 0;
-  const prevDays = Object.keys(existingEntries).filter((day) => day < startDay).sort();
-  if (prevDays.length) carry = Number(existingEntries[prevDays.at(-1)]?.value || 0);
-  else {
-    const prevSnapshot = snapshots.filter((row) => row.day < startDay).at(-1);
-    if (prevSnapshot) carry = prevSnapshot.value;
-  }
-
-  const updatesMap = {};
-  const targetDays = allDays.filter((day) => day >= startDay);
-  targetDays.forEach((day) => {
-    let value = carry;
-    const events = (dayEvents[day] || []).sort((a, b) => {
-      if (a.ts !== b.ts) return a.ts - b.ts;
-      if (a.kind === b.kind) return 0;
-      return a.kind === 'tx' ? -1 : 1;
-    });
-    if (!events.length) {
-      value = carry;
-    } else {
-      events.forEach((event) => {
-        if (event.kind === 'snapshot') value = Number(event.value || 0);
-        else value += Number(event.delta || 0);
-      });
-    }
-    carry = value;
-    updatesMap[`${state.financePath}/accounts/${accountId}/entries/${day}`] = {
-      dateISO: `${day}T00:00:00.000Z`,
-      value,
-      updatedAt: nowTs(),
-      source: events.some((event) => event.kind === 'snapshot') ? 'snapshot' : 'derived'
-    };
-  });
-  updatesMap[`${state.financePath}/accounts/${accountId}/updatedAt`] = nowTs();
-  return updatesMap;
+  return Object.fromEntries(Object.entries(changes).map(([path,value]) => [`${state.financePath}/accounts/${accountId}/${path}`,value]));
 }
 
 async function recomputeAccountEntries(accountId, fromDay, rootOverride = null) {
@@ -21700,7 +21621,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
           || resolveRecurringScheduledDateISO(linkedRecurringTemplate || { schedule: { dayOfMonth: recurringDay } }, recurringMonthKey)
           || dateISO)
         : '';
-      const payload = {
+      const payload = globalThis.BookshellFinance.canonicalMovement(prev, {
         ...(prev && typeof prev === 'object' ? clonePlain(prev) : {}),
         id: saveId,
         type,
@@ -21741,7 +21662,7 @@ if (event.target.matches('[data-fixed-expense-form]')) {
         confirmed: true,
         updatedAt: writeTs,
         createdAt: Number(prev?.createdAt || 0) || writeTs
-      };
+      });
       if (!payload.dateISO) payload.dateISO = `${dateISO}T00:00:00`;
       console.log('[finance:edit:save:payload]', {
         id: payload.id,

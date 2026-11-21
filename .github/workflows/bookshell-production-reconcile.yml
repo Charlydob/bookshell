@@ -1,0 +1,58 @@
+name: Reconcile Bookshell production history
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/bookshell-production-reconcile.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Configure SSH
+        shell: bash
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Import exact deployed commit and combine histories safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "bookshell-reconciliation-bot"
+          git config user.email "bookshell-reconciliation-bot@users.noreply.github.com"
+          git fetch origin main
+          git fetch --no-tags "ssh://${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}/opt/bookshell" HEAD:refs/remotes/production/live
+          LIVE=$(git rev-parse refs/remotes/production/live)
+          EXPECTED=bf4b2f7a4080a2f9545960025a5a64fbbbd94693
+          test "$LIVE" = "$EXPECTED" || {
+            echo "Production HEAD changed; refusing to merge an unreviewed commit: $LIVE" >&2
+            exit 1
+          }
+          git merge-base --is-ancestor 689e925d1936b57325bb595676af61d0a04a5a77 "$LIVE"
+          git switch -c reconcile/production-bookshell-20261121 origin/main
+          git merge --no-ff --no-edit refs/remotes/production/live
+          git merge-base --is-ancestor "$LIVE" HEAD
+          git merge-base --is-ancestor origin/main HEAD
+          if git diff --name-only "$LIVE" HEAD -- beta-clean/db/migrations | grep -q .; then
+            echo "Unexpected database migrations since deployed HEAD; stopping" >&2
+            exit 1
+          fi
+          echo '=== RECONCILIATION SUMMARY ==='
+          git log --format='%h %s' -n 6
+          echo '=== DEPLOY-BOUND FILES ==='
+          git diff --name-status "$LIVE" HEAD
+          node --test beta-clean/tests/pwa-zoom.test.mjs
+          node --check beta-clean/projects/server.js
+          node --check beta-clean/service-worker.js
+          git push origin HEAD:refs/heads/reconcile/production-bookshell-20261121

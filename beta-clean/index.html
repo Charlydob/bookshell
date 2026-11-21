@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Bookshell" />
-  <script src="./scripts/shared/config/release.js?v=2026-10-30-jarvis21"></script>
+  <script src="./scripts/shared/config/release.js?v=2026-11-21-pwa-zoom1"></script>
   <script>
     window.__BOOKSHELL_RELEASE__ = window.__BOOKSHELL_RELEASE__ || {
       version: "dev",
@@ -151,6 +151,10 @@
       touch-action: manipulation;
     }
 
+    html.is-standalone {
+      touch-action: manipulation;
+    }
+
     .view {
       position: relative;
       width: min(480px, 100%);
@@ -188,9 +192,25 @@
         isStandalone = !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
       } catch (e) {}
       var isIOSStandalone = !!window.navigator.standalone;
-      if (isStandalone || isIOSStandalone) {
-        document.documentElement.classList.add("is-standalone");
+      if (!isStandalone && !isIOSStandalone) return;
+
+      document.documentElement.classList.add("is-standalone");
+
+      // Leave ordinary Safari/browser zoom enabled for accessibility.
+      var viewport = document.querySelector('meta[name="viewport"]');
+      if (viewport) {
+        viewport.setAttribute(
+          "content",
+          "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+        );
       }
+
+      // iOS Safari can ignore viewport zoom limits; block native pinch in the installed app.
+      var preventPinchZoom = function (event) {
+        if (event.cancelable) event.preventDefault();
+      };
+      document.addEventListener("gesturestart", preventPinchZoom, { capture: true, passive: false });
+      document.addEventListener("gesturechange", preventPinchZoom, { capture: true, passive: false });
     })();
   </script>
 

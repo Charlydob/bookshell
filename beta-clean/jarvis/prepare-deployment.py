@@ -18,7 +18,7 @@ os.chmod(out, 0o700)
 for mode in ("observe", "required"):
     override = {"services": {"api": {
         "environment": {"BOOKSHELL_WEB_AUTH_MODE": mode, "BOOKSHELL_JARVIS_V2_ENABLED": "1" if mode == "required" else "0"},
-        "volumes": ["/opt/bookshell/beta-clean/jarvis:/app/jarvis:ro"]
+        "volumes": ["/opt/bookshell/beta-clean/jarvis:/app/jarvis:ro", "/opt/bookshell/beta-clean/scripts/shared/services:/app/scripts/shared/services:ro"]
     }}}
     (out / ("compose." + mode + ".json")).write_text(json.dumps(override, indent=2))
 manifest = {"sourceSha256": {str(Path(f)): hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in (a.caddy, a.compose)}, "productionApplied": False}

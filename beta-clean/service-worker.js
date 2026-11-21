@@ -1,4 +1,4 @@
-importScripts("./scripts/shared/config/release.js?v=2026-10-30-jarvis21");
+importScripts("./scripts/shared/config/release.js?v=2026-11-21-pwa-zoom1");
 
 const BOOKSHELL_RELEASE = self.__BOOKSHELL_RELEASE__ || {};
 const APP_VERSION = String(BOOKSHELL_RELEASE.version || "dev");
